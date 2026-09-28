@@ -1,10 +1,11 @@
-import { generateText } from "ai";
+import { generateText, type ModelMessage } from "ai";
 import { and, asc, eq } from "drizzle-orm";
-import { buildInstructions } from "./build-instructions.js";
+import { buildContext } from "./context.js";
 import type { getDb } from "./db/client.js";
-import { agents, conversations, members, messages } from "./db/schema.js";
+import { agents, conversations, members, messages, summaryItems } from "./db/schema.js";
 import { getModel } from "./get-model.js";
 import { speakers } from "./mentions.js";
+import { mergeSummary } from "./summary.js";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -13,8 +14,13 @@ export type TurnInput = {
   provider: string;
   modelId: string;
   system: string;
+  prefix: string;
+  tail: string;
+  promptCacheKey: string;
   messages: { role: "user" | "assistant"; content: string }[];
 };
+
+type GenerateResult = string | { text: string; cacheReadTokens?: number | null };
 
 /**
  * Runs one room turn.
@@ -27,7 +33,7 @@ export async function runTurn(
   accountId: string,
   conversationId: string,
   body: string,
-  generate: (input: TurnInput) => Promise<string> = replyWithModel,
+  generate: (input: TurnInput) => Promise<GenerateResult> = replyWithModel,
 ) {
   return db.transaction(async (tx) => {
     const [room] = await tx
@@ -73,28 +79,47 @@ export async function runTurn(
         .from(messages)
         .where(and(eq(messages.conversationId, conversationId), eq(messages.accountId, accountId)))
         .orderBy(asc(messages.createdAt));
-      const text = await generate({
-        agentId,
-        provider: agent.provider,
-        modelId: agent.modelId,
-        system: buildInstructions(agent.description),
-        messages: history.map((message) => ({
-          role: message.agentId ? "assistant" : "user",
-          content: message.body,
-        })),
+      const summary = await tx
+        .select()
+        .from(summaryItems)
+        .where(and(eq(summaryItems.conversationId, conversationId), eq(summaryItems.accountId, accountId)));
+      const context = buildContext({
+        accountId,
+        agentId: agent.id,
+        promptVersion: agent.promptVersion,
+        description: agent.description,
+        summary: summary.map((item) => ({ key: item.key, body: item.body })),
+        messages: history.map((message) => ({ body: message.body })),
       });
+      const result = unwrap(
+        await generate({
+          agentId,
+          provider: agent.provider,
+          modelId: agent.modelId,
+          system: context.prefix,
+          prefix: context.prefix,
+          tail: context.tail,
+          promptCacheKey: context.openai.promptCacheKey,
+          messages: history.map((message) => ({
+            role: message.agentId ? "assistant" : "user",
+            content: message.body,
+          })),
+        }),
+      );
       const [saved] = await tx
         .insert(messages)
         .values({
           accountId,
           conversationId,
           agentId,
-          body: text,
+          body: result.text,
+          cacheReadTokens: result.cacheReadTokens,
           createdAt: nextTime(),
         })
         .returning();
       replies.push(saved!);
-      for (const next of mentioned(text, memberRows)) {
+      await mergeSummary(tx, accountId, conversationId, [{ key: "topics", body: result.text, messageId: saved!.id }]);
+      for (const next of mentioned(result.text, memberRows)) {
         if (!spoken.has(next)) {
           queue.push(next);
         }
@@ -108,11 +133,36 @@ function mentioned(body: string, memberRows: { id: string; name: string }[]): st
   return speakers(body, memberRows, "").filter((id) => id !== "");
 }
 
-async function replyWithModel(input: TurnInput): Promise<string> {
+function unwrap(result: GenerateResult): { text: string; cacheReadTokens: number | null } {
+  if (typeof result === "string") {
+    return { text: result, cacheReadTokens: null };
+  }
+  return { text: result.text, cacheReadTokens: result.cacheReadTokens ?? null };
+}
+
+/**
+ * Calls the selected provider once.
+ * Input: the agent, the cached prefix, the tail, and the recent messages.
+ * Output: the reply text and the cache read tokens the provider reported.
+ */
+async function replyWithModel(input: TurnInput): Promise<GenerateResult> {
+  const prompt: ModelMessage[] = [
+    input.provider === "anthropic"
+      ? {
+          role: "system",
+          content: input.prefix,
+          providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+        }
+      : { role: "system", content: input.prefix },
+    { role: "system", content: input.tail },
+  ];
   const result = await generateText({
     model: getModel(input.provider, input.modelId),
-    system: input.system,
-    messages: input.messages,
+    messages: prompt,
+    providerOptions:
+      input.provider === "openai"
+        ? { openai: { promptCacheKey: input.promptCacheKey, promptCacheRetention: "24h" } }
+        : undefined,
   });
-  return result.text;
+  return { text: result.text, cacheReadTokens: result.usage.inputTokenDetails.cacheReadTokens ?? null };
 }

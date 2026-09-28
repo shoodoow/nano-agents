@@ -3,7 +3,7 @@ import { and, asc, eq } from "drizzle-orm";
 import type { getDb } from "./db/client.js";
 import { messages, summaryItems } from "./db/schema.js";
 
-type Database = ReturnType<typeof getDb>;
+type Database = Pick<ReturnType<typeof getDb>, "insert" | "select">;
 
 type SliceMessage = { id: string; body: string };
 

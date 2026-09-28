@@ -72,6 +72,7 @@ export const messages = pgTable("messages", {
     .references(() => conversations.id),
   agentId: uuid("agent_id").references(() => agents.id),
   body: text("body").notNull(),
+  cacheReadTokens: integer("cache_read_tokens"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

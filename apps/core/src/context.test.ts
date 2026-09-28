@@ -1,6 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
 import { buildInstructions } from "./build-instructions.js";
 import { buildContext } from "./context.js";
+import { getDb } from "./db/client.js";
+import { conversations, messages } from "./db/schema.js";
+import { createAccount, createAgent } from "./roster.js";
+import { runTurn } from "./turn.js";
 
 const agent = {
   accountId: "account-1",
@@ -42,5 +47,43 @@ describe("buildContext", () => {
     expect(context.openai.promptCacheKey).toBe("account-1:agent-1:3");
     expect(context.openai.promptCacheRetention).toBe("24h");
     expect("truncation" in context.openai).toBe(false);
+  });
+});
+
+describe("runTurn prefix", () => {
+  const databaseUrl = process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/nano_agents";
+  const db = getDb(databaseUrl);
+
+  afterAll(async () => {
+    await db.$client.end();
+  });
+
+  it("reuses the prefix on the next turn and stores the reported cache read tokens", async () => {
+    const account = await createAccount(db, { name: "Cache" });
+    const owner = await createAgent(db, account.id, {
+      name: "Ada",
+      label: "Ada",
+      description: "Keep the ledger.",
+      provider: "openai",
+      modelId: "gpt-5",
+    });
+    const [room] = await db
+      .insert(conversations)
+      .values({ accountId: account.id, kind: "direct", ownerAgentId: owner.id, title: "cache" })
+      .returning();
+    const prefixes: string[] = [];
+    const tails: string[] = [];
+    const generate = async (input: { prefix: string; tail: string }) => {
+      prefixes.push(input.prefix);
+      tails.push(input.tail);
+      return { text: "noted", cacheReadTokens: 40 };
+    };
+    await runTurn(db, account.id, room!.id, "first", generate);
+    await runTurn(db, account.id, room!.id, "second", generate);
+    expect(prefixes[0]).toBe(prefixes[1]);
+    expect(prefixes[1]?.includes("noted")).toBe(false);
+    expect(tails[1]?.includes("noted")).toBe(true);
+    const stored = await db.select().from(messages).where(eq(messages.conversationId, room!.id));
+    expect(stored.filter((message) => message.agentId).map((message) => message.cacheReadTokens)).toEqual([40, 40]);
   });
 });
