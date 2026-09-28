@@ -1,7 +1,11 @@
 import { afterAll, describe, expect, it } from "vitest";
+import type { AddressInfo } from "node:net";
+import { eq } from "drizzle-orm";
 import { getDb } from "../db/client.js";
-import { createAccount } from "../roster/roster.js";
-import { exec, removeAccountContainers } from "./linux.js";
+import { agents } from "../db/schema.js";
+import { startServer } from "../http/server.js";
+import { createAccount, createAgent } from "../roster/roster.js";
+import { createProfile, exec, removeAccountContainers } from "./linux.js";
 
 const databaseUrl = process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/nano_agents";
 const db = getDb(databaseUrl);
@@ -20,4 +24,56 @@ describe("linux", () => {
     const absent = await exec(second.id, ["sh", "-c", "test ! -f /shared/only-first"]);
     expect(absent.code).toBe(0);
   });
+
+  it("keeps homes private and shares /shared", async () => {
+    const account = await createAccount(db, { name: "Profiles" });
+    const ada = await createAgent(db, account.id, hired("Ada"));
+    const bea = await createAgent(db, account.id, hired("Bea"));
+    const adaUser = await createProfile(db, account.id, ada.id);
+    const beaUser = await createProfile(db, account.id, bea.id);
+    expect(adaUser).not.toBe(beaUser);
+
+    const homeMode = await exec(account.id, ["stat", "-c", "%a", `/home/${adaUser}`]);
+    expect(homeMode.stdout.trim()).toBe("700");
+    await exec(account.id, ["sh", "-c", `echo secret > /home/${adaUser}/secret`], adaUser);
+    await exec(account.id, ["sh", "-c", "echo hello > /shared/note && chmod a+r /shared/note"], adaUser);
+    const shared = await exec(account.id, ["cat", "/shared/note"], beaUser);
+    expect(shared.stdout.trim()).toBe("hello");
+    const hidden = await exec(account.id, ["cat", `/home/${adaUser}/secret`], beaUser);
+    expect(hidden.code).not.toBe(0);
+  });
+
+  it("creates one profile per member when a group is opened", async () => {
+    const account = await createAccount(db, { name: "Group" });
+    const ada = await createAgent(db, account.id, hired("Ada"));
+    const bea = await createAgent(db, account.id, hired("Bea"));
+    const server = await startServer(db, 0);
+    const address = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${address.port}/accounts/${account.id}/conversations`, {
+      method: "POST",
+      body: JSON.stringify({
+        kind: "group",
+        title: "desk",
+        ownerAgentId: ada.id,
+        memberAgentIds: [ada.id, bea.id],
+      }),
+    });
+    expect(response.status).toBe(201);
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+    const rows = await db.select().from(agents).where(eq(agents.accountId, account.id));
+    expect(rows.map((row) => row.linuxProfile).every((profile) => profile !== null)).toBe(true);
+    expect(new Set(rows.map((row) => row.linuxProfile)).size).toBe(2);
+  });
 });
+
+function hired(name: string) {
+  return {
+    name,
+    label: name,
+    description: `${name} works here.`,
+    provider: "openai",
+    modelId: "gpt-5",
+  };
+}
