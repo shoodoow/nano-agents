@@ -8,6 +8,13 @@
       "when": 1790602537048,
       "tag": "0000_nasty_sphinx",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790603974889,
+      "tag": "0001_right_imperial_guard",
+      "breakpoints": true
     }
   ]
 }

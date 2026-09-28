@@ -21,3 +21,17 @@ export const agentFlagsSchema = z.object({
 export type Account = z.infer<typeof accountSchema>;
 export type AgentCreate = z.infer<typeof agentCreateSchema>;
 export type AgentFlags = z.infer<typeof agentFlagsSchema>;
+
+export const roomCreateSchema = z.object({
+  kind: z.enum(["direct", "group"]),
+  title: z.string().min(1),
+  ownerAgentId: z.string().uuid(),
+  memberAgentIds: z.array(z.string().uuid()).max(20),
+});
+
+export const messageCreateSchema = z.object({
+  body: z.string().min(1),
+});
+
+export type RoomCreate = z.infer<typeof roomCreateSchema>;
+export type MessageCreate = z.infer<typeof messageCreateSchema>;
