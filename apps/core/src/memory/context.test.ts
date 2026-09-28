@@ -1,11 +1,11 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { buildInstructions } from "./build-instructions.js";
+import { buildInstructions } from "../prompt/build-instructions.js";
 import { buildContext } from "./context.js";
-import { getDb } from "./db/client.js";
-import { conversations, messages } from "./db/schema.js";
-import { createAccount, createAgent } from "./roster.js";
-import { runTurn } from "./turn.js";
+import { getDb } from "../db/client.js";
+import { conversations, messages } from "../db/schema.js";
+import { createAccount, createAgent } from "../roster/roster.js";
+import { runTurn } from "../rooms/turn.js";
 
 const agent = {
   accountId: "account-1",

@@ -1,10 +1,10 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { buildInstructions } from "./build-instructions.js";
-import type { getDb } from "./db/client.js";
-import { addMember, createRoom, readMessage, RoomCapacityError } from "./rooms.js";
-import { createAccount, createAgent, getAgent, updateAgentFlags } from "./roster.js";
-import { approve, reject } from "./proposals.js";
-import { runTurn, type TurnInput } from "./turn.js";
+import { buildInstructions } from "../prompt/build-instructions.js";
+import type { getDb } from "../db/client.js";
+import { addMember, createRoom, readMessage, RoomCapacityError } from "../rooms/rooms.js";
+import { createAccount, createAgent, getAgent, updateAgentFlags } from "../roster/roster.js";
+import { approve, reject } from "../skills/proposals.js";
+import { runTurn, type TurnInput } from "../rooms/turn.js";
 
 type Database = ReturnType<typeof getDb>;
 

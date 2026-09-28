@@ -1,8 +1,8 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { getDb } from "./db/client.js";
-import { conversations, messages } from "./db/schema.js";
+import { getDb } from "../db/client.js";
+import { conversations, messages } from "../db/schema.js";
 import { correct, memoriesFor, readHistory, remember } from "./memory.js";
-import { createAccount, createAgent } from "./roster.js";
+import { createAccount, createAgent } from "../roster/roster.js";
 
 const databaseUrl = process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/nano_agents";
 const db = getDb(databaseUrl);

@@ -1,7 +1,7 @@
 import { memberAddSchema, messageCreateSchema, roomCreateSchema } from "@nano-agents/shared";
 import { and, eq, inArray } from "drizzle-orm";
-import type { getDb } from "./db/client.js";
-import { agents, conversations, members } from "./db/schema.js";
+import type { getDb } from "../db/client.js";
+import { agents, conversations, members } from "../db/schema.js";
 
 type Database = ReturnType<typeof getDb>;
 

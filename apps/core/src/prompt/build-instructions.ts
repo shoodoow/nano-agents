@@ -8,7 +8,7 @@ const promptFileNames = ["identity", "voice", "autonomy", "security", "memory", 
  * Output: the seven static files, in a fixed order, followed by that description. The same files and description always return the same bytes.
  */
 export function buildInstructions(description: string): string {
-  const directory = new URL("../../../prompts/", import.meta.url);
+  const directory = new URL("../../../../prompts/", import.meta.url);
   const sections = promptFileNames.map((name) => readFileSync(new URL(`${name}.md`, directory), "utf8").trim());
   return [...sections, description].join("\n\n");
 }

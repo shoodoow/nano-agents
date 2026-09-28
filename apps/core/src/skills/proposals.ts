@@ -2,9 +2,9 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { proposalSchema } from "@nano-agents/shared";
 import { and, eq, sql } from "drizzle-orm";
-import type { getDb } from "./db/client.js";
-import { agents, proposals } from "./db/schema.js";
-import { remember } from "./memory.js";
+import type { getDb } from "../db/client.js";
+import { agents, proposals } from "../db/schema.js";
+import { remember } from "../memory/memory.js";
 
 type Database = Pick<ReturnType<typeof getDb>, "insert" | "select" | "update">;
 

@@ -4,12 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { getDb } from "./db/client.js";
-import { agents, conversations, messages, proposals } from "./db/schema.js";
+import { getDb } from "../db/client.js";
+import { agents, conversations, messages, proposals } from "../db/schema.js";
 import { approve, propose, reject } from "./proposals.js";
-import { createAccount, createAgent } from "./roster.js";
-import { startServer } from "./server.js";
-import { runTurn } from "./turn.js";
+import { createAccount, createAgent } from "../roster/roster.js";
+import { startServer } from "../http/server.js";
+import { runTurn } from "../rooms/turn.js";
 
 const databaseUrl = process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/nano_agents";
 const db = getDb(databaseUrl);

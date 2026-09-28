@@ -1,7 +1,7 @@
 import { memoryCorrectSchema, memoryFactSchema } from "@nano-agents/shared";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
-import type { getDb } from "./db/client.js";
-import { memories, messages } from "./db/schema.js";
+import type { getDb } from "../db/client.js";
+import { memories, messages } from "../db/schema.js";
 
 type Database = Pick<ReturnType<typeof getDb>, "insert" | "select" | "delete">;
 

@@ -1,8 +1,8 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { getDb } from "./db/client.js";
-import { conversations, messages } from "./db/schema.js";
-import { createAccount, createAgent } from "./roster.js";
+import { getDb } from "../db/client.js";
+import { conversations, messages } from "../db/schema.js";
+import { createAccount, createAgent } from "../roster/roster.js";
 import { foldOldest, mergeSummary } from "./summary.js";
 
 const databaseUrl = process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/nano_agents";

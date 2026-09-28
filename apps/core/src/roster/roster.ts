@@ -1,7 +1,7 @@
 import { accountSchema, agentCreateSchema, agentFlagsSchema, type AgentFlags } from "@nano-agents/shared";
 import { and, eq } from "drizzle-orm";
-import type { getDb } from "./db/client.js";
-import { accounts, agents } from "./db/schema.js";
+import type { getDb } from "../db/client.js";
+import { accounts, agents } from "../db/schema.js";
 
 type Database = ReturnType<typeof getDb>;
 

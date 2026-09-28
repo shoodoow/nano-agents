@@ -1,4 +1,4 @@
-import { buildInstructions } from "./build-instructions.js";
+import { buildInstructions } from "../prompt/build-instructions.js";
 
 const keyOrder = ["decisions", "actions", "open", "entities", "corrections", "topics"];
 

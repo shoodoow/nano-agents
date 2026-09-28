@@ -1,14 +1,14 @@
 import { generateText, type ModelMessage } from "ai";
 import { and, asc, eq } from "drizzle-orm";
-import { buildContext } from "./context.js";
-import type { getDb } from "./db/client.js";
-import { agents, conversations, members, messages, summaryItems } from "./db/schema.js";
-import { getModel } from "./get-model.js";
+import { buildContext } from "../memory/context.js";
+import type { getDb } from "../db/client.js";
+import { agents, conversations, members, messages, summaryItems } from "../db/schema.js";
+import { getModel } from "../model/get-model.js";
 import { speakers } from "./mentions.js";
-import { propose } from "./proposals.js";
-import { skillCatalog } from "./skills.js";
-import { mergeSummary } from "./summary.js";
-import { listTools } from "./tools.js";
+import { propose } from "../skills/proposals.js";
+import { skillCatalog } from "../skills/skills.js";
+import { mergeSummary } from "../memory/summary.js";
+import { listTools } from "../skills/tools.js";
 
 type Db = ReturnType<typeof getDb>;
 
