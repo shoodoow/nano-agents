@@ -1,5 +1,6 @@
 import { finished } from "node:stream/promises";
 import { PassThrough } from "node:stream";
+import type { Socket } from "node:net";
 import Dockerode from "dockerode";
 import { and, eq } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
@@ -51,11 +52,27 @@ export async function createLinux(accountId: string): Promise<string> {
  * Input: the account id, the command argv, and an optional Linux user.
  * Output: the combined stdout and the exit code.
  */
-export async function exec(accountId: string, command: string[], user = "root"): Promise<ExecResult> {
+export async function exec(accountId: string, command: string[], user = "root", env?: string[]): Promise<ExecResult> {
+  const result = await execBytes(accountId, command, user, env);
+  return { stdout: result.stdout.toString("utf8"), code: result.code };
+}
+
+/**
+ * Runs a command and keeps stdout as bytes.
+ * Input: the account id, the command argv, an optional Linux user, and optional environment entries.
+ * Output: the stdout bytes and the exit code.
+ */
+export async function execBytes(
+  accountId: string,
+  command: string[],
+  user = "root",
+  env?: string[],
+): Promise<{ stdout: Buffer; code: number }> {
   const container = docker.getContainer(containerName(accountId));
   const running = await container.exec({
     Cmd: command,
     User: user,
+    Env: env,
     AttachStdout: true,
     AttachStderr: true,
   });
@@ -68,7 +85,33 @@ export async function exec(accountId: string, command: string[], user = "root"):
   container.modem.demuxStream(stream, stdout, stderr);
   await finished(stream);
   const info = await running.inspect();
-  return { stdout: Buffer.concat(chunks).toString("utf8"), code: info.ExitCode ?? 1 };
+  return { stdout: Buffer.concat(chunks), code: info.ExitCode ?? 1 };
+}
+
+/**
+ * Connects a socket to a command's stdin and stdout inside the account container.
+ * Input: the account id, the command argv, and the caller's socket.
+ * Output: nothing. Bytes flow both ways until either side closes.
+ */
+export async function pipeExec(accountId: string, command: string[], socket: Socket): Promise<void> {
+  const container = docker.getContainer(containerName(accountId));
+  const running = await container.exec({
+    Cmd: command,
+    AttachStdin: true,
+    AttachStdout: true,
+    AttachStderr: true,
+  });
+  const stream = await running.start({ hijack: true, stdin: true });
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  stderr.resume();
+  container.modem.demuxStream(stream, stdout, stderr);
+  stdout.pipe(socket, { end: true });
+  socket.on("data", (chunk: Buffer) => {
+    stream.write(chunk);
+  });
+  socket.on("end", () => stream.end());
+  stream.on("error", () => socket.destroy());
 }
 
 /**
