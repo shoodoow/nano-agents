@@ -17,7 +17,12 @@ export async function createAccount(db: Database, input: unknown) {
   if (!row) {
     throw new Error("The account insert returned no row.");
   }
-  await createLinux(row.id);
+  try {
+    await createLinux(row.id);
+  } catch (error) {
+    await db.delete(accounts).where(eq(accounts.id, row.id));
+    throw error;
+  }
   return row;
 }
 

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { buildInstructions } from "../prompt/build-instructions.js";
 
 const keyOrder = ["decisions", "actions", "open", "entities", "corrections", "topics"];
@@ -49,8 +50,16 @@ export function buildContext(input: {
       tail: { body: tail },
     },
     openai: {
-      promptCacheKey: `${input.accountId}:${input.agentId}:${input.promptVersion}`,
+      promptCacheKey: cacheKey(input.accountId, input.agentId, input.promptVersion),
       promptCacheRetention: "24h",
     },
   };
+}
+
+function cacheKey(accountId: string, agentId: string, promptVersion: number): string {
+  const raw = `${accountId}:${agentId}:${promptVersion}`;
+  if (raw.length <= 64) {
+    return raw;
+  }
+  return createHash("sha256").update(raw).digest("hex");
 }

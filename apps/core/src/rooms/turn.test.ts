@@ -3,10 +3,23 @@ import { getDb } from "../db/client.js";
 import { conversations, members, messages } from "../db/schema.js";
 import { eq } from "drizzle-orm";
 import { createAccount, createAgent } from "../roster/roster.js";
-import { runTurn } from "./turn.js";
+import { runTurn, toModelPrompt } from "./turn.js";
 
 const databaseUrl = process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/nano_agents";
 const db = getDb(databaseUrl);
+
+describe("toModelPrompt", () => {
+  it("keeps system text out of the message list", () => {
+    const prompt = toModelPrompt({
+      provider: "openai",
+      prefix: "identity",
+      tail: "summary",
+      messages: [{ role: "user", content: "Hello" }],
+    });
+    expect(prompt.messages).toEqual([{ role: "user", content: "Hello" }]);
+    expect(prompt.instructions.map((item) => item.content)).toEqual(["identity", "summary"]);
+  });
+});
 
 describe("runTurn", () => {
   afterAll(async () => {

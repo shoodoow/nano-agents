@@ -1,7 +1,7 @@
 import { memberAddSchema, messageCreateSchema, roomCreateSchema } from "@nano-agents/shared";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
-import { agents, conversations, members } from "../db/schema.js";
+import { agents, conversations, members, messages } from "../db/schema.js";
 
 type Database = ReturnType<typeof getDb>;
 
@@ -103,4 +103,46 @@ export async function readMessage(db: Database, accountId: string, conversationI
     return null;
   }
   return data.body;
+}
+
+/**
+ * Lists the chats on one account.
+ * Input: a database client and the account id.
+ * Output: that account's conversations. Another account's rooms are omitted.
+ */
+export async function listConversations(db: Database, accountId: string) {
+  return db
+    .select({
+      id: conversations.id,
+      kind: conversations.kind,
+      title: conversations.title,
+      ownerAgentId: conversations.ownerAgentId,
+    })
+    .from(conversations)
+    .where(eq(conversations.accountId, accountId));
+}
+
+/**
+ * Lists the saved messages in one room.
+ * Input: a database client, the account id, and the conversation id.
+ * Output: the messages in time order, or null when the room is outside the account.
+ */
+export async function listMessages(db: Database, accountId: string, conversationId: string) {
+  const [room] = await db
+    .select({ id: conversations.id })
+    .from(conversations)
+    .where(and(eq(conversations.id, conversationId), eq(conversations.accountId, accountId)));
+  if (!room) {
+    return null;
+  }
+  return db
+    .select({
+      id: messages.id,
+      agentId: messages.agentId,
+      body: messages.body,
+      createdAt: messages.createdAt,
+    })
+    .from(messages)
+    .where(and(eq(messages.conversationId, conversationId), eq(messages.accountId, accountId)))
+    .orderBy(asc(messages.createdAt));
 }

@@ -1,10 +1,48 @@
 import { useCallback, useEffect, useState } from "react";
-import { Pressable, StyleSheet, Switch, Text, TextInput, View } from "react-native";
-import { createCore, type Proposal, type RosterAgent } from "./src/api";
+import { Platform, SafeAreaView, StatusBar, StyleSheet, Text } from "react-native";
+import {
+  configureAuthCookie,
+  createCore,
+  type Proposal,
+  type ProviderSetting,
+  type RosterAgent,
+} from "./src/api";
+import { authClient } from "./src/auth";
+import { MenuSheet, type MenuPage, type SignedAccount } from "./src/account/MenuSheet";
+import { ApprovalsScreen } from "./src/approvals/ApprovalsScreen";
+import { ChatScreen, type Bubble } from "./src/chat/ChatScreen";
+import { DesktopScreen } from "./src/desktop/DesktopScreen";
+import { InboxScreen } from "./src/inbox/InboxScreen";
+import { NewRoomSheet } from "./src/inbox/NewRoomSheet";
+import { ProfileScreen } from "./src/profile/ProfileScreen";
+import { colors } from "./src/theme/tokens";
 
+configureAuthCookie(authClient.getCookie);
 const core = createCore();
 
-type Chat = { agent: RosterAgent; conversationId: string };
+/**
+ * Turns saved rows into chat bubbles.
+ * Input: the message rows and the account roster.
+ * Output: bubbles with the speaker name and a clock time.
+ */
+function toBubbles(
+  rows: { id: string; agentId: string | null; body: string; createdAt: string }[],
+  roster: RosterAgent[],
+): Bubble[] {
+  return rows.map((row) => ({
+    id: row.id,
+    author: row.agentId ? (roster.find((agent) => agent.id === row.agentId)?.name ?? "Agent") : "You",
+    body: row.body,
+    time: new Date(row.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }),
+  }));
+}
+
+type Screen =
+  | { name: "inbox" }
+  | { name: "chat"; agent: RosterAgent; conversationId: string }
+  | { name: "desktop"; agent: RosterAgent }
+  | { name: "profile"; agent: RosterAgent }
+  | { name: "approvals" };
 
 /**
  * Shows the roster, a chat, approvals, a profile, and the live desktop.
@@ -12,14 +50,26 @@ type Chat = { agent: RosterAgent; conversationId: string };
  * Output: the phone screens for those actions.
  */
 export default function App() {
+  const [accounts, setAccounts] = useState<SignedAccount[]>([]);
   const [accountId, setAccountId] = useState("");
   const [agents, setAgents] = useState<RosterAgent[]>([]);
-  const [chat, setChat] = useState<Chat | null>(null);
+  const [providers, setProviders] = useState<ProviderSetting[]>([]);
+  const [screen, setScreen] = useState<Screen>({ name: "inbox" });
+  const [menu, setMenu] = useState<MenuPage | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [afterSignup, setAfterSignup] = useState(false);
   const [draft, setDraft] = useState("");
+  const [messages, setMessages] = useState<Bubble[]>([]);
+  const [sending, setSending] = useState(false);
   const [note, setNote] = useState("");
-  const [proposals, setProposals] = useState<Proposal[] | null>(null);
+  const [proposals, setProposals] = useState<Proposal[]>([]);
   const [profile, setProfile] = useState<RosterAgent | null>(null);
-  const [desktop, setDesktop] = useState<string | null>(null);
+  const [conversationId, setConversationId] = useState("");
+  const [notifications, setNotifications] = useState(true);
+  const [autoReview, setAutoReview] = useState(true);
+  const [autoTimeZone, setAutoTimeZone] = useState(true);
+  const account = accounts.find((row) => row.id === accountId) ?? null;
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   /**
    * Shows a request error on the screen.
@@ -31,50 +81,151 @@ export default function App() {
   }, []);
 
   /**
-   * Loads the roster for the typed account.
-   * Input: none. It reads the account id from the field.
-   * Output: nothing. The list becomes that account's agents.
+   * Loads the Google session and the roster for that account id.
+   * Input: none. It reads the session stored on the phone.
+   * Output: nothing. The inbox shows the signed-in account.
    */
-  async function loadRoster(): Promise<void> {
-    const rows = await core.listAgents(accountId.trim());
+  async function refreshSession(): Promise<void> {
+    const session = await authClient.getSession();
+    const signed = session.data?.user;
+    const accountIdFromSession = signed && "accountId" in signed ? String(signed.accountId ?? "") : "";
+    if (!signed || !accountIdFromSession) {
+      return;
+    }
+    const next = { id: accountIdFromSession, name: signed.name, email: signed.email };
+    setAccounts([next]);
+    setAccountId(accountIdFromSession);
+    const [roster, configured] = await Promise.all([
+      core.listAgents(accountIdFromSession),
+      core.listProviders(accountIdFromSession),
+    ]);
+    setAgents(roster);
+    setProviders(configured);
+    setScreen({ name: "inbox" });
+    setMenu(null);
+    setNote("");
+  }
+
+  /**
+   * Signs in with Google and keeps the account id the core creates.
+   * Input: none. Google returns the session.
+   * Output: nothing. Later chats and groups use that account id.
+   */
+  async function signInWithGoogle(): Promise<void> {
+    const callbackURL = Platform.OS === "web" ? globalThis.location.origin : "nano-agents://";
+    const result = await authClient.signIn.social({ provider: "google", callbackURL });
+    if (result.error) {
+      throw new Error(result.error.message ?? "Google sign in failed.");
+    }
+    await refreshSession();
+    if (afterSignup) {
+      setAfterSignup(false);
+      setCreating(true);
+    }
+  }
+
+  useEffect(() => {
+    void refreshSession().catch(show);
+  }, [show]);
+
+  /**
+   * Loads the roster for one signed-in account.
+   * Input: the account id chosen in the switcher.
+   * Output: nothing. The inbox shows that account's agents.
+   */
+  async function switchAccount(id: string): Promise<void> {
+    setAccountId(id);
+    setAgents(await core.listAgents(id));
+    setProviders(await core.listProviders(id));
+    setScreen({ name: "inbox" });
+    setMenu("menu");
+    setNote("");
+  }
+
+  /**
+   * Hires an agent and opens a direct chat on the signed-in account.
+   * Input: the agent name and description from the new-room sheet.
+   * Output: nothing. The chat screen opens for that agent.
+   */
+  async function createChat(
+    name: string,
+    description: string,
+    provider: ProviderSetting["provider"],
+    modelId: string,
+  ): Promise<void> {
+    const hired = await core.hireAgent(accountId, { name, description, provider, modelId });
+    const room = await core.openChat(accountId, hired);
+    const rows = await core.listAgents(accountId);
+    const fresh = rows.find((row) => row.id === hired.id) ?? hired;
     setAgents(rows);
-    setChat(null);
-    setProposals(null);
-    setProfile(null);
-    setDesktop(null);
+    setConversationId(room.id);
+    setScreen({ name: "chat", agent: fresh, conversationId: room.id });
+    setMessages([]);
+    setDraft("");
+    setCreating(false);
+    setNote("");
+  }
+
+  /**
+   * Opens a group for the chosen agents on the signed-in account.
+   * Input: the group title and the member ids.
+   * Output: nothing. The chat screen opens on that group.
+   */
+  async function createGroup(title: string, agentIds: string[]): Promise<void> {
+    const room = await core.createGroup(accountId, title, agentIds);
+    const rows = await core.listAgents(accountId);
+    const owner = rows.find((row) => row.id === agentIds[0]);
+    setAgents(rows);
+    if (!owner) {
+      setCreating(false);
+      return;
+    }
+    setConversationId(room.id);
+    setScreen({ name: "chat", agent: owner, conversationId: room.id });
+    setMessages([]);
+    setDraft("");
+    setCreating(false);
     setNote("");
   }
 
   /**
    * Opens a direct chat with one agent.
    * Input: the agent from the roster.
-   * Output: nothing. The composer is shown for that conversation.
+   * Output: nothing. The conversation screen is shown.
    */
   async function openAgent(agent: RosterAgent): Promise<void> {
-    const room = await core.openChat(accountId.trim(), agent);
-    const rows = await core.listAgents(accountId.trim());
+    const id = accountId.trim();
+    const rooms = await core.listConversations(id);
+    const existing = rooms.find((room) => room.kind === "direct" && room.ownerAgentId === agent.id);
+    const room = existing ?? (await core.openChat(id, agent));
+    const rows = await core.listAgents(id);
     const fresh = rows.find((row) => row.id === agent.id) ?? agent;
+    const history = await core.listMessages(id, room.id);
     setAgents(rows);
-    setChat({ agent: fresh, conversationId: room.id });
-    setProposals(null);
-    setProfile(null);
-    setDesktop(null);
+    setConversationId(room.id);
+    setScreen({ name: "chat", agent: fresh, conversationId: room.id });
+    setMessages(toBubbles(history, rows));
     setDraft("");
     setNote("");
   }
 
   /**
-   * Sends the composer text to the core.
-   * Input: none. It reads the draft, which may contain an @mention.
-   * Output: nothing. The draft clears after the core accepts the message.
+   * Sends the composer text to the core and appends the replies.
+   * Input: the open chat. It reads the draft, which may contain an @mention.
+   * Output: nothing. The thread shows the message and the agent's reply.
    */
-  async function send(): Promise<void> {
-    if (!chat) {
+  async function send(conversationId: string): Promise<void> {
+    const body = draft.trim();
+    if (!body || sending) {
       return;
     }
-    await core.sendMessage(accountId.trim(), chat.conversationId, draft);
+    setSending(true);
+    await core.sendMessage(accountId.trim(), conversationId, body);
+    const history = await core.listMessages(accountId.trim(), conversationId);
+    setMessages(toBubbles(history, agents));
     setDraft("");
-    setNote("Sent.");
+    setNote("");
+    setSending(false);
   }
 
   /**
@@ -87,9 +238,8 @@ export default function App() {
       ? await (accept ? core.approve(accountId.trim(), proposalId) : core.reject(accountId.trim(), proposalId))
       : await core.listProposals(accountId.trim());
     setProposals(next);
-    setChat(null);
-    setProfile(null);
-    setDesktop(null);
+    setScreen({ name: "approvals" });
+    setMenu(null);
     setNote("");
   }
 
@@ -108,153 +258,161 @@ export default function App() {
     setNote("Saved.");
   }
 
+  /**
+   * Saves one account-scoped provider credential and refreshes the safe metadata.
+   * Input: provider name, a new secret or blank to retain it, and an optional local URL.
+   * Output: nothing. The phone never receives the saved secret.
+   */
+  async function saveProvider(
+    provider: ProviderSetting["provider"],
+    secret: string,
+    baseUrl: string | null,
+  ): Promise<void> {
+    await core.saveProvider(accountId, { provider, secret, baseUrl });
+    setProviders(await core.listProviders(accountId));
+    setNote("Provider saved.");
+  }
+
   return (
-    <View style={styles.screen}>
-      <Text style={styles.title}>Roster</Text>
-      <TextInput
-        value={accountId}
-        onChangeText={setAccountId}
-        placeholder="Account id"
-        autoCapitalize="none"
-        style={styles.input}
+    <SafeAreaView style={styles.screen}>
+      <StatusBar barStyle="light-content" />
+      {screen.name === "inbox" ? (
+        <InboxScreen
+          agents={agents}
+          onAccount={() => {
+            if (!account) {
+              setMenu("signup");
+              return;
+            }
+            void core
+              .listProviders(account.id)
+              .then((rows) => {
+                setProviders(rows);
+                setMenu("menu");
+              })
+              .catch(show);
+          }}
+          onNew={() => {
+            if (!accountId) {
+              setAfterSignup(true);
+              setMenu("signup");
+              return;
+            }
+            setCreating(true);
+          }}
+          onOpen={(agent) => void openAgent(agent).catch(show)}
+          menu={
+            menu ? (
+              <MenuSheet
+                page={menu}
+                account={account}
+                accounts={accounts}
+                notifications={notifications}
+                autoReview={autoReview}
+                autoTimeZone={autoTimeZone}
+                timeZone={timeZone}
+                providers={providers}
+                onClose={() => setMenu(null)}
+                onPage={setMenu}
+                onNotifications={setNotifications}
+                onAutoReview={setAutoReview}
+                onAutoTimeZone={setAutoTimeZone}
+                onApprovals={() => void refreshProposals().catch(show)}
+                onComputer={() => {
+                  const agent = agents.find((row) => row.linuxProfile) ?? agents[0];
+                  if (agent) {
+                    setMenu(null);
+                    setScreen({ name: "desktop", agent });
+                  }
+                }}
+                onSaveProvider={(provider, secret, baseUrl) =>
+                  void saveProvider(provider, secret, baseUrl).catch(show)
+                }
+                onGoogle={() => void signInWithGoogle().catch(show)}
+                onSwitch={(id) => void switchAccount(id).catch(show)}
+                onSignOut={() => {
+                  void authClient.signOut().catch(show);
+                  setAccountId("");
+                  setAgents([]);
+                  setMenu("signup");
+                }}
+                onDelete={(id) => {
+                  setAccounts((rows) => rows.filter((row) => row.id !== id));
+                  if (accountId === id) {
+                    setAccountId("");
+                    setAgents([]);
+                    setMenu("signup");
+                  }
+                }}
+              />
+            ) : null
+          }
+        />
+      ) : null}
+      {screen.name === "chat" ? (
+        <ChatScreen
+          agent={screen.agent}
+          messages={messages}
+          draft={draft}
+          sending={sending}
+          error={note}
+          onDraft={setDraft}
+          onSend={() => void send(screen.conversationId).catch(show).finally(() => setSending(false))}
+          onMention={() => setDraft(core.mention(draft, screen.agent.name))}
+          onBack={() => setScreen({ name: "inbox" })}
+          onDesktop={() => setScreen({ name: "desktop", agent: screen.agent })}
+        />
+      ) : null}
+      {screen.name === "desktop" ? (
+        <DesktopScreen
+          accountId={accountId.trim()}
+          agent={screen.agent}
+          onBack={() =>
+            conversationId
+              ? setScreen({ name: "chat", agent: screen.agent, conversationId })
+              : setScreen({ name: "inbox" })
+          }
+          onProfile={() => {
+            setProfile(screen.agent);
+            setScreen({ name: "profile", agent: screen.agent });
+          }}
+          onApprovals={() => void refreshProposals().catch(show)}
+          onError={show}
+        />
+      ) : null}
+      {screen.name === "profile" && profile ? (
+        <ProfileScreen
+          profile={profile}
+          onChange={setProfile}
+          onSave={() => void saveProfile().catch(show)}
+          onBack={() => setScreen({ name: "inbox" })}
+        />
+      ) : null}
+      {screen.name === "approvals" ? (
+        <ApprovalsScreen
+          proposals={proposals}
+          onApprove={(id) => void refreshProposals(id, true).catch(show)}
+          onReject={(id) => void refreshProposals(id, false).catch(show)}
+          onBack={() => setScreen({ name: "inbox" })}
+        />
+      ) : null}
+      {screen.name === "inbox" && note ? <Text style={styles.note}>{note}</Text> : null}
+      {screen.name === "profile" && note ? <Text style={styles.note}>{note}</Text> : null}
+      <NewRoomSheet
+        open={creating}
+        agents={agents}
+        providers={providers}
+        onClose={() => setCreating(false)}
+        onCreateChat={(name, description, provider, modelId) =>
+          void createChat(name, description, provider, modelId).catch(show)
+        }
+        onCreateGroup={(title, agentIds) => void createGroup(title, agentIds).catch(show)}
       />
-      <Pressable onPress={() => void loadRoster().catch(show)} style={styles.button}>
-        <Text style={styles.buttonText}>Load roster</Text>
-      </Pressable>
-      <Pressable onPress={() => void refreshProposals().catch(show)} style={styles.button}>
-        <Text style={styles.buttonText}>Approvals</Text>
-      </Pressable>
-      {agents.map((agent) => (
-        <View key={agent.id}>
-          <Pressable onPress={() => void openAgent(agent).catch(show)}>
-            <Text style={styles.agent}>
-              {agent.name} · {agent.label}
-            </Text>
-          </Pressable>
-          <Pressable onPress={() => setProfile(agent)}>
-            <Text>Edit profile</Text>
-          </Pressable>
-          {agent.linuxProfile ? (
-            <Pressable onPress={() => setDesktop(agent.linuxProfile)}>
-              <Text>Watch</Text>
-            </Pressable>
-          ) : null}
-        </View>
-      ))}
-      {chat ? (
-        <View>
-          <Text style={styles.title}>Chat with {chat.agent.name}</Text>
-          <TextInput value={draft} onChangeText={setDraft} placeholder="Message" style={styles.input} />
-          <Pressable onPress={() => setDraft(core.mention(draft, chat.agent.name))} style={styles.button}>
-            <Text style={styles.buttonText}>Mention @{chat.agent.name}</Text>
-          </Pressable>
-          <Pressable onPress={() => void send().catch(show)} style={styles.button}>
-            <Text style={styles.buttonText}>Send</Text>
-          </Pressable>
-        </View>
-      ) : null}
-      {proposals ? (
-        <View>
-          <Text style={styles.title}>Approvals</Text>
-          {proposals.length === 0 ? <Text>No pending proposals.</Text> : null}
-          {proposals.map((proposal) => (
-            <View key={proposal.id}>
-              <Text>
-                {proposal.kind}: {proposal.body}
-              </Text>
-              <Pressable onPress={() => void refreshProposals(proposal.id, true).catch(show)} style={styles.button}>
-                <Text style={styles.buttonText}>Approve</Text>
-              </Pressable>
-              <Pressable onPress={() => void refreshProposals(proposal.id, false).catch(show)} style={styles.button}>
-                <Text style={styles.buttonText}>Reject</Text>
-              </Pressable>
-            </View>
-          ))}
-        </View>
-      ) : null}
-      {profile ? (
-        <View>
-          <Text style={styles.title}>Profile</Text>
-          <TextInput value={profile.name} onChangeText={(name) => setProfile({ ...profile, name })} style={styles.input} />
-          <TextInput value={profile.label} onChangeText={(label) => setProfile({ ...profile, label })} style={styles.input} />
-          <TextInput
-            value={profile.description}
-            onChangeText={(description) => setProfile({ ...profile, description })}
-            style={styles.input}
-          />
-          <Flag label="Pin" value={profile.pinned} onChange={(pinned) => setProfile({ ...profile, pinned })} />
-          <Flag label="Hide" value={profile.hidden} onChange={(hidden) => setProfile({ ...profile, hidden })} />
-          <Flag label="Notify" value={profile.notify} onChange={(notify) => setProfile({ ...profile, notify })} />
-          <Pressable onPress={() => void saveProfile().catch(show)} style={styles.button}>
-            <Text style={styles.buttonText}>Save profile</Text>
-          </Pressable>
-        </View>
-      ) : null}
-      {desktop ? <Desktop accountId={accountId.trim()} profile={desktop} onError={show} /> : null}
-      {note ? <Text>{note}</Text> : null}
-    </View>
-  );
-}
-
-/**
- * Shows one agent's desktop through the core websocket.
- * Input: the account id, the Linux username, and an error callback.
- * Output: the live frame count plus take-over and hand-back controls.
- */
-function Desktop({
-  accountId,
-  profile,
-  onError,
-}: {
-  accountId: string;
-  profile: string;
-  onError: (error: unknown) => void;
-}) {
-  const [frames, setFrames] = useState(0);
-  const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    const socket = new WebSocket(core.screenUrl(accountId, profile));
-    socket.binaryType = "arraybuffer";
-    socket.onopen = () => setOpen(true);
-    socket.onmessage = () => setFrames((count) => count + 1);
-    socket.onerror = () => onError(new Error("The screen socket failed."));
-    return () => socket.close();
-  }, [accountId, profile, onError]);
-
-  return (
-    <View>
-      <Text style={styles.title}>{open ? `Desktop · ${frames} frames` : "Connecting to the desktop"}</Text>
-      <Pressable onPress={() => void core.takeOver(accountId, profile).catch(onError)} style={styles.button}>
-        <Text style={styles.buttonText}>Take over</Text>
-      </Pressable>
-      <Pressable onPress={() => void core.handBack(accountId, profile).catch(onError)} style={styles.button}>
-        <Text style={styles.buttonText}>Hand back</Text>
-      </Pressable>
-    </View>
-  );
-}
-
-/**
- * Renders one profile switch.
- * Input: the label, the current value, and a change callback.
- * Output: a labeled switch.
- */
-function Flag({ label, value, onChange }: { label: string; value: boolean; onChange: (value: boolean) => void }) {
-  return (
-    <View style={styles.flag}>
-      <Text>{label}</Text>
-      <Switch value={value} onValueChange={onChange} />
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, padding: 24, gap: 12 },
-  title: { fontSize: 22, fontWeight: "600" },
-  input: { borderWidth: 1, borderColor: "#ccc", padding: 10, borderRadius: 8 },
-  button: { backgroundColor: "#111", padding: 12, borderRadius: 8 },
-  buttonText: { color: "#fff" },
-  agent: { fontSize: 18, paddingVertical: 8 },
-  flag: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  screen: { flex: 1, backgroundColor: colors.bg },
+  note: { color: colors.danger, position: "absolute", left: 20, right: 20, bottom: 24, fontSize: 14 },
 });

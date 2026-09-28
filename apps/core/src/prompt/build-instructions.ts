@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs";
 
-const promptFileNames = ["identity", "voice", "autonomy", "security", "memory", "group", "skills"] as const;
+const promptFileNames = ["identity", "voice", "autonomy", "security", "memory", "group", "skills", "computer"] as const;
 
 /**
  * Builds the cacheable standing prompt for one turn.
  * Input: the agent's description.
- * Output: the seven static files, in a fixed order, followed by that description. The same files and description always return the same bytes.
+ * Output: the static files, in a fixed order, followed by that description. The same files and description always return the same bytes.
  */
 export function buildInstructions(description: string): string {
   const directory = new URL("../../../../prompts/", import.meta.url);

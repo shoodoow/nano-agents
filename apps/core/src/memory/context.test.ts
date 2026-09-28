@@ -45,6 +45,14 @@ describe("buildContext", () => {
     expect(context.anthropic.prefix.cacheControl).toEqual({ type: "ephemeral" });
     expect(context.anthropic.tail).toEqual({ body: context.tail });
     expect(context.openai.promptCacheKey).toBe("account-1:agent-1:3");
+    const long = buildContext({
+      ...agent,
+      accountId: "6270c871-e778-44e2-ad9b-cf8c639da2fa",
+      agentId: "11111111-1111-1111-1111-111111111111",
+      summary: [],
+      messages: [],
+    });
+    expect(long.openai.promptCacheKey).toHaveLength(64);
     expect(context.openai.promptCacheRetention).toBe("24h");
     expect("truncation" in context.openai).toBe(false);
   });

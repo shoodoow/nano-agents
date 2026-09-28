@@ -1,4 +1,10 @@
-import { agentProfileSchema, messageCreateSchema, roomCreateSchema, type AgentProfile } from "@nano-agents/shared";
+import {
+  agentCreateSchema,
+  agentProfileSchema,
+  messageCreateSchema,
+  roomCreateSchema,
+  type AgentProfile,
+} from "@nano-agents/shared";
 
 export type RosterAgent = {
   id: string;
@@ -19,10 +25,32 @@ export type Proposal = {
   status: string;
 };
 
+export type ProviderSetting = {
+  provider: "openai" | "anthropic" | "xai" | "local";
+  baseUrl: string | null;
+  configured: boolean;
+};
+
 export type CoreClient = {
   listAgents: (accountId: string) => Promise<RosterAgent[]>;
+  hireAgent: (
+    accountId: string,
+    input: { name: string; description: string; provider: ProviderSetting["provider"]; modelId: string },
+  ) => Promise<RosterAgent>;
+  listProviders: (accountId: string) => Promise<ProviderSetting[]>;
+  saveProvider: (
+    accountId: string,
+    input: { provider: ProviderSetting["provider"]; secret: string; baseUrl: string | null },
+  ) => Promise<ProviderSetting>;
+  listConversations: (accountId: string) => Promise<{ id: string; kind: string; ownerAgentId: string }[]>;
+  listMessages: (accountId: string, conversationId: string) => Promise<{ id: string; agentId: string | null; body: string; createdAt: string }[]>;
   openChat: (accountId: string, agent: RosterAgent) => Promise<{ id: string }>;
-  sendMessage: (accountId: string, conversationId: string, body: string) => Promise<void>;
+  createGroup: (accountId: string, title: string, agentIds: string[]) => Promise<{ id: string }>;
+  sendMessage: (
+    accountId: string,
+    conversationId: string,
+    body: string,
+  ) => Promise<{ replies: { id: string; body: string }[] }>;
   mention: (draft: string, name: string) => string;
   listProposals: (accountId: string) => Promise<Proposal[]>;
   approve: (accountId: string, proposalId: string) => Promise<Proposal[]>;
@@ -34,6 +62,16 @@ export type CoreClient = {
 };
 
 declare const process: { env: { EXPO_PUBLIC_CORE_URL?: string } };
+let readAuthCookie = (): string => "";
+
+/**
+ * Connects normal core requests to Better Auth's secure cookie store.
+ * Input: a function supplied by the Expo auth client.
+ * Output: nothing. Future API calls carry the signed session cookie.
+ */
+export function configureAuthCookie(reader: () => string): void {
+  readAuthCookie = reader;
+}
 
 /**
  * Builds the phone's client for the core HTTP API.
@@ -46,7 +84,13 @@ export function createCore(
 ): CoreClient {
   return {
     listAgents: (accountId) => listAgents(baseUrl, accountId, fetchImpl),
+    hireAgent: (accountId, input) => hireAgent(baseUrl, accountId, input, fetchImpl),
+    listProviders: (accountId) => listProviders(baseUrl, accountId, fetchImpl),
+    saveProvider: (accountId, input) => saveProvider(baseUrl, accountId, input, fetchImpl),
+    listConversations: (accountId) => listConversations(baseUrl, accountId, fetchImpl),
+    listMessages: (accountId, conversationId) => listMessages(baseUrl, accountId, conversationId, fetchImpl),
     openChat: (accountId, agent) => openChat(baseUrl, accountId, agent, fetchImpl),
+    createGroup: (accountId, title, agentIds) => createGroup(baseUrl, accountId, title, agentIds, fetchImpl),
     sendMessage: (accountId, conversationId, body) => sendMessage(baseUrl, accountId, conversationId, body, fetchImpl),
     mention,
     listProposals: (accountId) => listProposals(baseUrl, accountId, fetchImpl),
@@ -60,12 +104,89 @@ export function createCore(
 }
 
 /**
+ * Loads provider configuration without exposing secrets.
+ * Input: the core base URL, the account id, and fetch.
+ * Output: configured provider names and local base URLs.
+ */
+async function listProviders(baseUrl: string, accountId: string, fetchImpl: typeof fetch): Promise<ProviderSetting[]> {
+  return readJson<ProviderSetting[]>(fetchImpl, `${baseUrl}/accounts/${accountId}/providers`);
+}
+
+/**
+ * Saves one encrypted provider credential.
+ * Input: the core base URL, account id, provider, secret, optional local URL, and fetch.
+ * Output: provider metadata only. The secret is never returned.
+ */
+async function saveProvider(
+  baseUrl: string,
+  accountId: string,
+  input: { provider: ProviderSetting["provider"]; secret: string; baseUrl: string | null },
+  fetchImpl: typeof fetch,
+): Promise<ProviderSetting> {
+  return readJson<ProviderSetting>(fetchImpl, `${baseUrl}/accounts/${accountId}/providers`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+}
+
+/**
  * Loads one account's agents.
  * Input: the core base URL, the account id, and fetch.
  * Output: the agents on that account.
  */
 async function listAgents(baseUrl: string, accountId: string, fetchImpl: typeof fetch): Promise<RosterAgent[]> {
   return readJson<RosterAgent[]>(fetchImpl, `${baseUrl}/accounts/${accountId}/agents`);
+}
+
+/**
+ * Hires one agent on the signed-in account.
+ * Input: the core base URL, the account id from signup, the name and description, and fetch.
+ * Output: the saved agent. The chat creates its Linux profile later.
+ */
+async function hireAgent(
+  baseUrl: string,
+  accountId: string,
+  input: { name: string; description: string; provider: ProviderSetting["provider"]; modelId: string },
+  fetchImpl: typeof fetch,
+): Promise<RosterAgent> {
+  const body = agentCreateSchema.parse({
+    name: input.name,
+    label: input.name,
+    description: input.description,
+    provider: input.provider,
+    modelId: input.modelId,
+  });
+  return readJson<RosterAgent>(fetchImpl, `${baseUrl}/accounts/${accountId}/agents`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+/**
+ * Loads the rooms on the signed-in account.
+ * Input: the core base URL, the account id, and fetch.
+ * Output: the conversations, including each room's owner.
+ */
+async function listConversations(
+  baseUrl: string,
+  accountId: string,
+  fetchImpl: typeof fetch,
+): Promise<{ id: string; kind: string; ownerAgentId: string }[]> {
+  return readJson(fetchImpl, `${baseUrl}/accounts/${accountId}/conversations`);
+}
+
+/**
+ * Loads the saved messages for one room.
+ * Input: the core base URL, the account id, the conversation id, and fetch.
+ * Output: the messages in time order.
+ */
+async function listMessages(
+  baseUrl: string,
+  accountId: string,
+  conversationId: string,
+  fetchImpl: typeof fetch,
+): Promise<{ id: string; agentId: string | null; body: string; createdAt: string }[]> {
+  return readJson(fetchImpl, `${baseUrl}/conversations/${conversationId}/messages?accountId=${accountId}`);
 }
 
 /**
@@ -92,9 +213,37 @@ async function openChat(
 }
 
 /**
+ * Opens a group on the signed-in account.
+ * Input: the core base URL, the account id from signup, the title, the member ids, and fetch.
+ * Output: the conversation id. The first member owns the room.
+ */
+async function createGroup(
+  baseUrl: string,
+  accountId: string,
+  title: string,
+  agentIds: string[],
+  fetchImpl: typeof fetch,
+): Promise<{ id: string }> {
+  const ownerAgentId = agentIds[0];
+  if (!ownerAgentId) {
+    throw new Error("A group needs an agent.");
+  }
+  const body = roomCreateSchema.parse({
+    kind: "group",
+    title,
+    ownerAgentId,
+    memberAgentIds: agentIds,
+  });
+  return readJson<{ id: string }>(fetchImpl, `${baseUrl}/accounts/${accountId}/conversations`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+/**
  * Sends a chat message, including any @mention in the text.
  * Input: the core base URL, the account id, the conversation id, the message text, and fetch.
- * Output: nothing. The core stores the message and wakes the mentioned agents.
+ * Output: the replies the core saved for this turn.
  */
 async function sendMessage(
   baseUrl: string,
@@ -102,12 +251,17 @@ async function sendMessage(
   conversationId: string,
   body: string,
   fetchImpl: typeof fetch,
-): Promise<void> {
+): Promise<{ replies: { id: string; body: string }[] }> {
   const message = messageCreateSchema.parse({ body });
-  await readJson(fetchImpl, `${baseUrl}/conversations/${conversationId}/messages?accountId=${accountId}`, {
-    method: "POST",
-    body: JSON.stringify(message),
-  });
+  const saved = await readJson<{ replies?: { id: string; body: string }[] }>(
+    fetchImpl,
+    `${baseUrl}/conversations/${conversationId}/messages?accountId=${accountId}`,
+    {
+      method: "POST",
+      body: JSON.stringify(message),
+    },
+  );
+  return { replies: saved.replies ?? [] };
 }
 
 /**
@@ -205,9 +359,14 @@ export function mention(draft: string, name: string): string {
 }
 
 async function readJson<T>(fetchImpl: typeof fetch, url: string, init?: RequestInit): Promise<T> {
-  const response = await fetchImpl(url, { ...init, headers: { "content-type": "application/json", ...init?.headers } });
+  const cookie = readAuthCookie();
+  const response = await fetchImpl(url, {
+    ...init,
+    headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}), ...init?.headers },
+  });
   if (!response.ok) {
-    throw new Error(`Core returned ${response.status}.`);
+    const failure = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(failure?.error ?? `Core returned ${response.status}.`);
   }
   return response.json() as Promise<T>;
 }

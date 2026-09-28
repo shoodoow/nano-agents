@@ -1,8 +1,9 @@
-import { generateText, jsonSchema, tool, type ModelMessage } from "ai";
+import { generateText, jsonSchema, tool, type ModelMessage, type SystemModelMessage } from "ai";
 import { and, asc, eq } from "drizzle-orm";
 import { buildContext } from "../memory/context.js";
 import type { getDb } from "../db/client.js";
 import { agents, conversations, members, messages, summaryItems } from "../db/schema.js";
+import { keyFor } from "../keys/keys.js";
 import { getModel } from "../model/get-model.js";
 import { speakers } from "./mentions.js";
 import { propose } from "../skills/proposals.js";
@@ -10,6 +11,7 @@ import { skillCatalog } from "../skills/skills.js";
 import { mergeSummary } from "../memory/summary.js";
 import { listTools } from "../skills/tools.js";
 import { bash, readFile, writeFile } from "../computer/computer.js";
+import { accountHome, accountShared } from "../linux/linux.js";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -45,7 +47,7 @@ export async function runTurn(
   accountId: string,
   conversationId: string,
   body: string,
-  generate: (input: TurnInput) => Promise<GenerateResult> = replyWithModel,
+  generate: (input: TurnInput) => Promise<GenerateResult> = (input) => replyWithModel(db, input),
   skillsRoot?: string,
 ) {
   return db.transaction(async (tx) => {
@@ -111,7 +113,15 @@ export async function runTurn(
         tools: listTools([]).map((tool) => tool.name),
         catalog,
       });
-      const result = unwrap(
+      let result: ReturnType<typeof unwrap>;
+      console.log(context.prefix);
+      console.log(context.tail);
+      console.log(context.openai.promptCacheKey);
+      console.log(context.openai.promptCacheRetention);
+      console.log(context.openai.promptCacheKey);
+      console.log(history.map((message) => ({ role: message.agentId ? "assistant" : "user", content: message.body })));
+      try {
+        result = unwrap(
         await generate({
           agentId,
           provider: agent.provider,
@@ -127,7 +137,16 @@ export async function runTurn(
             content: message.body,
           })),
         }),
-      );
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        result = {
+          text: message.startsWith("Add an API key")
+            ? message
+            : "The model provider failed. Check the provider key, model id, and endpoint.",
+          cacheReadTokens: null,
+        };
+      }
       const [saved] = await tx
         .insert(messages)
         .values({
@@ -160,9 +179,11 @@ export async function runTurn(
 }
 
 function linuxTools(accountId: string, profile: string) {
+  const home = accountHome(accountId, profile);
+  const shared = accountShared(accountId);
   return {
     read: tool({
-      description: "Read a file in this agent's home or /shared.",
+      description: `Read a file in ${home} or ${shared}.`,
       inputSchema: jsonSchema<{ path: string }>({
         type: "object",
         properties: { path: { type: "string" } },
@@ -171,7 +192,7 @@ function linuxTools(accountId: string, profile: string) {
       execute: async ({ path }) => readFile(accountId, profile, path),
     }),
     write: tool({
-      description: "Write a file in this agent's home or /shared.",
+      description: `Write a file in ${home} or ${shared}.`,
       inputSchema: jsonSchema<{ path: string; body: string }>({
         type: "object",
         properties: { path: { type: "string" }, body: { type: "string" } },
@@ -183,7 +204,7 @@ function linuxTools(accountId: string, profile: string) {
       },
     }),
     bash: tool({
-      description: "Run a shell command as this agent.",
+      description: "Run a shell command on your Linux computer. The desktop display is set, so chromium and xterm open on your screen.",
       inputSchema: jsonSchema<{ command: string }>({
         type: "object",
         properties: { command: { type: "string" } },
@@ -214,21 +235,42 @@ function unwrap(result: GenerateResult): {
  * Input: the agent, the cached prefix, the tail, and the recent messages.
  * Output: the reply text and the cache read tokens the provider reported.
  */
-async function replyWithModel(input: TurnInput): Promise<GenerateResult> {
-  const prompt: ModelMessage[] = [
+/**
+ * Splits a turn into instructions and chat messages.
+ * Input: the provider, the cached prefix, the tail, and the recent messages.
+ * Output: system text in `instructions`, and only user or assistant rows in `messages`.
+ */
+export function toModelPrompt(input: Pick<TurnInput, "provider" | "prefix" | "tail" | "messages">): {
+  instructions: SystemModelMessage[];
+  messages: ModelMessage[];
+} {
+  const prefix: SystemModelMessage =
     input.provider === "anthropic"
       ? {
           role: "system",
           content: input.prefix,
           providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
         }
-      : { role: "system", content: input.prefix },
-    { role: "system", content: input.tail },
-  ];
+      : { role: "system", content: input.prefix };
+  return {
+    instructions: [prefix, { role: "system", content: input.tail }],
+    messages: input.messages,
+  };
+}
+
+/**
+ * Calls the selected provider once.
+ * Input: the agent, the cached prefix, the tail, and the recent messages.
+ * Output: the reply text and the cache read tokens the provider reported.
+ */
+async function replyWithModel(db: Db, input: TurnInput): Promise<GenerateResult> {
+  const credential = await keyFor(db, input.accountId, input.provider);
+  const prompt = toModelPrompt(input);
   const profile = input.linuxProfile;
   const result = await generateText({
-    model: getModel(input.provider, input.modelId),
-    messages: prompt,
+    model: getModel(input.provider, input.modelId, credential.apiKey, credential.baseUrl),
+    instructions: prompt.instructions,
+    messages: prompt.messages,
     tools: profile ? linuxTools(input.accountId, profile) : undefined,
     providerOptions:
       input.provider === "openai"

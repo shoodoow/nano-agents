@@ -1,0 +1,115 @@
+import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
+import { providerKeySchema } from "@nano-agents/shared";
+import { and, eq } from "drizzle-orm";
+import type { getDb } from "../db/client.js";
+import { providerKeys } from "../db/schema.js";
+
+type Database = ReturnType<typeof getDb>;
+
+export type StoredKey = { provider: string; baseUrl: string | null; configured: boolean };
+
+/**
+ * Lists the providers this account has saved.
+ * Input: a database client and the account id.
+ * Output: the provider names and local base URLs. The secret is never included.
+ */
+export async function listProviderKeys(db: Database, accountId: string): Promise<StoredKey[]> {
+  const rows = await db
+    .select({ provider: providerKeys.provider, baseUrl: providerKeys.baseUrl, secret: providerKeys.secret })
+    .from(providerKeys)
+    .where(eq(providerKeys.accountId, accountId));
+  return rows.map((row) => ({
+    provider: row.provider,
+    baseUrl: row.baseUrl,
+    configured: open(row.secret).length > 0 || row.provider === "local",
+  }));
+}
+
+/**
+ * Saves one provider secret for one account.
+ * Input: a database client, the account id, and the provider, secret, and optional base URL.
+ * Output: the saved provider without the secret. A blank secret keeps the previous secret.
+ */
+export async function saveProviderKey(db: Database, accountId: string, input: unknown): Promise<StoredKey> {
+  const data = providerKeySchema.parse(input);
+  if (data.provider === "local" && data.baseUrl) {
+    assertSafeProviderUrl(data.baseUrl);
+  }
+  const [existing] = await db
+    .select()
+    .from(providerKeys)
+    .where(and(eq(providerKeys.accountId, accountId), eq(providerKeys.provider, data.provider)));
+  const plain = data.secret.trim() || (existing ? open(existing.secret) : "");
+  const baseUrl = data.provider === "local" ? (data.baseUrl ?? null) : null;
+  const secret = seal(plain);
+  if (existing) {
+    await db
+      .update(providerKeys)
+      .set({ secret, baseUrl })
+      .where(and(eq(providerKeys.accountId, accountId), eq(providerKeys.provider, data.provider)));
+  } else {
+    await db.insert(providerKeys).values({ accountId, provider: data.provider, secret, baseUrl });
+  }
+  return { provider: data.provider, baseUrl, configured: plain.length > 0 || data.provider === "local" };
+}
+
+function assertSafeProviderUrl(value: string): void {
+  const url = new URL(value);
+  if (url.username || url.password) {
+    throw new Error("The provider URL cannot contain credentials.");
+  }
+  if (process.env.NODE_ENV === "production" && url.protocol !== "https:") {
+    throw new Error("A production provider URL must use HTTPS.");
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("The provider URL must use HTTP or HTTPS.");
+  }
+}
+
+/**
+ * Reads the secret the model call should use.
+ * Input: a database client, the account id, and the provider name.
+ * Output: the API key and the local base URL. Another account's key is not returned.
+ */
+export async function keyFor(db: Database, accountId: string, provider: string): Promise<{ apiKey: string; baseUrl: string | null }> {
+  const [row] = await db
+    .select()
+    .from(providerKeys)
+    .where(and(eq(providerKeys.accountId, accountId), eq(providerKeys.provider, provider)));
+  if (!row) {
+    throw new Error(`Add an API key for ${provider}.`);
+  }
+  return { apiKey: open(row.secret), baseUrl: row.baseUrl };
+}
+
+/**
+ * Encrypts a provider secret.
+ * Input: the plain secret.
+ * Output: an iv, tag, and ciphertext that only this process secret can open.
+ */
+export function seal(plain: string): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", keyMaterial(), iv);
+  const encrypted = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
+  return `${iv.toString("base64url")}.${cipher.getAuthTag().toString("base64url")}.${encrypted.toString("base64url")}`;
+}
+
+/**
+ * Decrypts a provider secret.
+ * Input: the stored seal.
+ * Output: the plain secret.
+ */
+export function open(sealed: string): string {
+  const [iv, tag, body] = sealed.split(".");
+  if (!iv || !tag || !body) {
+    throw new Error("The stored key is unreadable.");
+  }
+  const decipher = createDecipheriv("aes-256-gcm", keyMaterial(), Buffer.from(iv, "base64url"));
+  decipher.setAuthTag(Buffer.from(tag, "base64url"));
+  return Buffer.concat([decipher.update(Buffer.from(body, "base64url")), decipher.final()]).toString("utf8");
+}
+
+function keyMaterial(): Buffer {
+  const secret = process.env.BETTER_AUTH_SECRET ?? "dev-only-secret-change-before-production-01";
+  return scryptSync(secret, "nano-provider-keys", 32);
+}

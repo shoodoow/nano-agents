@@ -30,6 +30,19 @@ describe("server", () => {
     await db.$client.end();
   });
 
+  it("answers the local Expo web preflight", async () => {
+    const response = await fetch(`${baseUrl}/api/auth/get-session`, {
+      method: "OPTIONS",
+      headers: {
+        origin: "http://127.0.0.1:8081",
+        "access-control-request-method": "GET",
+        "access-control-request-headers": "content-type",
+      },
+    });
+    expect(response.status).toBe(204);
+    expect(response.headers.get("access-control-allow-origin")).toBe("http://127.0.0.1:8081");
+  });
+
   it("hires an agent, updates pin, and returns a prompt that starts with identity", async () => {
     const accountResponse = await fetch(`${baseUrl}/accounts`, {
       method: "POST",

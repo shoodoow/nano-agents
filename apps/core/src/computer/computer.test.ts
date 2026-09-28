@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "vitest";
 import { getDb } from "../db/client.js";
 import { createAgent, createAccount } from "../roster/roster.js";
-import { createProfile, removeAccountContainers } from "../linux/linux.js";
+import { accountHome, accountShared, createProfile, removeAccountContainers } from "../linux/linux.js";
 import { bash, readFile, writeFile } from "./computer.js";
 
 const databaseUrl = process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/nano_agents";
@@ -18,10 +18,10 @@ test("shares a file and refuses another home", async () => {
   const bea = await createAgent(db, account.id, hired("Bea"));
   const adaUser = await createProfile(db, account.id, ada.id);
   const beaUser = await createProfile(db, account.id, bea.id);
-  await writeFile(account.id, adaUser, "/shared/note", "hello");
-  await expect(readFile(account.id, beaUser, "/shared/note")).resolves.toBe("hello");
-  await writeFile(account.id, adaUser, `/home/${adaUser}/secret`, "private");
-  await expect(readFile(account.id, beaUser, `/home/${adaUser}/secret`)).rejects.toThrow(/outside/);
+  await writeFile(account.id, adaUser, `${accountShared(account.id)}/note`, "hello");
+  await expect(readFile(account.id, beaUser, `${accountShared(account.id)}/note`)).resolves.toBe("hello");
+  await writeFile(account.id, adaUser, `${accountHome(account.id, adaUser)}/secret`, "private");
+  await expect(readFile(account.id, beaUser, `${accountHome(account.id, adaUser)}/secret`)).rejects.toThrow(/outside/);
   await expect(bash(account.id, beaUser, "whoami")).resolves.toBe(`${beaUser}\n`);
 });
 

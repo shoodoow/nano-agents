@@ -2,9 +2,11 @@
   "expo": {
     "name": "Nano Agents",
     "slug": "nano-agents",
+    "scheme": "nano-agents",
     "version": "1.0.0",
     "orientation": "portrait",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#000000",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,

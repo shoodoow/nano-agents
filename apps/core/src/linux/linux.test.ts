@@ -5,7 +5,7 @@ import { getDb } from "../db/client.js";
 import { agents } from "../db/schema.js";
 import { startServer } from "../http/server.js";
 import { createAccount, createAgent } from "../roster/roster.js";
-import { createProfile, exec, removeAccountContainers } from "./linux.js";
+import { accountHome, accountShared, createProfile, exec, removeAccountContainers } from "./linux.js";
 
 const databaseUrl = process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/nano_agents";
 const db = getDb(databaseUrl);
@@ -16,12 +16,12 @@ describe("linux", () => {
     await db.$client.end();
   });
 
-  it("gives each account its own container", async () => {
+  it("gives each account its own Linux", async () => {
     const first = await createAccount(db, { name: "One" });
     const second = await createAccount(db, { name: "Two" });
-    const write = await exec(first.id, ["sh", "-c", "echo secret > /shared/only-first"]);
+    const write = await exec(first.id, ["sh", "-c", `echo secret > ${accountShared(first.id)}/only-first`]);
     expect(write.code).toBe(0);
-    const absent = await exec(second.id, ["sh", "-c", "test ! -f /shared/only-first"]);
+    const absent = await exec(second.id, ["sh", "-c", `test ! -f ${accountShared(second.id)}/only-first`]);
     expect(absent.code).toBe(0);
   });
 
@@ -33,13 +33,13 @@ describe("linux", () => {
     const beaUser = await createProfile(db, account.id, bea.id);
     expect(adaUser).not.toBe(beaUser);
 
-    const homeMode = await exec(account.id, ["stat", "-c", "%a", `/home/${adaUser}`]);
+    const homeMode = await exec(account.id, ["stat", "-c", "%a", accountHome(account.id, adaUser)]);
     expect(homeMode.stdout.trim()).toBe("700");
-    await exec(account.id, ["sh", "-c", `echo secret > /home/${adaUser}/secret`], adaUser);
-    await exec(account.id, ["sh", "-c", "echo hello > /shared/note && chmod a+r /shared/note"], adaUser);
-    const shared = await exec(account.id, ["cat", "/shared/note"], beaUser);
+    await exec(account.id, ["sh", "-c", `echo secret > ${accountHome(account.id, adaUser)}/secret`], adaUser);
+    await exec(account.id, ["sh", "-c", `echo hello > ${accountShared(account.id)}/note && chmod a+r ${accountShared(account.id)}/note`], adaUser);
+    const shared = await exec(account.id, ["cat", `${accountShared(account.id)}/note`], beaUser);
     expect(shared.stdout.trim()).toBe("hello");
-    const hidden = await exec(account.id, ["cat", `/home/${adaUser}/secret`], beaUser);
+    const hidden = await exec(account.id, ["cat", `${accountHome(account.id, adaUser)}/secret`], beaUser);
     expect(hidden.code).not.toBe(0);
   });
 

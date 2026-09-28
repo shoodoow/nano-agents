@@ -1,15 +1,34 @@
 import { z } from "zod";
 
 export const accountSchema = z.object({
-  name: z.string().min(1),
+  name: z.string().trim().min(1).max(100),
 });
 
+export const providerNames = ["openai", "anthropic", "xai", "local"] as const;
+
+export const providerKeySchema = z
+  .object({
+    provider: z.enum(providerNames),
+    secret: z.string().max(16_384),
+    baseUrl: z.string().url().max(2_048).nullable().optional(),
+  })
+  .superRefine((value, context) => {
+    if (value.provider === "local" && !value.baseUrl) {
+      context.addIssue({ code: "custom", message: "A local provider needs a base URL." });
+    }
+    if (value.provider !== "local" && value.secret.trim().length === 0) {
+      context.addIssue({ code: "custom", message: "The API key is required." });
+    }
+  });
+
+export type ProviderKey = z.infer<typeof providerKeySchema>;
+
 export const agentCreateSchema = z.object({
-  name: z.string().min(1),
-  label: z.string().min(1),
-  description: z.string().min(1),
-  provider: z.string().min(1),
-  modelId: z.string().min(1),
+  name: z.string().trim().min(1).max(100),
+  label: z.string().trim().min(1).max(100),
+  description: z.string().trim().min(1).max(10_000),
+  provider: z.enum(providerNames),
+  modelId: z.string().trim().min(1).max(200),
 });
 
 export const agentFlagsSchema = z.object({
@@ -19,9 +38,9 @@ export const agentFlagsSchema = z.object({
 });
 
 export const agentProfileSchema = agentFlagsSchema.extend({
-  name: z.string().min(1).optional(),
-  label: z.string().min(1).optional(),
-  description: z.string().min(1).optional(),
+  name: z.string().trim().min(1).max(100).optional(),
+  label: z.string().trim().min(1).max(100).optional(),
+  description: z.string().trim().min(1).max(10_000).optional(),
 });
 
 export type Account = z.infer<typeof accountSchema>;
@@ -31,13 +50,13 @@ export type AgentProfile = z.infer<typeof agentProfileSchema>;
 
 export const roomCreateSchema = z.object({
   kind: z.enum(["direct", "group"]),
-  title: z.string().min(1),
+  title: z.string().trim().min(1).max(200),
   ownerAgentId: z.string().uuid(),
   memberAgentIds: z.array(z.string().uuid()).max(20),
 });
 
 export const messageCreateSchema = z.object({
-  body: z.string().min(1),
+  body: z.string().trim().min(1).max(100_000),
 });
 
 export const memberAddSchema = z.object({

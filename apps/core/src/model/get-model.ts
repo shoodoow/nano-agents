@@ -8,14 +8,16 @@ import type { LanguageModel } from "ai";
  * Input: provider name and model id. Output: the SDK model object used by generateText.
  * This is the only place that chooses a provider package.
  */
-export function getModel(provider: string, modelId: string): LanguageModel {
+export function getModel(provider: string, modelId: string, apiKey = "", baseUrl?: string | null): LanguageModel {
   switch (provider) {
     case "openai":
-      return createOpenAI({ apiKey: process.env.OPENAI_API_KEY })(modelId);
+      return createOpenAI({ apiKey })(modelId);
     case "anthropic":
-      return createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY })(modelId);
+      return createAnthropic({ apiKey })(modelId);
     case "xai":
-      return createXai({ apiKey: process.env.XAI_API_KEY })(modelId);
+      return createXai({ apiKey })(modelId);
+    case "local":
+      return createOpenAI({ apiKey: apiKey || "local", baseURL: baseUrl ?? undefined })(modelId);
     default:
       throw new Error(`Unknown provider ${provider}`);
   }

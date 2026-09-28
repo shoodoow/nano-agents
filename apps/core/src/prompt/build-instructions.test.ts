@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { buildInstructions } from "./build-instructions.js";
 
-const fileNames = ["identity", "voice", "autonomy", "security", "memory", "group", "skills"] as const;
+const fileNames = ["identity", "voice", "autonomy", "security", "memory", "group", "skills", "computer"] as const;
 const promptsDirectory = new URL("../../../../prompts/", import.meta.url);
 
 function promptText(name: (typeof fileNames)[number]): string {

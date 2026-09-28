@@ -6,7 +6,8 @@ import type { getDb } from "../db/client.js";
 import { agents } from "../db/schema.js";
 
 const image = "nano-agents-linux:1";
-const memoryBytes = 256 * 1024 * 1024;
+const memoryBytes = 10 * 1024 * 1024 * 1024;
+const storageSize = "50G";
 
 const docker = new Dockerode({
   socketPath: process.env.DOCKER_SOCKET ?? "/var/run/docker.sock",
@@ -15,18 +16,44 @@ const docker = new Dockerode({
 export type ExecResult = { stdout: string; code: number };
 
 /**
- * Starts the account's Linux container.
+ * Returns the directory every agent on this account's Linux can use.
+ * Input: the account id. The container already belongs to that account.
+ * Output: /shared inside that account's Linux.
+ */
+export function accountShared(_accountId: string): string {
+  return "/shared";
+}
+
+/**
+ * Returns one agent's home on that account's Linux.
+ * Input: the account id and the Linux username.
+ * Output: the absolute home path. Another account's container does not have this home.
+ */
+export function accountHome(_accountId: string, profile: string): string {
+  return `/home/${profile}`;
+}
+
+/**
+ * Starts one Linux container for one account.
  * Input: the account id.
- * Output: the container id. The container has a private volume and a /shared directory mode 1777.
+ * Output: the container id. A second call returns the container that is already running.
  */
 export async function createLinux(accountId: string): Promise<string> {
   await ensureImage();
   const name = containerName(accountId);
-  const previous = docker.getContainer(name);
+  const existing = docker.getContainer(name);
   try {
-    await previous.remove({ force: true });
-  } catch {
-    // The account has no container yet.
+    const info = await existing.inspect();
+    if (!info.State.Running) {
+      await existing.start();
+    }
+    await ensureMemory(existing, info.HostConfig?.Memory ?? 0);
+    return info.Id;
+  } catch (error) {
+    const status = (error as { statusCode?: number }).statusCode;
+    if (status !== 404) {
+      throw error;
+    }
   }
   const container = await docker.createContainer({
     name,
@@ -34,7 +61,9 @@ export async function createLinux(accountId: string): Promise<string> {
     Labels: { "nano.account": accountId },
     HostConfig: {
       Memory: memoryBytes,
-      NanoCpus: 250_000_000,
+      MemorySwap: memoryBytes,
+      NanoCpus: 2_000_000_000,
+      StorageOpt: { size: storageSize },
       Binds: [`nano-account-${accountId}:/var/nano`],
     },
   });
@@ -134,7 +163,7 @@ export async function createProfile(db: ReturnType<typeof getDb>, accountId: str
     return agent.linuxProfile;
   }
   const username = `u${agentId.replaceAll("-", "").slice(0, 16)}`;
-  const home = `/home/${username}`;
+  const home = accountHome(accountId, username);
   const added = await exec(accountId, ["useradd", "-m", "-d", home, "-s", "/bin/bash", username]);
   if (added.code !== 0 && !added.stdout.includes("already exists")) {
     throw new Error(added.stdout || "The Linux user was not created.");
@@ -174,6 +203,13 @@ export async function removeAccountContainers(): Promise<void> {
 
 function containerName(accountId: string): string {
   return `nano-${accountId}`;
+}
+
+async function ensureMemory(container: Dockerode.Container, current: number): Promise<void> {
+  if (current >= memoryBytes) {
+    return;
+  }
+  await container.update({ Memory: memoryBytes, MemorySwap: memoryBytes });
 }
 
 async function ensureImage(): Promise<void> {
