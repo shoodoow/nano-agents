@@ -62,6 +62,15 @@ export async function updateAgentFlags(db: Database, accountId: string, agentId:
 }
 
 /**
+ * Lists the agents on one account.
+ * Input: a database client and the account id.
+ * Output: that account's agents. Another account's agents are not included.
+ */
+export async function listAgents(db: Database, accountId: string) {
+  return db.select().from(agents).where(eq(agents.accountId, accountId));
+}
+
+/**
  * Reads one agent that belongs to an account.
  * Input: a database client, the account id, and the agent id.
  * Output: the agent row, or null when the account does not own it.

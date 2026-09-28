@@ -1,0 +1,20 @@
+{
+  "expo": {
+    "name": "Nano Agents",
+    "slug": "nano-agents",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.nanoagents.app"
+    },
+    "android": {
+      "package": "com.nanoagents.app"
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}

@@ -3,7 +3,7 @@ import type { Duplex } from "node:stream";
 import { buildInstructions } from "../prompt/build-instructions.js";
 import type { getDb } from "../db/client.js";
 import { addMember, createRoom, readMessage, RoomCapacityError } from "../rooms/rooms.js";
-import { createAccount, createAgent, getAgent, updateAgentFlags } from "../roster/roster.js";
+import { createAccount, createAgent, getAgent, listAgents, updateAgentFlags } from "../roster/roster.js";
 import { approve, reject } from "../skills/proposals.js";
 import { createProfile, pipeExec } from "../linux/linux.js";
 import { handBack, profileOnAccount, startDesktop, takeOver } from "../desktop/desktop.js";
@@ -58,6 +58,11 @@ async function handle(
   if (request.method === "POST" && url.pathname === "/accounts") {
     const created = await createAccount(db, JSON.parse(await readBody(request)));
     sendJson(response, 201, created);
+    return;
+  }
+
+  if (request.method === "GET" && accountMatch) {
+    sendJson(response, 200, await listAgents(db, accountMatch[1] ?? ""));
     return;
   }
 
