@@ -1,4 +1,4 @@
-import { generateText, type ModelMessage } from "ai";
+import { generateText, jsonSchema, tool, type ModelMessage } from "ai";
 import { and, asc, eq } from "drizzle-orm";
 import { buildContext } from "../memory/context.js";
 import type { getDb } from "../db/client.js";
@@ -9,6 +9,7 @@ import { propose } from "../skills/proposals.js";
 import { skillCatalog } from "../skills/skills.js";
 import { mergeSummary } from "../memory/summary.js";
 import { listTools } from "../skills/tools.js";
+import { bash, readFile, writeFile } from "../computer/computer.js";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -21,6 +22,8 @@ export type TurnInput = {
   tail: string;
   promptCacheKey: string;
   messages: { role: "user" | "assistant"; content: string }[];
+  accountId: string;
+  linuxProfile: string | null;
 };
 
 type GenerateResult =
@@ -117,6 +120,8 @@ export async function runTurn(
           prefix: context.prefix,
           tail: context.tail,
           promptCacheKey: context.openai.promptCacheKey,
+          accountId,
+          linuxProfile: agent.linuxProfile,
           messages: history.map((message) => ({
             role: message.agentId ? "assistant" : "user",
             content: message.body,
@@ -154,6 +159,41 @@ export async function runTurn(
   });
 }
 
+function linuxTools(accountId: string, profile: string) {
+  return {
+    read: tool({
+      description: "Read a file in this agent's home or /shared.",
+      inputSchema: jsonSchema<{ path: string }>({
+        type: "object",
+        properties: { path: { type: "string" } },
+        required: ["path"],
+      }),
+      execute: async ({ path }) => readFile(accountId, profile, path),
+    }),
+    write: tool({
+      description: "Write a file in this agent's home or /shared.",
+      inputSchema: jsonSchema<{ path: string; body: string }>({
+        type: "object",
+        properties: { path: { type: "string" }, body: { type: "string" } },
+        required: ["path", "body"],
+      }),
+      execute: async ({ path, body }) => {
+        await writeFile(accountId, profile, path, body);
+        return "Wrote the file.";
+      },
+    }),
+    bash: tool({
+      description: "Run a shell command as this agent.",
+      inputSchema: jsonSchema<{ command: string }>({
+        type: "object",
+        properties: { command: { type: "string" } },
+        required: ["command"],
+      }),
+      execute: async ({ command }) => bash(accountId, profile, command),
+    }),
+  };
+}
+
 function mentioned(body: string, memberRows: { id: string; name: string }[]): string[] {
   return speakers(body, memberRows, "").filter((id) => id !== "");
 }
@@ -185,9 +225,11 @@ async function replyWithModel(input: TurnInput): Promise<GenerateResult> {
       : { role: "system", content: input.prefix },
     { role: "system", content: input.tail },
   ];
+  const profile = input.linuxProfile;
   const result = await generateText({
     model: getModel(input.provider, input.modelId),
     messages: prompt,
+    tools: profile ? linuxTools(input.accountId, profile) : undefined,
     providerOptions:
       input.provider === "openai"
         ? { openai: { promptCacheKey: input.promptCacheKey, promptCacheRetention: "24h" } }
