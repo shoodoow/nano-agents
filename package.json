@@ -1,0 +1,14 @@
+{
+  "name": "nano-agents",
+  "private": true,
+  "packageManager": "pnpm@12.6.0",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "build": "tsc -b --pretty false"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}
