@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "migrate": "node dist/db/migrate.js"
   },
   "dependencies": {
     "@nano-agents/shared": "workspace:*",
@@ -15,6 +16,7 @@
   "devDependencies": {
     "drizzle-kit": "0.31.11",
     "typescript": "7.0.2",
-    "vitest": "5.0.2"
+    "vitest": "5.0.2",
+    "@types/node": "24.19.0"
   }
 }
