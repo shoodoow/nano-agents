@@ -100,3 +100,13 @@ export const proposalSchema = z
   });
 
 export type ProposalInput = z.infer<typeof proposalSchema>;
+
+export const routineSchema = z.object({
+  agentId: z.string().uuid(),
+  conversationId: z.string().uuid(),
+  body: z.string().min(1),
+  cron: z.string().min(1),
+  nextRunAt: z.string().min(1).optional(),
+});
+
+export type RoutineInput = z.infer<typeof routineSchema>;

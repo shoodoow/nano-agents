@@ -144,3 +144,37 @@ export const proposals = pgTable(
     check("proposals_message_ids_check", sql`cardinality(${table.messageIds}) > 0`),
   ],
 );
+
+export const routines = pgTable("routines", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  accountId: uuid("account_id")
+    .notNull()
+    .references(() => accounts.id),
+  agentId: uuid("agent_id")
+    .notNull()
+    .references(() => agents.id),
+  conversationId: uuid("conversation_id")
+    .notNull()
+    .references(() => conversations.id),
+  body: text("body").notNull(),
+  cron: text("cron").notNull(),
+  nextRunAt: timestamp("next_run_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const jobs = pgTable(
+  "jobs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id),
+    routineId: uuid("routine_id")
+      .notNull()
+      .references(() => routines.id),
+    status: text("status").notNull().default("pending"),
+    runAt: timestamp("run_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [check("jobs_status_check", sql`${table.status} in ('pending', 'running', 'done')`)],
+);
