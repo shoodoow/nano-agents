@@ -4,7 +4,7 @@ import { buildInstructions } from "../prompt/build-instructions.js";
 import type { getDb } from "../db/client.js";
 import { addMember, createRoom, readMessage, RoomCapacityError } from "../rooms/rooms.js";
 import { createAccount, createAgent, getAgent, listAgents, updateAgentFlags } from "../roster/roster.js";
-import { approve, reject } from "../skills/proposals.js";
+import { approve, listProposals, reject } from "../skills/proposals.js";
 import { createProfile, pipeExec } from "../linux/linux.js";
 import { handBack, profileOnAccount, startDesktop, takeOver } from "../desktop/desktop.js";
 import { runTurn, type TurnInput } from "../rooms/turn.js";
@@ -52,6 +52,7 @@ async function handle(
   const memberMatch = url.pathname.match(/^\/conversations\/([^/]+)\/members$/);
   const messageMatch = url.pathname.match(/^\/conversations\/([^/]+)\/messages$/);
   const proposalMatch = url.pathname.match(/^\/proposals\/([^/]+)\/(approve|reject)$/);
+  const proposalListMatch = url.pathname.match(/^\/accounts\/([^/]+)\/proposals$/);
   const screenMatch = url.pathname.match(/^\/accounts\/([^/]+)\/screens\/([^/]+)\/(takeover|handback)$/);
   const agentMatch = url.pathname.match(/^\/agents\/([^/]+)(\/prompt)?$/);
 
@@ -122,6 +123,11 @@ async function handle(
       handBack(accountId, profile);
     }
     sendJson(response, 200, { ok: true });
+    return;
+  }
+
+  if (request.method === "GET" && proposalListMatch) {
+    sendJson(response, 200, await listProposals(db, proposalListMatch[1] ?? ""));
     return;
   }
 

@@ -18,9 +18,16 @@ export const agentFlagsSchema = z.object({
   hidden: z.boolean(),
 });
 
+export const agentProfileSchema = agentFlagsSchema.extend({
+  name: z.string().min(1).optional(),
+  label: z.string().min(1).optional(),
+  description: z.string().min(1).optional(),
+});
+
 export type Account = z.infer<typeof accountSchema>;
 export type AgentCreate = z.infer<typeof agentCreateSchema>;
 export type AgentFlags = z.infer<typeof agentFlagsSchema>;
+export type AgentProfile = z.infer<typeof agentProfileSchema>;
 
 export const roomCreateSchema = z.object({
   kind: z.enum(["direct", "group"]),

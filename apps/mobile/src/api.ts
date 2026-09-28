@@ -1,4 +1,4 @@
-import { messageCreateSchema, roomCreateSchema } from "@nano-agents/shared";
+import { agentProfileSchema, messageCreateSchema, roomCreateSchema, type AgentProfile } from "@nano-agents/shared";
 
 export type RosterAgent = {
   id: string;
@@ -11,11 +11,23 @@ export type RosterAgent = {
   hidden: boolean;
 };
 
+export type Proposal = {
+  id: string;
+  agentId: string;
+  kind: string;
+  body: string;
+  status: string;
+};
+
 export type CoreClient = {
   listAgents: (accountId: string) => Promise<RosterAgent[]>;
   openChat: (accountId: string, agent: RosterAgent) => Promise<{ id: string }>;
   sendMessage: (accountId: string, conversationId: string, body: string) => Promise<void>;
   mention: (draft: string, name: string) => string;
+  listProposals: (accountId: string) => Promise<Proposal[]>;
+  approve: (accountId: string, proposalId: string) => Promise<Proposal[]>;
+  reject: (accountId: string, proposalId: string) => Promise<Proposal[]>;
+  saveProfile: (accountId: string, agentId: string, profile: AgentProfile) => Promise<RosterAgent>;
 };
 
 declare const process: { env: { EXPO_PUBLIC_CORE_URL?: string } };
@@ -34,6 +46,10 @@ export function createCore(
     openChat: (accountId, agent) => openChat(baseUrl, accountId, agent, fetchImpl),
     sendMessage: (accountId, conversationId, body) => sendMessage(baseUrl, accountId, conversationId, body, fetchImpl),
     mention,
+    listProposals: (accountId) => listProposals(baseUrl, accountId, fetchImpl),
+    approve: (accountId, proposalId) => decide(baseUrl, accountId, proposalId, "approve", fetchImpl),
+    reject: (accountId, proposalId) => decide(baseUrl, accountId, proposalId, "reject", fetchImpl),
+    saveProfile: (accountId, agentId, profile) => saveProfile(baseUrl, accountId, agentId, profile, fetchImpl),
   };
 }
 
@@ -85,6 +101,54 @@ async function sendMessage(
   await readJson(fetchImpl, `${baseUrl}/conversations/${conversationId}/messages?accountId=${accountId}`, {
     method: "POST",
     body: JSON.stringify(message),
+  });
+}
+
+/**
+ * Loads proposals still waiting on this account.
+ * Input: the core base URL, the account id, and fetch.
+ * Output: the pending proposals.
+ */
+async function listProposals(baseUrl: string, accountId: string, fetchImpl: typeof fetch): Promise<Proposal[]> {
+  return readJson<Proposal[]>(fetchImpl, `${baseUrl}/accounts/${accountId}/proposals`);
+}
+
+/**
+ * Approves or rejects one proposal, then reloads the pending list.
+ * Input: the core base URL, the account id, the proposal id, the decision, and fetch.
+ * Output: the pending proposals after the decision. The decided proposal is omitted.
+ */
+async function decide(
+  baseUrl: string,
+  accountId: string,
+  proposalId: string,
+  action: "approve" | "reject",
+  fetchImpl: typeof fetch,
+): Promise<Proposal[]> {
+  await readJson<unknown>(
+    fetchImpl,
+    `${baseUrl}/proposals/${proposalId}/${action}?accountId=${accountId}`,
+    { method: "POST" },
+  );
+  return listProposals(baseUrl, accountId, fetchImpl);
+}
+
+/**
+ * Saves the agent's profile on the core.
+ * Input: the core base URL, the account id, the agent id, the profile fields, and fetch.
+ * Output: the saved agent. The phone does not write prompt files.
+ */
+async function saveProfile(
+  baseUrl: string,
+  accountId: string,
+  agentId: string,
+  profile: AgentProfile,
+  fetchImpl: typeof fetch,
+): Promise<RosterAgent> {
+  const body = agentProfileSchema.parse(profile);
+  return readJson<RosterAgent>(fetchImpl, `${baseUrl}/agents/${agentId}?accountId=${accountId}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
   });
 }
 

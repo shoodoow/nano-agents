@@ -40,6 +40,18 @@ export async function propose(db: Database, accountId: string, input: unknown) {
 }
 
 /**
+ * Lists pending proposals for one account.
+ * Input: database and the account id.
+ * Output: proposals still waiting for a person. Other accounts are not included.
+ */
+export async function listProposals(db: Database, accountId: string) {
+  return db
+    .select()
+    .from(proposals)
+    .where(and(eq(proposals.accountId, accountId), eq(proposals.status, "pending")));
+}
+
+/**
  * Applies one pending proposal and bumps that agent's prompt version.
  * Input: database, account id, proposal id, and the skills directory used when the kind is skill.
  * Output: the approved proposal, or null when this account does not own it.

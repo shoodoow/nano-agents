@@ -1,4 +1,4 @@
-import { accountSchema, agentCreateSchema, agentFlagsSchema, type AgentFlags } from "@nano-agents/shared";
+import { accountSchema, agentCreateSchema, agentProfileSchema } from "@nano-agents/shared";
 import { and, eq } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
 import { accounts, agents } from "../db/schema.js";
@@ -47,15 +47,22 @@ export async function createAgent(db: Database, accountId: string, input: unknow
 }
 
 /**
- * Changes pin, hide, and notify for one agent.
- * Input: a database client, the owning account id, the agent id, and the three flags.
+ * Changes an agent's name, label, description, pin, hide, and notify.
+ * Input: a database client, the owning account id, the agent id, and the profile fields.
  * Output: the updated agent, or null when that account does not own the agent.
  */
 export async function updateAgentFlags(db: Database, accountId: string, agentId: string, input: unknown) {
-  const flags: AgentFlags = agentFlagsSchema.parse(input);
+  const data = agentProfileSchema.parse(input);
   const [row] = await db
     .update(agents)
-    .set(flags)
+    .set({
+      notify: data.notify,
+      pinned: data.pinned,
+      hidden: data.hidden,
+      ...(data.name !== undefined ? { name: data.name } : {}),
+      ...(data.label !== undefined ? { label: data.label } : {}),
+      ...(data.description !== undefined ? { description: data.description } : {}),
+    })
     .where(and(eq(agents.id, agentId), eq(agents.accountId, accountId)))
     .returning();
   return row ?? null;
