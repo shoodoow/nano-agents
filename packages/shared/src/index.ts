@@ -33,5 +33,10 @@ export const messageCreateSchema = z.object({
   body: z.string().min(1),
 });
 
+export const memberAddSchema = z.object({
+  agentId: z.string().uuid(),
+});
+
 export type RoomCreate = z.infer<typeof roomCreateSchema>;
 export type MessageCreate = z.infer<typeof messageCreateSchema>;
+export type MemberAdd = z.infer<typeof memberAddSchema>;

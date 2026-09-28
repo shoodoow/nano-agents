@@ -1,7 +1,9 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { buildInstructions } from "./build-instructions.js";
 import type { getDb } from "./db/client.js";
+import { addMember, createRoom, readMessage, RoomCapacityError } from "./rooms.js";
 import { createAccount, createAgent, getAgent, updateAgentFlags } from "./roster.js";
+import { runTurn, type TurnInput } from "./turn.js";
 
 type Database = ReturnType<typeof getDb>;
 
@@ -32,11 +34,19 @@ function sendJson(response: ServerResponse, status: number, body: unknown): void
 /**
  * Handles one core HTTP request.
  * Input: the database, the request, and the response.
- * Output: nothing. The response contains the account, agent, or prompt that was asked for.
+ * Output: nothing. The response contains the account, agent, room, or prompt that was asked for.
  */
-async function handle(db: Database, request: IncomingMessage, response: ServerResponse): Promise<void> {
+async function handle(
+  db: Database,
+  request: IncomingMessage,
+  response: ServerResponse,
+  generate?: (input: TurnInput) => Promise<string>,
+): Promise<void> {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   const accountMatch = url.pathname.match(/^\/accounts\/([^/]+)\/agents$/);
+  const roomMatch = url.pathname.match(/^\/accounts\/([^/]+)\/conversations$/);
+  const memberMatch = url.pathname.match(/^\/conversations\/([^/]+)\/members$/);
+  const messageMatch = url.pathname.match(/^\/conversations\/([^/]+)\/messages$/);
   const agentMatch = url.pathname.match(/^\/agents\/([^/]+)(\/prompt)?$/);
 
   if (request.method === "POST" && url.pathname === "/accounts") {
@@ -48,6 +58,39 @@ async function handle(db: Database, request: IncomingMessage, response: ServerRe
   if (request.method === "POST" && accountMatch) {
     const created = await createAgent(db, accountMatch[1] ?? "", JSON.parse(await readBody(request)));
     sendJson(response, 201, created);
+    return;
+  }
+
+  if (request.method === "POST" && roomMatch) {
+    const created = await createRoom(db, roomMatch[1] ?? "", JSON.parse(await readBody(request)));
+    if (!created) {
+      sendJson(response, 404, { error: "Agent not found." });
+      return;
+    }
+    sendJson(response, 201, created);
+    return;
+  }
+
+  if (request.method === "POST" && memberMatch) {
+    const accountId = url.searchParams.get("accountId") ?? "";
+    const created = await addMember(db, accountId, memberMatch[1] ?? "", JSON.parse(await readBody(request)));
+    if (!created) {
+      sendJson(response, 404, { error: "Room not found." });
+      return;
+    }
+    sendJson(response, 201, created);
+    return;
+  }
+
+  if (request.method === "POST" && messageMatch) {
+    const accountId = url.searchParams.get("accountId") ?? "";
+    const body = await readMessage(db, accountId, messageMatch[1] ?? "", JSON.parse(await readBody(request)));
+    if (!body) {
+      sendJson(response, 404, { error: "Room not found." });
+      return;
+    }
+    const replies = await runTurn(db, accountId, messageMatch[1] ?? "", body, generate);
+    sendJson(response, 201, { replies });
     return;
   }
 
@@ -89,12 +132,20 @@ async function handle(db: Database, request: IncomingMessage, response: ServerRe
 
 /**
  * Starts the core HTTP server.
- * Input: a database client and a port. Port 0 asks the operating system for a free port.
+ * Input: a database client, a port, and an optional model call. Port 0 asks the operating system for a free port.
  * Output: the listening server. Close it when the process should stop.
  */
-export function startServer(db: Database, port: number): Promise<Server> {
+export function startServer(
+  db: Database,
+  port: number,
+  generate?: (input: TurnInput) => Promise<string>,
+): Promise<Server> {
   const server = createServer((request, response) => {
-    handle(db, request, response).catch((error: unknown) => {
+    handle(db, request, response, generate).catch((error: unknown) => {
+      if (error instanceof RoomCapacityError) {
+        sendJson(response, 409, { error: error.message });
+        return;
+      }
       const message = error instanceof Error ? error.message : "Request failed.";
       sendJson(response, 400, { error: message });
     });

@@ -13,7 +13,10 @@ describe("server", () => {
   let closeServer: (() => Promise<void>) | undefined;
 
   beforeAll(async () => {
-    const server = await startServer(db, 0);
+    const server = await startServer(db, 0, async ({ messages }) => {
+      const mentionedBea = messages.some((message) => message.content.includes("@Bea"));
+      return mentionedBea ? "finished" : "@Bea your turn";
+    });
     const address = server.address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${address.port}`;
     closeServer = () =>
@@ -65,4 +68,69 @@ describe("server", () => {
     const hidden = await fetch(`${baseUrl}/agents/${agent.id}?accountId=${second.id}`);
     expect(hidden.status).toBe(404);
   });
+
+  it("stores a mentioned reply and the agent that reply mentions, in order", async () => {
+    const account = await postJson<{ id: string }>(`${baseUrl}/accounts`, { name: "Group" });
+    const ada = await postJson<{ id: string }>(`${baseUrl}/accounts/${account.id}/agents`, agent("Ada"));
+    const bea = await postJson<{ id: string }>(`${baseUrl}/accounts/${account.id}/agents`, agent("Bea"));
+    const room = await postJson<{ id: string }>(`${baseUrl}/accounts/${account.id}/conversations`, {
+      kind: "group",
+      title: "desk",
+      ownerAgentId: ada.id,
+      memberAgentIds: [ada.id, bea.id],
+    });
+    const sent = await fetch(`${baseUrl}/conversations/${room.id}/messages?accountId=${account.id}`, {
+      method: "POST",
+      body: JSON.stringify({ body: "@Ada start" }),
+    });
+    const stored = (await sent.json()) as { replies: { agentId: string; body: string }[] };
+    expect(sent.status).toBe(201);
+    expect(stored.replies.map((reply) => reply.agentId)).toEqual([ada.id, bea.id]);
+    expect(stored.replies.map((reply) => reply.body)).toEqual(["@Bea your turn", "finished"]);
+
+    const other = await postJson<{ id: string }>(`${baseUrl}/accounts`, { name: "Outsider" });
+    const blocked = await fetch(`${baseUrl}/conversations/${room.id}/messages?accountId=${other.id}`, {
+      method: "POST",
+      body: JSON.stringify({ body: "@Ada start" }),
+    });
+    expect(blocked.status).toBe(404);
+  });
+
+  it("rejects a 21st member", async () => {
+    const account = await postJson<{ id: string }>(`${baseUrl}/accounts`, { name: "Full" });
+    const hired = [];
+    for (let index = 0; index < 20; index += 1) {
+      hired.push(await postJson<{ id: string }>(`${baseUrl}/accounts/${account.id}/agents`, agent(`M${index}`)));
+    }
+    const room = await postJson<{ id: string }>(`${baseUrl}/accounts/${account.id}/conversations`, {
+      kind: "group",
+      title: "full",
+      ownerAgentId: hired[0]!.id,
+      memberAgentIds: hired.map((member) => member.id),
+    });
+    const extra = await postJson<{ id: string }>(`${baseUrl}/accounts/${account.id}/agents`, agent("Extra"));
+    const rejected = await fetch(`${baseUrl}/conversations/${room.id}/members?accountId=${account.id}`, {
+      method: "POST",
+      body: JSON.stringify({ agentId: extra.id }),
+    });
+    expect(rejected.status).toBe(409);
+  });
 });
+
+function agent(name: string) {
+  return {
+    name,
+    label: name,
+    description: `${name} works here.`,
+    provider: "openai",
+    modelId: "gpt-5",
+  };
+}
+
+async function postJson<T>(url: string, body: unknown): Promise<T> {
+  const response = await fetch(url, { method: "POST", body: JSON.stringify(body) });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return (await response.json()) as T;
+}
