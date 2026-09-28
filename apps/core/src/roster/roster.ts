@@ -2,13 +2,14 @@ import { accountSchema, agentCreateSchema, agentFlagsSchema, type AgentFlags } f
 import { and, eq } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
 import { accounts, agents } from "../db/schema.js";
+import { createLinux } from "../linux/linux.js";
 
 type Database = ReturnType<typeof getDb>;
 
 /**
- * Creates an account row.
+ * Creates an account row and that account's Linux.
  * Input: a database client and an object with a name.
- * Output: the saved account, including its id.
+ * Output: the saved account, including its id. A container exists for that id.
  */
 export async function createAccount(db: Database, input: unknown) {
   const data = accountSchema.parse(input);
@@ -16,6 +17,7 @@ export async function createAccount(db: Database, input: unknown) {
   if (!row) {
     throw new Error("The account insert returned no row.");
   }
+  await createLinux(row.id);
   return row;
 }
 

@@ -5,5 +5,6 @@ export default defineConfig({
     environment: "node",
     fileParallelism: false,
     exclude: ["dist/**", "node_modules/**"],
+    globalTeardown: "./src/linux/teardown.ts",
   },
 });

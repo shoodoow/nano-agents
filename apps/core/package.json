@@ -14,10 +14,12 @@
     "@ai-sdk/xai": "5.0.10",
     "@nano-agents/shared": "workspace:*",
     "ai": "7.0.118",
+    "dockerode": "5.0.1",
     "drizzle-orm": "0.45.3",
     "postgres": "3.4.9"
   },
   "devDependencies": {
+    "@types/dockerode": "3.3.40",
     "@types/node": "24.19.0",
     "drizzle-kit": "0.31.11",
     "typescript": "7.0.2",
