@@ -74,3 +74,49 @@ export const messages = pgTable("messages", {
   body: text("body").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const summaryKeys = ["decisions", "actions", "open", "entities", "corrections", "topics"] as const;
+
+export const summaryItems = pgTable(
+  "summary_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id),
+    key: text("key").notNull(),
+    body: text("body").notNull(),
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => messages.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [check("summary_items_key_check", sql`${table.key} in ('decisions', 'actions', 'open', 'entities', 'corrections', 'topics')`)],
+);
+
+export const memories = pgTable(
+  "memories",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id),
+    scope: text("scope").notNull(),
+    agentId: uuid("agent_id").references(() => agents.id),
+    body: text("body").notNull(),
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => messages.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check("memories_scope_check", sql`${table.scope} in ('agent', 'user')`),
+    check(
+      "memories_scope_agent_check",
+      sql`(${table.scope} = 'user' and ${table.agentId} is null) or (${table.scope} = 'agent' and ${table.agentId} is not null)`,
+    ),
+  ],
+);

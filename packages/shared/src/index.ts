@@ -40,3 +40,48 @@ export const memberAddSchema = z.object({
 export type RoomCreate = z.infer<typeof roomCreateSchema>;
 export type MessageCreate = z.infer<typeof messageCreateSchema>;
 export type MemberAdd = z.infer<typeof memberAddSchema>;
+
+export const summaryKeySchema = z.enum(["decisions", "actions", "open", "entities", "corrections", "topics"]);
+
+export const summaryItemSchema = z.object({
+  key: summaryKeySchema,
+  body: z.string().min(1),
+  messageId: z.string().uuid(),
+});
+
+export const memoryFactSchema = z
+  .object({
+    scope: z.enum(["agent", "user"]),
+    agentId: z.string().uuid().nullable(),
+    body: z.string().min(1),
+    messageId: z.string().uuid(),
+  })
+  .superRefine((fact, context) => {
+    if (fact.scope === "user" && fact.agentId !== null) {
+      context.addIssue({ code: "custom", message: "A user fact has no agent." });
+    }
+    if (fact.scope === "agent" && fact.agentId === null) {
+      context.addIssue({ code: "custom", message: "An agent fact needs an agent." });
+    }
+  });
+
+export const memoryCorrectSchema = z
+  .object({
+    scope: z.enum(["agent", "user"]),
+    agentId: z.string().uuid().nullable(),
+    oldBody: z.string().min(1),
+    body: z.string().min(1),
+    messageId: z.string().uuid(),
+  })
+  .superRefine((fact, context) => {
+    if (fact.scope === "user" && fact.agentId !== null) {
+      context.addIssue({ code: "custom", message: "A user fact has no agent." });
+    }
+    if (fact.scope === "agent" && fact.agentId === null) {
+      context.addIssue({ code: "custom", message: "An agent fact needs an agent." });
+    }
+  });
+
+export type SummaryItem = z.infer<typeof summaryItemSchema>;
+export type MemoryFact = z.infer<typeof memoryFactSchema>;
+export type MemoryCorrect = z.infer<typeof memoryCorrectSchema>;
