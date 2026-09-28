@@ -1,10 +1,12 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import type { Duplex } from "node:stream";
 import { buildInstructions } from "../prompt/build-instructions.js";
 import type { getDb } from "../db/client.js";
 import { addMember, createRoom, readMessage, RoomCapacityError } from "../rooms/rooms.js";
 import { createAccount, createAgent, getAgent, updateAgentFlags } from "../roster/roster.js";
 import { approve, reject } from "../skills/proposals.js";
-import { createProfile } from "../linux/linux.js";
+import { createProfile, pipeExec } from "../linux/linux.js";
+import { handBack, profileOnAccount, startDesktop, takeOver } from "../desktop/desktop.js";
 import { runTurn, type TurnInput } from "../rooms/turn.js";
 
 type Database = ReturnType<typeof getDb>;
@@ -50,6 +52,7 @@ async function handle(
   const memberMatch = url.pathname.match(/^\/conversations\/([^/]+)\/members$/);
   const messageMatch = url.pathname.match(/^\/conversations\/([^/]+)\/messages$/);
   const proposalMatch = url.pathname.match(/^\/proposals\/([^/]+)\/(approve|reject)$/);
+  const screenMatch = url.pathname.match(/^\/accounts\/([^/]+)\/screens\/([^/]+)\/(takeover|handback)$/);
   const agentMatch = url.pathname.match(/^\/agents\/([^/]+)(\/prompt)?$/);
 
   if (request.method === "POST" && url.pathname === "/accounts") {
@@ -97,6 +100,23 @@ async function handle(
     }
     const replies = await runTurn(db, accountId, messageMatch[1] ?? "", body, generate);
     sendJson(response, 201, { replies });
+    return;
+  }
+
+  if (request.method === "POST" && screenMatch) {
+    const accountId = screenMatch[1] ?? "";
+    const profile = decodeURIComponent(screenMatch[2] ?? "");
+    const owned = await profileOnAccount(db, accountId, profile);
+    if (!owned) {
+      sendJson(response, 404, { error: "Screen not found." });
+      return;
+    }
+    if (screenMatch[3] === "takeover") {
+      takeOver(accountId, profile);
+    } else {
+      handBack(accountId, profile);
+    }
+    sendJson(response, 200, { ok: true });
     return;
   }
 
@@ -152,6 +172,37 @@ async function handle(
 }
 
 /**
+ * Proxies one profile's noVNC connection through the core.
+ * Input: the database, the upgrade request, the client socket, and bytes already read.
+ * Output: nothing. The client talks to that profile's desktop and never receives the container port.
+ */
+async function proxyScreen(db: Database, request: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> {
+  const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  const match = url.pathname.match(/^\/accounts\/([^/]+)\/screens\/([^/]+)$/);
+  if (!match) {
+    socket.end("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
+    return;
+  }
+  const accountId = match[1] ?? "";
+  const profile = decodeURIComponent(match[2] ?? "");
+  const owned = await profileOnAccount(db, accountId, profile);
+  if (!owned) {
+    socket.end("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
+    return;
+  }
+  const session = await startDesktop(accountId, profile);
+  const lines = ["GET / HTTP/1.1", `Host: 127.0.0.1:${session.novncPort}`];
+  for (const [name, value] of Object.entries(request.headers)) {
+    if (value === undefined || name.toLowerCase() === "host") {
+      continue;
+    }
+    lines.push(`${name}: ${Array.isArray(value) ? value.join(", ") : value}`);
+  }
+  const preamble = Buffer.concat([Buffer.from(`${lines.join("\r\n")}\r\n\r\n`), head]);
+  await pipeExec(accountId, ["socat", "STDIO", `TCP:127.0.0.1:${session.novncPort}`], socket, preamble);
+}
+
+/**
  * Starts the core HTTP server.
  * Input: a database client, a port, and an optional model call. Port 0 asks the operating system for a free port.
  * Output: the listening server. Close it when the process should stop.
@@ -170,6 +221,9 @@ export function startServer(
       const message = error instanceof Error ? error.message : "Request failed.";
       sendJson(response, 400, { error: message });
     });
+  });
+  server.on("upgrade", (request, socket, head) => {
+    proxyScreen(db, request, socket, head).catch(() => socket.destroy());
   });
   return new Promise<Server>((resolve) => {
     server.listen(port, "127.0.0.1", () => resolve(server));

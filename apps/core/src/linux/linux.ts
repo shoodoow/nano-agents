@@ -1,6 +1,5 @@
 import { finished } from "node:stream/promises";
-import { PassThrough } from "node:stream";
-import type { Socket } from "node:net";
+import { PassThrough, type Duplex } from "node:stream";
 import Dockerode from "dockerode";
 import { and, eq } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
@@ -93,7 +92,7 @@ export async function execBytes(
  * Input: the account id, the command argv, and the caller's socket.
  * Output: nothing. Bytes flow both ways until either side closes.
  */
-export async function pipeExec(accountId: string, command: string[], socket: Socket): Promise<void> {
+export async function pipeExec(accountId: string, command: string[], socket: Duplex, preamble?: Buffer): Promise<void> {
   const container = docker.getContainer(containerName(accountId));
   const running = await container.exec({
     Cmd: command,
@@ -106,12 +105,16 @@ export async function pipeExec(accountId: string, command: string[], socket: Soc
   const stderr = new PassThrough();
   stderr.resume();
   container.modem.demuxStream(stream, stdout, stderr);
+  if (preamble) {
+    stream.write(preamble);
+  }
   stdout.pipe(socket, { end: true });
   socket.on("data", (chunk: Buffer) => {
     stream.write(chunk);
   });
-  socket.on("end", () => stream.end());
+  socket.on("close", () => stream.end());
   stream.on("error", () => socket.destroy());
+  stream.on("end", () => socket.end());
 }
 
 /**
