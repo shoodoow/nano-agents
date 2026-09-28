@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { getDb } from "../db/client.js";
-import { conversations, members, messages } from "../db/schema.js";
+import { conversations, jobs, members, messages } from "../db/schema.js";
 import { createAccount, createAgent } from "../roster/roster.js";
 import { claimDue, createRoutine, runDue } from "./routines.js";
 
@@ -14,6 +14,7 @@ describe("routines", () => {
   });
 
   it("lets only one of two workers claim a due job", async () => {
+    await db.update(jobs).set({ status: "done" }).where(eq(jobs.status, "pending"));
     const account = await createAccount(db, { name: "Schedule" });
     const owner = await createAgent(db, account.id, agent("Ada"));
     const [room] = await db
@@ -35,6 +36,7 @@ describe("routines", () => {
   });
 
   it("runs a mentioned routine through one model call and leaves an unmentioned routine to the owner", async () => {
+    await db.update(jobs).set({ status: "done" }).where(eq(jobs.status, "pending"));
     const account = await createAccount(db, { name: "Due" });
     const ada = await createAgent(db, account.id, agent("Ada"));
     const bea = await createAgent(db, account.id, agent("Bea"));

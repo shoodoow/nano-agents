@@ -2,6 +2,7 @@ import { routineSchema } from "@nano-agents/shared";
 import { and, asc, eq, lte } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
 import { jobs, routines } from "../db/schema.js";
+import { runTurn, type TurnInput } from "../rooms/turn.js";
 
 type Database = Pick<ReturnType<typeof getDb>, "insert" | "select" | "update" | "transaction">;
 
@@ -59,4 +60,40 @@ export async function claimDue(db: Database) {
     const [claimed] = await tx.update(jobs).set({ status: "running" }).where(eq(jobs.id, due.id)).returning();
     return claimed ?? null;
   });
+}
+
+/**
+ * Runs one due routine through the room turn.
+ * Input: a database client and the model call. The function claims the due job itself.
+ * Output: the saved replies. Mentions are decided inside runTurn.
+ */
+export async function runDue(db: ReturnType<typeof getDb>, generate: (input: TurnInput) => Promise<string>) {
+  const job = await claimDue(db);
+  if (!job) {
+    return null;
+  }
+  const [routine] = await db
+    .select()
+    .from(routines)
+    .where(and(eq(routines.id, job.routineId), eq(routines.accountId, job.accountId)));
+  if (!routine) {
+    throw new Error("Routine not found.");
+  }
+  const replies = await runTurn(db, routine.accountId, routine.conversationId, routine.body, generate);
+  await db.update(jobs).set({ status: "done" }).where(eq(jobs.id, job.id));
+  const upcoming = nextRun(routine.cron);
+  await db.update(routines).set({ nextRunAt: upcoming }).where(eq(routines.id, routine.id));
+  await db.insert(jobs).values({
+    accountId: routine.accountId,
+    routineId: routine.id,
+    status: "pending",
+    runAt: upcoming,
+  });
+  return replies;
+}
+
+function nextRun(cron: string): Date {
+  const step = cron.match(/^\*\/(\d+) \* \* \* \*$/);
+  const minutes = step?.[1] ? Number(step[1]) : 1;
+  return new Date(Date.now() + minutes * 60_000);
 }
