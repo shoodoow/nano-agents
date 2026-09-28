@@ -3,6 +3,7 @@ import { buildInstructions } from "./build-instructions.js";
 import type { getDb } from "./db/client.js";
 import { addMember, createRoom, readMessage, RoomCapacityError } from "./rooms.js";
 import { createAccount, createAgent, getAgent, updateAgentFlags } from "./roster.js";
+import { approve, reject } from "./proposals.js";
 import { runTurn, type TurnInput } from "./turn.js";
 
 type Database = ReturnType<typeof getDb>;
@@ -47,6 +48,7 @@ async function handle(
   const roomMatch = url.pathname.match(/^\/accounts\/([^/]+)\/conversations$/);
   const memberMatch = url.pathname.match(/^\/conversations\/([^/]+)\/members$/);
   const messageMatch = url.pathname.match(/^\/conversations\/([^/]+)\/messages$/);
+  const proposalMatch = url.pathname.match(/^\/proposals\/([^/]+)\/(approve|reject)$/);
   const agentMatch = url.pathname.match(/^\/agents\/([^/]+)(\/prompt)?$/);
 
   if (request.method === "POST" && url.pathname === "/accounts") {
@@ -91,6 +93,21 @@ async function handle(
     }
     const replies = await runTurn(db, accountId, messageMatch[1] ?? "", body, generate);
     sendJson(response, 201, { replies });
+    return;
+  }
+
+  if (request.method === "POST" && proposalMatch) {
+    const accountId = url.searchParams.get("accountId") ?? "";
+    const proposalId = proposalMatch[1] ?? "";
+    const updated =
+      proposalMatch[2] === "approve"
+        ? await approve(db, accountId, proposalId, process.env.SKILLS_DIR)
+        : await reject(db, accountId, proposalId);
+    if (!updated) {
+      sendJson(response, 404, { error: "Proposal not found." });
+      return;
+    }
+    sendJson(response, 200, updated);
     return;
   }
 

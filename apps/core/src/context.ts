@@ -18,7 +18,7 @@ export type BuiltContext = {
 /**
  * Splits one turn into a cacheable prefix and an append-only tail.
  * Input: the account, agent, prompt version, description, summary items, and recent messages.
- * Output: the standing prompt as the prefix, the summary and messages as the tail, Anthropic cache control on the prefix only, and an OpenAI cache key.
+ * Output: the standing prompt, the sorted tool names, and the skill catalog as the prefix. The summary and messages are the tail. Anthropic cache control is on the prefix only. The OpenAI cache key is the account, the agent, and the prompt version.
  */
 export function buildContext(input: {
   accountId: string;
@@ -27,8 +27,14 @@ export function buildContext(input: {
   description: string;
   summary: { key: string; body: string }[];
   messages: { body: string }[];
+  tools?: string[];
+  catalog?: string;
 }): BuiltContext {
-  const prefix = buildInstructions(input.description);
+  const extras = [
+    ...(input.tools && input.tools.length > 0 ? [[...input.tools].sort().join("\n")] : []),
+    ...(input.catalog ? [input.catalog] : []),
+  ];
+  const prefix = [buildInstructions(input.description), ...extras].join("\n\n");
   const summaryLines = [...input.summary].sort(
     (left, right) => keyOrder.indexOf(left.key) - keyOrder.indexOf(right.key) || left.body.localeCompare(right.body),
   );

@@ -5,7 +5,10 @@ import type { getDb } from "./db/client.js";
 import { agents, conversations, members, messages, summaryItems } from "./db/schema.js";
 import { getModel } from "./get-model.js";
 import { speakers } from "./mentions.js";
+import { propose } from "./proposals.js";
+import { skillCatalog } from "./skills.js";
 import { mergeSummary } from "./summary.js";
+import { listTools } from "./tools.js";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -20,7 +23,13 @@ export type TurnInput = {
   messages: { role: "user" | "assistant"; content: string }[];
 };
 
-type GenerateResult = string | { text: string; cacheReadTokens?: number | null };
+type GenerateResult =
+  | string
+  | {
+      text: string;
+      cacheReadTokens?: number | null;
+      proposal?: { kind: "memory" | "skill" | "prompt"; body: string; messageIds: string[] };
+    };
 
 /**
  * Runs one room turn.
@@ -34,6 +43,7 @@ export async function runTurn(
   conversationId: string,
   body: string,
   generate: (input: TurnInput) => Promise<GenerateResult> = replyWithModel,
+  skillsRoot?: string,
 ) {
   return db.transaction(async (tx) => {
     const [room] = await tx
@@ -83,6 +93,11 @@ export async function runTurn(
         .select()
         .from(summaryItems)
         .where(and(eq(summaryItems.conversationId, conversationId), eq(summaryItems.accountId, accountId)));
+      const catalog = skillsRoot
+        ? skillCatalog(skillsRoot)
+            .map((skill) => `${skill.name}: ${skill.description}`)
+            .join("\n")
+        : "";
       const context = buildContext({
         accountId,
         agentId: agent.id,
@@ -90,6 +105,8 @@ export async function runTurn(
         description: agent.description,
         summary: summary.map((item) => ({ key: item.key, body: item.body })),
         messages: history.map((message) => ({ body: message.body })),
+        tools: listTools([]).map((tool) => tool.name),
+        catalog,
       });
       const result = unwrap(
         await generate({
@@ -119,6 +136,14 @@ export async function runTurn(
         .returning();
       replies.push(saved!);
       await mergeSummary(tx, accountId, conversationId, [{ key: "topics", body: result.text, messageId: saved!.id }]);
+      if (result.proposal) {
+        await propose(tx, accountId, {
+          agentId,
+          kind: result.proposal.kind,
+          body: result.proposal.body,
+          messageIds: result.proposal.messageIds,
+        });
+      }
       for (const next of mentioned(result.text, memberRows)) {
         if (!spoken.has(next)) {
           queue.push(next);
@@ -133,11 +158,15 @@ function mentioned(body: string, memberRows: { id: string; name: string }[]): st
   return speakers(body, memberRows, "").filter((id) => id !== "");
 }
 
-function unwrap(result: GenerateResult): { text: string; cacheReadTokens: number | null } {
+function unwrap(result: GenerateResult): {
+  text: string;
+  cacheReadTokens: number | null;
+  proposal?: { kind: "memory" | "skill" | "prompt"; body: string; messageIds: string[] };
+} {
   if (typeof result === "string") {
     return { text: result, cacheReadTokens: null };
   }
-  return { text: result.text, cacheReadTokens: result.cacheReadTokens ?? null };
+  return { text: result.text, cacheReadTokens: result.cacheReadTokens ?? null, proposal: result.proposal };
 }
 
 /**

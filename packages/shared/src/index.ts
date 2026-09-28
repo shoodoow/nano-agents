@@ -85,3 +85,18 @@ export const memoryCorrectSchema = z
 export type SummaryItem = z.infer<typeof summaryItemSchema>;
 export type MemoryFact = z.infer<typeof memoryFactSchema>;
 export type MemoryCorrect = z.infer<typeof memoryCorrectSchema>;
+
+export const proposalSchema = z
+  .object({
+    agentId: z.string().uuid(),
+    kind: z.enum(["memory", "skill", "prompt"]),
+    body: z.string().min(1),
+    messageIds: z.array(z.string().uuid()),
+  })
+  .superRefine((proposal, context) => {
+    if (proposal.messageIds.length === 0) {
+      context.addIssue({ code: "custom", message: "A proposal needs a message id." });
+    }
+  });
+
+export type ProposalInput = z.infer<typeof proposalSchema>;

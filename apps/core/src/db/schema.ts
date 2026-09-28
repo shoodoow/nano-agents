@@ -121,3 +121,26 @@ export const memories = pgTable(
     ),
   ],
 );
+
+export const proposals = pgTable(
+  "proposals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id),
+    kind: text("kind").notNull(),
+    body: text("body").notNull(),
+    messageIds: uuid("message_ids").array().notNull(),
+    status: text("status").notNull().default("pending"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check("proposals_kind_check", sql`${table.kind} in ('memory', 'skill', 'prompt')`),
+    check("proposals_status_check", sql`${table.status} in ('pending', 'approved', 'rejected')`),
+    check("proposals_message_ids_check", sql`cardinality(${table.messageIds}) > 0`),
+  ],
+);

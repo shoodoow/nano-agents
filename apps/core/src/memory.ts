@@ -3,7 +3,7 @@ import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import type { getDb } from "./db/client.js";
 import { memories, messages } from "./db/schema.js";
 
-type Database = ReturnType<typeof getDb>;
+type Database = Pick<ReturnType<typeof getDb>, "insert" | "select" | "delete">;
 
 const pageSize = 5;
 
@@ -46,7 +46,7 @@ export async function readHistory(
  * Input: database, account id, and a fact with scope, optional agent id, body, and message id.
  * Output: the saved fact. A user fact is stored with a null agent id.
  */
-export async function remember(db: Database, accountId: string, input: unknown) {
+export async function remember(db: Pick<Database, "insert">, accountId: string, input: unknown) {
   const fact = memoryFactSchema.parse(input);
   const [row] = await db
     .insert(memories)
