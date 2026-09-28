@@ -1,6 +1,9 @@
 import { finished } from "node:stream/promises";
 import { PassThrough } from "node:stream";
 import Dockerode from "dockerode";
+import { and, eq } from "drizzle-orm";
+import type { getDb } from "../db/client.js";
+import { agents } from "../db/schema.js";
 
 const image = "nano-agents-linux:1";
 const memoryBytes = 256 * 1024 * 1024;
@@ -69,6 +72,39 @@ export async function exec(accountId: string, command: string[], user = "root"):
 }
 
 /**
+ * Creates the agent's user on the account Linux.
+ * Input: the database, the account id, and the agent id.
+ * Output: the username. The home is mode 700 and is stored on the agent.
+ */
+export async function createProfile(db: ReturnType<typeof getDb>, accountId: string, agentId: string): Promise<string> {
+  const [agent] = await db
+    .select()
+    .from(agents)
+    .where(and(eq(agents.id, agentId), eq(agents.accountId, accountId)));
+  if (!agent) {
+    throw new Error("Agent not found.");
+  }
+  if (agent.linuxProfile) {
+    return agent.linuxProfile;
+  }
+  const username = `u${agentId.replaceAll("-", "").slice(0, 16)}`;
+  const home = `/home/${username}`;
+  const added = await exec(accountId, ["useradd", "-m", "-d", home, "-s", "/bin/bash", username]);
+  if (added.code !== 0 && !added.stdout.includes("already exists")) {
+    throw new Error(added.stdout || "The Linux user was not created.");
+  }
+  const locked = await exec(accountId, ["chmod", "700", home]);
+  if (locked.code !== 0) {
+    throw new Error(locked.stdout || "The home directory was not locked.");
+  }
+  await db
+    .update(agents)
+    .set({ linuxProfile: username })
+    .where(and(eq(agents.id, agentId), eq(agents.accountId, accountId)));
+  return username;
+}
+
+/**
  * Removes every account container this process created.
  * Input: none.
  * Output: nothing. The containers and their volumes are gone.
@@ -97,7 +133,11 @@ function containerName(accountId: string): string {
 async function ensureImage(): Promise<void> {
   try {
     await docker.getImage(image).inspect();
-  } catch {
-    throw new Error(`Linux image ${image} is missing. Build apps/core/linux/Dockerfile first.`);
+  } catch (error) {
+    const status = (error as { statusCode?: number }).statusCode;
+    if (status === 404) {
+      throw new Error(`Linux image ${image} is missing. Build apps/core/linux/Dockerfile first.`);
+    }
+    throw error;
   }
 }

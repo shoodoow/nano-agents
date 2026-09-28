@@ -4,6 +4,7 @@ import type { getDb } from "../db/client.js";
 import { addMember, createRoom, readMessage, RoomCapacityError } from "../rooms/rooms.js";
 import { createAccount, createAgent, getAgent, updateAgentFlags } from "../roster/roster.js";
 import { approve, reject } from "../skills/proposals.js";
+import { createProfile } from "../linux/linux.js";
 import { runTurn, type TurnInput } from "../rooms/turn.js";
 
 type Database = ReturnType<typeof getDb>;
@@ -68,6 +69,9 @@ async function handle(
     if (!created) {
       sendJson(response, 404, { error: "Agent not found." });
       return;
+    }
+    for (const member of created.members) {
+      await createProfile(db, roomMatch[1] ?? "", member.agentId);
     }
     sendJson(response, 201, created);
     return;
