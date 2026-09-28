@@ -19,3 +19,8 @@ test("approve refreshes the list without the decided proposal", async () => {
   const after = await core.approve("account", "p1");
   expect(after.find((proposal) => proposal.id === "p1")).toBeUndefined();
 });
+
+test("the screen url is the core websocket", () => {
+  const core = createCore("http://127.0.0.1:3000");
+  expect(core.screenUrl("account", "uabc")).toBe("ws://127.0.0.1:3000/accounts/account/screens/uabc");
+});

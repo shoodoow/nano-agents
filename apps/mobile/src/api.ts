@@ -28,6 +28,9 @@ export type CoreClient = {
   approve: (accountId: string, proposalId: string) => Promise<Proposal[]>;
   reject: (accountId: string, proposalId: string) => Promise<Proposal[]>;
   saveProfile: (accountId: string, agentId: string, profile: AgentProfile) => Promise<RosterAgent>;
+  screenUrl: (accountId: string, profile: string) => string;
+  takeOver: (accountId: string, profile: string) => Promise<void>;
+  handBack: (accountId: string, profile: string) => Promise<void>;
 };
 
 declare const process: { env: { EXPO_PUBLIC_CORE_URL?: string } };
@@ -50,6 +53,9 @@ export function createCore(
     approve: (accountId, proposalId) => decide(baseUrl, accountId, proposalId, "approve", fetchImpl),
     reject: (accountId, proposalId) => decide(baseUrl, accountId, proposalId, "reject", fetchImpl),
     saveProfile: (accountId, agentId, profile) => saveProfile(baseUrl, accountId, agentId, profile, fetchImpl),
+    screenUrl: (accountId, profile) => screenUrl(baseUrl, accountId, profile),
+    takeOver: (accountId, profile) => screenFlag(baseUrl, accountId, profile, "takeover", fetchImpl),
+    handBack: (accountId, profile) => screenFlag(baseUrl, accountId, profile, "handback", fetchImpl),
   };
 }
 
@@ -150,6 +156,38 @@ async function saveProfile(
     method: "PATCH",
     body: JSON.stringify(body),
   });
+}
+
+/**
+ * Builds the websocket URL for one profile's desktop.
+ * Input: the core base URL, the account id, and the Linux username.
+ * Output: a core websocket URL. It uses the core host, not a container port.
+ */
+export function screenUrl(baseUrl: string, accountId: string, profile: string): string {
+  const url = new URL(baseUrl);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.pathname = `/accounts/${accountId}/screens/${encodeURIComponent(profile)}`;
+  url.search = "";
+  return url.toString();
+}
+
+/**
+ * Takes the pointer or hands it back.
+ * Input: the core base URL, the account id, the Linux username, the action, and fetch.
+ * Output: nothing. The core pauses or resumes the agent's mouse and keyboard.
+ */
+async function screenFlag(
+  baseUrl: string,
+  accountId: string,
+  profile: string,
+  action: "takeover" | "handback",
+  fetchImpl: typeof fetch,
+): Promise<void> {
+  await readJson<unknown>(
+    fetchImpl,
+    `${baseUrl}/accounts/${accountId}/screens/${encodeURIComponent(profile)}/${action}`,
+    { method: "POST" },
+  );
 }
 
 /**

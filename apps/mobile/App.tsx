@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Pressable, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import { createCore, type Proposal, type RosterAgent } from "./src/api";
 
@@ -7,7 +7,7 @@ const core = createCore();
 type Chat = { agent: RosterAgent; conversationId: string };
 
 /**
- * Shows the roster, a chat, approvals, and an agent profile.
+ * Shows the roster, a chat, approvals, a profile, and the live desktop.
  * Input: none. The core URL comes from EXPO_PUBLIC_CORE_URL.
  * Output: the phone screens for those actions.
  */
@@ -19,15 +19,16 @@ export default function App() {
   const [note, setNote] = useState("");
   const [proposals, setProposals] = useState<Proposal[] | null>(null);
   const [profile, setProfile] = useState<RosterAgent | null>(null);
+  const [desktop, setDesktop] = useState<string | null>(null);
 
   /**
    * Shows a request error on the screen.
    * Input: the thrown value.
    * Output: nothing. The note becomes the error message.
    */
-  function show(error: unknown): void {
+  const show = useCallback((error: unknown): void => {
     setNote(error instanceof Error ? error.message : "The request failed.");
-  }
+  }, []);
 
   /**
    * Loads the roster for the typed account.
@@ -40,6 +41,7 @@ export default function App() {
     setChat(null);
     setProposals(null);
     setProfile(null);
+    setDesktop(null);
     setNote("");
   }
 
@@ -50,9 +52,13 @@ export default function App() {
    */
   async function openAgent(agent: RosterAgent): Promise<void> {
     const room = await core.openChat(accountId.trim(), agent);
-    setChat({ agent, conversationId: room.id });
+    const rows = await core.listAgents(accountId.trim());
+    const fresh = rows.find((row) => row.id === agent.id) ?? agent;
+    setAgents(rows);
+    setChat({ agent: fresh, conversationId: room.id });
     setProposals(null);
     setProfile(null);
+    setDesktop(null);
     setDraft("");
     setNote("");
   }
@@ -83,6 +89,7 @@ export default function App() {
     setProposals(next);
     setChat(null);
     setProfile(null);
+    setDesktop(null);
     setNote("");
   }
 
@@ -127,6 +134,11 @@ export default function App() {
           <Pressable onPress={() => setProfile(agent)}>
             <Text>Edit profile</Text>
           </Pressable>
+          {agent.linuxProfile ? (
+            <Pressable onPress={() => setDesktop(agent.linuxProfile)}>
+              <Text>Watch</Text>
+            </Pressable>
+          ) : null}
         </View>
       ))}
       {chat ? (
@@ -178,7 +190,47 @@ export default function App() {
           </Pressable>
         </View>
       ) : null}
+      {desktop ? <Desktop accountId={accountId.trim()} profile={desktop} onError={show} /> : null}
       {note ? <Text>{note}</Text> : null}
+    </View>
+  );
+}
+
+/**
+ * Shows one agent's desktop through the core websocket.
+ * Input: the account id, the Linux username, and an error callback.
+ * Output: the live frame count plus take-over and hand-back controls.
+ */
+function Desktop({
+  accountId,
+  profile,
+  onError,
+}: {
+  accountId: string;
+  profile: string;
+  onError: (error: unknown) => void;
+}) {
+  const [frames, setFrames] = useState(0);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    const socket = new WebSocket(core.screenUrl(accountId, profile));
+    socket.binaryType = "arraybuffer";
+    socket.onopen = () => setOpen(true);
+    socket.onmessage = () => setFrames((count) => count + 1);
+    socket.onerror = () => onError(new Error("The screen socket failed."));
+    return () => socket.close();
+  }, [accountId, profile, onError]);
+
+  return (
+    <View>
+      <Text style={styles.title}>{open ? `Desktop · ${frames} frames` : "Connecting to the desktop"}</Text>
+      <Pressable onPress={() => void core.takeOver(accountId, profile).catch(onError)} style={styles.button}>
+        <Text style={styles.buttonText}>Take over</Text>
+      </Pressable>
+      <Pressable onPress={() => void core.handBack(accountId, profile).catch(onError)} style={styles.button}>
+        <Text style={styles.buttonText}>Hand back</Text>
+      </Pressable>
     </View>
   );
 }
