@@ -58,3 +58,37 @@ test("the screen url is the core websocket", () => {
   const core = createCore("http://127.0.0.1:3000");
   expect(core.screenUrl("account", "uabc")).toBe("ws://127.0.0.1:3000/accounts/account/screens/uabc");
 });
+
+test("the stream resumes from a cursor and devices register", async () => {
+  const seen: string[] = [];
+  const sse = `data: {"type":"message","message":{"id":"m2"},"cursor":42,"conversationId":"c1"}\n\n`;
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = String(input);
+    seen.push(url);
+    if (url.includes("/stream")) {
+      return new Response(sse, { status: 200 });
+    }
+    if (url.endsWith("/devices?accountId=a1")) {
+      expect(JSON.parse(String(init?.body))).toEqual({
+        expoPushToken: "ExponentPushToken[x]",
+        platform: "ios",
+      });
+      return new Response(JSON.stringify({ id: "d1" }), { status: 200 });
+    }
+    if (url.includes("/notifications")) {
+      return new Response(JSON.stringify([{ id: "n1" }]), { status: 200 });
+    }
+    return new Response("missing", { status: 404 });
+  };
+  const core = createCore("http://core.example", fetchImpl);
+  const events: { cursor?: number }[] = [];
+  const stop = core.subscribeMessages("a1", "c1", (event) => events.push(event), { cursor: 41 });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  stop();
+  expect(seen.some((url) => url.includes("cursor=41"))).toBe(true);
+  expect(events[0]).toMatchObject({ cursor: 42 });
+  await expect(core.registerDevice("a1", { expoPushToken: "ExponentPushToken[x]", platform: "ios" })).resolves.toEqual({
+    id: "d1",
+  });
+  await expect(core.listNotifications("a1")).resolves.toHaveLength(1);
+});

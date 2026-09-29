@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import type { getDb } from "../db/client.js";
+import type { Store } from "../db/client.js";
 import { agents } from "../db/schema.js";
 import { exec, execBytes } from "../linux/linux.js";
 
@@ -349,11 +349,11 @@ export function handBack(accountId: string, profile: string): void {
  * Output: true when an agent on that account has this profile.
  */
 export async function profileOnAccount(
-  db: ReturnType<typeof getDb>,
+  store: Store,
   accountId: string,
   profile: string,
 ): Promise<boolean> {
-  const [agent] = await db
+  const [agent] = await store
     .select({ id: agents.id })
     .from(agents)
     .where(and(eq(agents.accountId, accountId), eq(agents.linuxProfile, profile)));

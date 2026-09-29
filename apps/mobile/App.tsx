@@ -12,7 +12,9 @@ import {
   type Reaction,
   type RichMessage,
   type RosterAgent,
+  type StreamEvent,
 } from "./src/api";
+import { configureForegroundBanners, getPushToken, onPushTap } from "./src/push";
 import { authClient } from "./src/auth";
 import { MenuSheet, type MenuPage, type SignedAccount } from "./src/account/MenuSheet";
 import { ApprovalsScreen } from "./src/approvals/ApprovalsScreen";
@@ -25,6 +27,12 @@ import { colors } from "./src/theme/tokens";
 
 configureAuthCookie(authClient.getCookie);
 const core = createCore();
+
+// Resume cursors per room (module-level so re-renders never reset them).
+// Why: SSE reconnects resubmit the last-seen event id; the server replays
+// exactly the missed tail. Survives component churn, not app restarts —
+// cold start reconciles via listMessages + pending notifications instead.
+const cursorByRoom = new Map<string, number>();
 
 /**
  * Turns one saved row into a bubble, resolving reply quotes and names.
@@ -136,6 +144,7 @@ export default function App() {
     memberIds: string[];
   } | null>(null);
   const [notifications, setNotifications] = useState(true);
+  const [pendingCount, setPendingCount] = useState(0);
   const [autoReview, setAutoReview] = useState(true);
   const [autoTimeZone, setAutoTimeZone] = useState(true);
   const account = accounts.find((row) => row.id === accountId) ?? null;
@@ -175,6 +184,18 @@ export default function App() {
     setMenu(null);
     setNote("");
     await loadGroups(accountIdFromSession);
+    // Best-effort push registration + badge: no EAS projectId, denied
+    // permission, or network failure all degrade to SSE/polling silently.
+    try {
+      const push = await getPushToken();
+      if (push) {
+        await core.registerDevice(accountIdFromSession, { expoPushToken: push.token, platform: push.platform });
+      }
+      const pending = await core.listNotifications(accountIdFromSession).catch(() => []);
+      setPendingCount(pending.length);
+    } catch {
+      // Push unavailable; the thread still streams when open.
+    }
   }
 
   /**
@@ -199,6 +220,17 @@ export default function App() {
     void refreshSession().catch(show);
   }, [show]);
 
+  useEffect(() => {
+    configureForegroundBanners();
+    return onPushTap((data) => {
+      // A push tap carries the exact room — open it instead of the inbox.
+      // Badge reconciles on foreground; the room shows the full result.
+      const conversationId = typeof data.conversationId === "string" ? data.conversationId : null;
+      if (!conversationId) return;
+      void openGroup(conversationId).catch(show);
+    });
+  }, [show]);
+
   /**
    * Loads the roster for one signed-in account.
    * Input: the account id chosen in the switcher.
@@ -212,6 +244,8 @@ export default function App() {
     setMenu("menu");
     setNote("");
     await loadGroups(id);
+    const pending = await core.listNotifications(id).catch(() => []);
+    setPendingCount(pending.length);
   }
 
   /**
@@ -466,40 +500,60 @@ export default function App() {
   }
 
   /**
-   * Follows one turn over SSE (web only).
+   * Follows one turn over SSE with cursor resume (web only).
    * Why: extracted so send() picks SSE where streaming bodies exist and the
-   * poll loop where they do not (native). Done/error ends typing with a final
-   * reconciling refresh; agent bubbles append live, deduped by id.
+   * poll loop where they do not (native). Every event carrying a cursor
+   * advances the room's resume point, so a dropped connection resubscribes
+   * after exactly the missed tail. Run events end typing; notify events bump
+   * the badge and surface a banner when this room is open.
    * Input: room id + roster snapshot. Output: nothing.
    */
   function watchTurnSse(conversationId: string, roster: RosterAgent[]): void {
-    const unsubscribe = core.subscribeMessages(accountId.trim(), conversationId, (event) => {
-      if (event.type === "done" || event.type === "error") {
-        setTyping(false);
-        unsubscribe();
-        if (event.type === "error") {
-          show(new Error(event.error ?? "The turn failed."));
-        }
-        void refreshThread(conversationId, roster).catch(show);
-      } else if (event.message) {
-        setTyping(false);
-        setMessages((current) => {
-          if (current.some((bubble) => bubble.id === event.message!.id)) {
-            return current;
-          }
-          const byId = new Map<string, RichMessage>();
-          return [...current, toBubble(event.message!, byId, new Map(), roster)];
-        });
-      } else if (event.reaction) {
-        void refreshThread(conversationId, roster).catch(show);
+    const track = (event: StreamEvent): void => {
+      if (typeof event.cursor === "number") {
+        cursorByRoom.set(conversationId, Math.max(cursorByRoom.get(conversationId) ?? 0, event.cursor));
       }
-    });
-    // Safety net: reconcile after 12s even if SSE drops (background turn).
+    };
+    const unsubscribe = core.subscribeMessages(
+      accountId.trim(),
+      conversationId,
+      (event) => {
+        track(event);
+        if (event.type === "done" || event.type === "error" || event.type === "run") {
+          setTyping(false);
+          unsubscribe();
+          if (event.type === "error") {
+            show(new Error(event.error ?? "The turn failed."));
+          }
+          void refreshThread(conversationId, roster).catch(show);
+        } else if (event.message) {
+          setTyping(false);
+          setMessages((current) => {
+            if (current.some((bubble) => bubble.id === event.message!.id)) {
+              return current;
+            }
+            const byId = new Map<string, RichMessage>();
+            return [...current, toBubble(event.message!, byId, new Map(), roster)];
+          });
+        } else if (event.reaction) {
+          void refreshThread(conversationId, roster).catch(show);
+        } else if (event.type === "notify" && event.notification) {
+          void core
+            .listNotifications(accountId.trim())
+            .then((pending) => setPendingCount(pending.length))
+            .catch(() => {});
+          setNote(`${event.notification.title}: ${event.notification.body}`.slice(0, 160));
+        }
+      },
+      { cursor: cursorByRoom.get(conversationId) ?? 0 },
+    );
+    // Safety net: reconcile after 60s even if SSE drops (background turn).
+    // Resume cursor persists, so a later reopen still replays the tail.
     setTimeout(() => {
       setTyping(false);
       unsubscribe();
       void refreshThread(conversationId, roster).catch(show);
-    }, 12000);
+    }, 60000);
   }
 
   /**
@@ -685,6 +739,7 @@ export default function App() {
         <InboxScreen
           agents={agents}
           groups={groups}
+          pendingCount={pendingCount}
           onOpenGroup={(id) => void openGroup(id).catch(show)}
           onAccount={() => {
             if (!account) {

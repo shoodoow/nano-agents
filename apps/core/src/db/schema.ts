@@ -1,4 +1,4 @@
-import { boolean, check, integer, jsonb, pgTable, primaryKey, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { boolean, bigserial, check, index, integer, jsonb, pgTable, primaryKey, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 export const accounts = pgTable("accounts", {
@@ -85,10 +85,21 @@ export const messages = pgTable(
     // backfill ordering; ownership is enforced in application code per account.
     replyTo: uuid("reply_to"),
     viaAgentId: uuid("via_agent_id").references(() => agents.id),
+    // Run ledger (Phase 11): which turn produced this row. Null for rows
+    // written before the ledger existed. Lets crash recovery, SSE resume,
+    // and audits trace every bubble to its run.
+    runId: uuid("run_id"),
+    // Queued handoff (Phase 12): true when a user message arrived while its
+    // room was busy. The scheduler drains these oldest-first. Indexed partial
+    // so the drain tick stays cheap as threads grow.
+    queued: boolean("queued").notNull().default(false),
     cacheReadTokens: integer("cache_read_tokens"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [check("messages_kind_check", sql`${table.kind} in ('text', 'rich')`)],
+  (table) => [
+    check("messages_kind_check", sql`${table.kind} in ('text', 'rich')`),
+    index("messages_queued_index").on(table.conversationId, table.createdAt).where(sql`${table.queued} = true`),
+  ],
 );
 
 export const reactions = pgTable(
@@ -131,6 +142,9 @@ export const delegations = pgTable(
       .references(() => conversations.id),
     task: text("task").notNull(),
     status: text("status").notNull().default("running"),
+    // Worker result (Phase 15): final text the background worker produced
+    // (truncated), or the failure reason. check_worker reads this.
+    result: text("result"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [check("delegations_status_check", sql`${table.status} in ('running', 'done', 'failed')`)],
@@ -219,6 +233,10 @@ export const routines = pgTable("routines", {
   body: text("body").notNull(),
   cron: text("cron").notNull(),
   nextRunAt: timestamp("next_run_at", { withTimezone: true }).notNull(),
+  // Self-managed routines (Phase 15): agents pause/resume their own jobs.
+  // The scheduler skips paused routines; delete removes them entirely.
+  paused: boolean("paused").notNull().default(false),
+  timezone: text("timezone").notNull().default("UTC"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -236,7 +254,106 @@ export const jobs = pgTable(
     runAt: timestamp("run_at", { withTimezone: true }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [check("jobs_status_check", sql`${table.status} in ('pending', 'running', 'done')`)],
+  (table) => [check("jobs_status_check", sql`${table.status} in ('pending', 'running', 'done', 'failed')`)],
+);
+
+// Run ledger (Phase 11): one row per turn invocation (user message or
+// routine). Replaces the old whole-turn transaction + row lock: a turn claims
+// a running run, commits per step, heartbeats while the model works, and lands
+// done/failed. A crash leaves running + stale heartbeat for the scheduler.
+export const runs = pgTable(
+  "runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id),
+    kind: text("kind").notNull().default("turn"),
+    status: text("status").notNull().default("running"),
+    error: text("error"),
+    heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check("runs_kind_check", sql`${table.kind} in ('turn', 'routine')`),
+    check("runs_status_check", sql`${table.status} in ('running', 'done', 'failed')`),
+    // Room serialization without a 2h lock: at most one running run per room.
+    uniqueIndex("runs_one_running_per_conversation").on(table.conversationId).where(sql`${table.status} = 'running'`),
+  ],
+);
+
+// Durable event log (Phase 13): every turn event persisted in the same short
+// tx as its source row. SSE replays from a cursor, then tails live fanout.
+// Same shape on replay and live so Redis Streams can slot in later unchanged.
+export const events = pgTable(
+  "events",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id),
+    runId: uuid("run_id").references(() => runs.id),
+    type: text("type").notNull(),
+    payload: jsonb("payload").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check("events_type_check", sql`${table.type} in ('message', 'reaction', 'run', 'error', 'notify')`),
+    index("events_conversation_id_id_index").on(table.conversationId, table.id),
+  ],
+);
+
+// Push devices (Phase 14): one Expo push token per device per account.
+// Token is opaque to us; delivery goes through the Expo Push API.
+export const devices = pgTable(
+  "devices",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id),
+    expoPushToken: text("expo_push_token").notNull(),
+    platform: text("platform"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [unique("devices_expo_push_token_unique").on(table.expoPushToken)],
+);
+
+// Notify outbox (Phase 14): notify_user rows commit in the same tx as their
+// trigger, so a crash redelivers instead of losing the ping. The scheduler
+// relay applies delivery policy and flips pending -> sent/failed.
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id),
+    runId: uuid("run_id").references(() => runs.id),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id),
+    messageId: uuid("message_id").references(() => messages.id),
+    // Pinging agent for tool pings (policy reads its notify flag). Null for
+    // system pings (routine completion), which default to notify-allowed.
+    agentId: uuid("agent_id").references(() => agents.id),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    urgency: text("urgency").notNull().default("info"),
+    status: text("status").notNull().default("pending"),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check("notifications_urgency_check", sql`${table.urgency} in ('info', 'action-needed')`),
+    check("notifications_status_check", sql`${table.status} in ('pending', 'sent', 'failed')`),
+  ],
 );
 
 export const providerKeys = pgTable(
@@ -254,6 +371,41 @@ export const providerKeys = pgTable(
     primaryKey({ columns: [table.accountId, table.provider] }),
     check("provider_keys_provider_check", sql`${table.provider} in ('openai', 'anthropic', 'xai', 'local')`),
   ],
+);
+
+// Tool secrets (Phase 15): search provider keys etc. live apart from model
+// provider keys so model selection enums never leak tool credentials.
+export const toolKeys = pgTable(
+  "tool_keys",
+  {
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id),
+    tool: text("tool").notNull(),
+    secret: text("secret").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.accountId, table.tool] }),
+    check("tool_keys_tool_check", sql`${table.tool} in ('brave', 'exa')`),
+  ],
+);
+
+// Agent worklists (Phase 15): one current todo list per agent, replaced
+// wholesale like opencode's todowrite. Survives restarts; scoped per agent.
+export const agentTodos = pgTable(
+  "agent_todos",
+  {
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id),
+    items: jsonb("items").notNull().default([]),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.accountId, table.agentId] })],
 );
 
 export const user = pgTable("user", {

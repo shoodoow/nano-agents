@@ -2,7 +2,7 @@ import { finished } from "node:stream/promises";
 import { PassThrough, type Duplex } from "node:stream";
 import Dockerode from "dockerode";
 import { and, eq } from "drizzle-orm";
-import type { getDb } from "../db/client.js";
+import type { Store } from "../db/client.js";
 import { agents } from "../db/schema.js";
 
 const image = "nano-agents-linux:1";
@@ -218,8 +218,8 @@ export async function pipeExec(accountId: string, command: string[], socket: Dup
  * Input: the database, the account id, and the agent id.
  * Output: the username. The home is mode 700 and is stored on the agent.
  */
-export async function createProfile(db: ReturnType<typeof getDb>, accountId: string, agentId: string): Promise<string> {
-  const [agent] = await db
+export async function createProfile(store: Store, accountId: string, agentId: string): Promise<string> {
+  const [agent] = await store
     .select()
     .from(agents)
     .where(and(eq(agents.id, agentId), eq(agents.accountId, accountId)));
@@ -240,7 +240,7 @@ export async function createProfile(db: ReturnType<typeof getDb>, accountId: str
   if (locked.code !== 0) {
     throw new Error(locked.stdout || "The home directory was not locked.");
   }
-  await db
+  await store
     .update(agents)
     .set({ linuxProfile: username })
     .where(and(eq(agents.id, agentId), eq(agents.accountId, accountId)));

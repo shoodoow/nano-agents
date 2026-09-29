@@ -1,9 +1,9 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { getDb } from "../db/client.js";
-import { conversations, jobs, members, messages } from "../db/schema.js";
+import { conversations, jobs, members, messages, routines } from "../db/schema.js";
 import { createAccount, createAgent } from "../roster/roster.js";
-import { claimDue, createRoutine, runDue } from "./routines.js";
+import { claimDue, createOwnRoutine, createRoutine, deleteOwnRoutine, listDueJobs, listOwnRoutines, runDue, updateOwnRoutine } from "./routines.js";
 
 const databaseUrl = process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/nano_agents";
 const db = getDb(databaseUrl);
@@ -80,6 +80,63 @@ describe("routines", () => {
       return "owner here";
     });
     expect(calls).toEqual([bea.id]);
+  });
+
+  it("lets an agent manage only its own routines, and skips paused ones", async () => {
+    await db.update(jobs).set({ status: "done" }).where(eq(jobs.status, "pending"));
+    const account = await createAccount(db, { name: "Own" });
+    const ada = await createAgent(db, account.id, agent("Ada"));
+    const bea = await createAgent(db, account.id, agent("Bea"));
+    const [room] = await db
+      .insert(conversations)
+      .values({ accountId: account.id, kind: "direct", ownerAgentId: ada.id, title: "mine" })
+      .returning();
+
+    await expect(
+      createOwnRoutine(db, {
+        accountId: account.id,
+        conversationId: room!.id,
+        agentId: ada.id,
+        body: "Bad.",
+        cron: "not a cron",
+      }),
+    ).rejects.toThrow(/Unsupported/);
+
+    const mine = await createOwnRoutine(db, {
+      accountId: account.id,
+      conversationId: room!.id,
+      agentId: ada.id,
+      body: "Morning note.",
+      cron: "0 9 * * *",
+      timezone: "Europe/Berlin",
+    });
+    expect(mine.timezone).toBe("Europe/Berlin");
+    expect(mine.agentId).toBe(ada.id);
+
+    expect(await updateOwnRoutine(db, account.id, bea.id, { routineId: mine.id, body: "Stolen." })).toBeNull();
+    expect(await deleteOwnRoutine(db, account.id, bea.id, mine.id)).toBe(false);
+    expect((await listOwnRoutines(db, account.id, ada.id)).map((row) => row.id)).toContain(mine.id);
+    expect((await listOwnRoutines(db, account.id, bea.id)).map((row) => row.id)).not.toContain(mine.id);
+
+    await db.update(jobs).set({ runAt: new Date(Date.now() - 60_000) }).where(eq(jobs.routineId, mine.id));
+    await db.update(routines).set({ paused: true }).where(eq(routines.id, mine.id));
+    const pausedDue = await listDueJobs(db, 100);
+    expect(pausedDue.some((job) => job.routineId === mine.id)).toBe(false);
+
+    await db.update(routines).set({ paused: false }).where(eq(routines.id, mine.id));
+    const due = await listDueJobs(db, 100);
+    expect(due.some((job) => job.routineId === mine.id)).toBe(true);
+
+    const quiet = await createOwnRoutine(db, {
+      accountId: account.id,
+      conversationId: room!.id,
+      agentId: ada.id,
+      body: "Paused at birth.",
+      cron: "*/15 * * * *",
+      paused: true,
+    });
+    const quietJobs = await db.select().from(jobs).where(eq(jobs.routineId, quiet.id));
+    expect(quietJobs).toHaveLength(0);
   });
 });
 

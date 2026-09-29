@@ -52,6 +52,27 @@ export type ProviderSetting = {
   configured: boolean;
 };
 
+export type StreamEvent = {
+  type: string;
+  message?: RichMessage;
+  reaction?: Reaction;
+  notification?: PendingNotification;
+  run?: { id: string; status: string; error?: string | null };
+  error?: string;
+  cursor?: number;
+};
+
+export type PendingNotification = {
+  id: string;
+  conversationId: string;
+  messageId: string | null;
+  runId: string | null;
+  title: string;
+  body: string;
+  urgency: string;
+  createdAt: string;
+};
+
 export type CoreClient = {
   listAgents: (accountId: string) => Promise<RosterAgent[]>;
   hireAgent: (
@@ -91,8 +112,11 @@ export type CoreClient = {
   subscribeMessages: (
     accountId: string,
     conversationId: string,
-    onEvent: (event: { type: string; message?: RichMessage; reaction?: Reaction; error?: string }) => void,
+    onEvent: (event: StreamEvent) => void,
+    opts?: { cursor?: number },
   ) => () => void;
+  registerDevice: (accountId: string, input: { expoPushToken: string; platform?: string | null }) => Promise<{ id: string }>;
+  listNotifications: (accountId: string) => Promise<PendingNotification[]>;
   mention: (draft: string, name: string) => string;
   listProposals: (accountId: string) => Promise<Proposal[]>;
   approve: (accountId: string, proposalId: string) => Promise<Proposal[]>;
@@ -145,7 +169,10 @@ export function createCore(
     createGroup: (accountId, title, agentIds) => createGroup(baseUrl, accountId, title, agentIds, fetchImpl),
     sendMessage: (accountId, conversationId, body, rich) =>
       sendMessage(baseUrl, accountId, conversationId, body, rich, fetchImpl),
-    subscribeMessages: (accountId, conversationId, onEvent) => subscribeMessages(baseUrl, accountId, conversationId, onEvent, fetchImpl),
+    subscribeMessages: (accountId, conversationId, onEvent, opts) =>
+      subscribeMessages(baseUrl, accountId, conversationId, onEvent, fetchImpl, opts),
+    registerDevice: (accountId, input) => registerDevice(baseUrl, accountId, input, fetchImpl),
+    listNotifications: (accountId) => listNotifications(baseUrl, accountId, fetchImpl),
     mention,
     listProposals: (accountId) => listProposals(baseUrl, accountId, fetchImpl),
     approve: (accountId, proposalId) => decide(baseUrl, accountId, proposalId, "approve", fetchImpl),
@@ -446,55 +473,76 @@ async function sendMessage(
 }
 
 /**
- * Subscribes to live turn events via SSE.
+ * Subscribes to live turn events via SSE with cursor resume.
  * Why: progressive multi-bubble turns need push; polling would miss ordering
  * and waste battery. Uses fetch reader so no EventSource polyfill is needed
- * on React Native. Falls back silently when streaming unsupported (tests).
- * Input: base URL, ids, onEvent, fetch. Output: unsubscribe function.
+ * on React Native. Reconnects with backoff resuming from the last cursor, so
+ * a dropped connection replays exactly the missed tail (server replays by
+ * cursor, client dedups by id). Falls back silently when streaming
+ * unsupported (tests).
+ * Input: base URL, ids, onEvent, fetch, opts.cursor to resume after.
+ * Output: unsubscribe function.
  */
 function subscribeMessages(
   baseUrl: string,
   accountId: string,
   conversationId: string,
-  onEvent: (event: { type: string; message?: RichMessage; reaction?: Reaction; error?: string }) => void,
+  onEvent: (event: StreamEvent) => void,
   fetchImpl: typeof fetch,
+  opts?: { cursor?: number },
 ): () => void {
   let cancelled = false;
+  let cursor = opts?.cursor ?? 0;
+  let attempts = 0;
   const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-  void (async () => {
-    try {
-      const cookie = readAuthCookie();
-      const response = await fetchImpl(
-        `${baseUrl}/conversations/${conversationId}/stream?accountId=${accountId}`,
-        { headers: { ...(cookie ? { cookie } : {}) }, signal: controller?.signal as never },
-      );
-      if (!response.ok || !response.body) return;
-      const reader = (response.body as ReadableStream<Uint8Array>).getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done || cancelled) break;
-        buffer += decoder.decode(value, { stream: true });
-        let index = buffer.indexOf("\n\n");
-        while (index >= 0) {
-          const chunk = buffer.slice(0, index);
-          buffer = buffer.slice(index + 2);
-          const line = chunk.split("\n").find((l) => l.startsWith("data: "));
-          if (line) {
-            try {
-              onEvent(JSON.parse(line.slice(6)) as { type: string; message?: RichMessage; reaction?: Reaction; error?: string });
-            } catch {
-              // Malformed keepalive; ignore.
+  const pump = async (): Promise<void> => {
+    while (!cancelled && attempts < 6) {
+      try {
+        const cookie = readAuthCookie();
+        const response = await fetchImpl(
+          `${baseUrl}/conversations/${conversationId}/stream?accountId=${accountId}${cursor > 0 ? `&cursor=${cursor}` : ""}`,
+          { headers: { ...(cookie ? { cookie } : {}) }, signal: controller?.signal as never },
+        );
+        if (!response.ok || !response.body) return;
+        attempts = 0;
+        const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done || cancelled) break;
+          buffer += decoder.decode(value, { stream: true });
+          let index = buffer.indexOf("\n\n");
+          while (index >= 0) {
+            const chunk = buffer.slice(0, index);
+            buffer = buffer.slice(index + 2);
+            const line = chunk.split("\n").find((l) => l.startsWith("data: "));
+            if (line) {
+              try {
+                const event = JSON.parse(line.slice(6)) as StreamEvent;
+                if (typeof event.cursor === "number" && event.cursor > cursor) {
+                  cursor = event.cursor;
+                }
+                onEvent(event);
+              } catch {
+                // Malformed keepalive; ignore.
+              }
             }
+            index = buffer.indexOf("\n\n");
           }
-          index = buffer.indexOf("\n\n");
         }
+        if (cancelled) return;
+        // Clean EOF (server will normally never end a stream): settle before
+        // reconnecting instead of hot-spinning the endpoint.
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      } catch {
+        // Stream closed mid-flight; back off and resume from the cursor.
       }
-    } catch {
-      // Stream closed or unsupported (tests); caller still has REST fallback.
+      attempts += 1;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(1000 * 2 ** attempts, 8000)));
     }
-  })();
+  };
+  void pump();
   return () => {
     cancelled = true;
     try {
@@ -503,6 +551,38 @@ function subscribeMessages(
       // Already closed.
     }
   };
+}
+
+/**
+ * Registers this phone for push delivery.
+ * Why: the relay needs an ExpoPushToken per device; without it the user only
+ * gets in-app banners. Idempotent upsert server-side (token rotation safe).
+ * Input: base URL, account id, token + platform, fetch. Output: device id.
+ */
+async function registerDevice(
+  baseUrl: string,
+  accountId: string,
+  input: { expoPushToken: string; platform?: string | null },
+  fetchImpl: typeof fetch,
+): Promise<{ id: string }> {
+  return readJson(fetchImpl, `${baseUrl}/devices?accountId=${accountId}`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+/**
+ * Lists pending pings for the badge/inbox fallback.
+ * Why: pushes can be missed or dismissed — this is the durable list the phone
+ * reconciles on every foreground.
+ * Input: base URL, account id, fetch. Output: pending notifications newest-first.
+ */
+async function listNotifications(
+  baseUrl: string,
+  accountId: string,
+  fetchImpl: typeof fetch,
+): Promise<PendingNotification[]> {
+  return readJson(fetchImpl, `${baseUrl}/notifications?accountId=${accountId}`);
 }
 
 /**

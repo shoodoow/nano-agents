@@ -1,27 +1,53 @@
 import { generateText, isStepCount, jsonSchema, tool, type ModelMessage, type SystemModelMessage } from "ai";
-import { sendMessageInputSchema, reactionSchema, subagentCreateSchema, delegateSchema } from "@nano-agents/shared";
-import { and, asc, eq } from "drizzle-orm";
+import {
+  delegateSchema,
+  groupCreateInputSchema,
+  notifyInputSchema,
+  reactionSchema,
+  routineCreateInputSchema,
+  routineIdSchema,
+  routineUpdateInputSchema,
+  sendMessageInputSchema,
+  spawnWorkerInputSchema,
+  subagentCreateSchema,
+  workerRefSchema,
+} from "@nano-agents/shared";
+import { and, asc, desc, eq } from "drizzle-orm";
 import { buildContext } from "../memory/context.js";
 import { readHistory } from "../memory/memory.js";
-import type { getDb } from "../db/client.js";
-import { agents, conversations, members, messages, summaryItems } from "../db/schema.js";
+import type { getDb, Store } from "../db/client.js";
+import { agents, conversations, delegations, members, messages, summaryItems } from "../db/schema.js";
 import { keyFor } from "../keys/keys.js";
 import { getModel } from "../model/get-model.js";
 import { speakers } from "./mentions.js";
-import { saveUserMessage } from "./rooms.js";
+import { createGroupRoom, saveUserMessage } from "./rooms.js";
 import { propose } from "../skills/proposals.js";
 import { skillCatalog, readSkill } from "../skills/skills.js";
 import { mergeSummary } from "../memory/summary.js";
 import { listTools } from "../skills/tools.js";
 import { bash, readFile, writeFile, screenshotImage, moveMouse, clickAt, typeText, pressKeys } from "../computer/computer.js";
+import { globFiles, grepFiles } from "../computer/find.js";
 import { webFetch } from "../computer/web.js";
+import { webSearch } from "../computer/search.js";
+import { toolKeyFor } from "../keys/tools.js";
 import { accountHome, accountShared, createProfile } from "../linux/linux.js";
+import { saveNotification } from "../notify/notify.js";
+import { todoList, todoWrite } from "../memory/todos.js";
+import { createOwnRoutine, deleteOwnRoutine, listOwnRoutines, updateOwnRoutine } from "../routines/routines.js";
 import { saveSendMessage, saveReaction, blocksToText, type TurnEvent } from "./send-message.js";
+import { appendEvent } from "./events.js";
+import { acquireRun, failRun, finishRun, heartbeatRun } from "./runs.js";
+import type { StreamEvent } from "./stream.js";
 import { parseDataUri } from "./uploads.js";
-import { hireSubagent, recordDelegation, listTeam } from "./subagents.js";
+import { checkWorker, hireSubagent, listTeam, recordDelegation, runWorker, spawnWorker, stopWorker } from "./subagents.js";
 
 type Db = ReturnType<typeof getDb>;
-type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+
+const HEARTBEAT_MS = 30_000;
+// Delegation depth cap (Phase 15): parent 0 -> child 1 -> grandchild 2 stops.
+// Bounds nested model calls so a delegation chain cannot recurse forever.
+const MAX_DELEGATION_DEPTH = 2;
+const DELEGATION_HISTORY_SLICE = 10;
 
 export type TurnImagePart =
   // File parts carry data: URIs with an exact mime (AI SDK v7; "image" parts
@@ -48,14 +74,21 @@ export type TurnInput = {
 };
 
 export type TurnOptions = {
-  // Why: SSE needs post-commit events; buffering in-tx then flushing keeps
-  // ordering durable (rollback drops unsent bubbles) and stays single-process
-  // safe. A future Redis fanout can subscribe to this same callback.
-  onEvent?: (event: TurnEvent) => void;
+  // Why: SSE fanout + durable event log share one callback; runTurn appends
+  // each event (cursor attached) then calls this, so live and replay agree.
+  onEvent?: (event: StreamEvent) => void;
   // Why: POST /messages now saves the user message synchronously (durable
   // first) so no refresh can observe a thread without it. When set, runTurn
   // speaks for that row instead of inserting a duplicate.
   alreadySavedUserMessage?: { id: string; text: string };
+  // Why: the HTTP layer claims the run before 202 (fast single insert) so the
+  // background turn joins it instead of racing a second claim. Routines claim
+  // kind=routine the same way. Absent = runTurn claims its own turn run.
+  existingRunId?: string;
+  kind?: "turn" | "routine";
+  // Why: a second turn on a busy room waits for the running run to land
+  // (preserves old lock-queue behavior). POST passes 0 for fail-fast queueing.
+  acquireTimeoutMs?: number;
 };
 
 type GenerateResult =
@@ -67,15 +100,15 @@ type GenerateResult =
     };
 
 /**
- * Runs one room turn with send_message voice.
- * Why: the system prompt promises multi-message send_message + lone react
- * tapbacks; a single raw-text return cannot stream, carry images/widgets, or
- * show progress. Each speaker's tool calls insert immediately in-tx so later
- * steps see earlier bubbles; events flush post-commit for SSE.
- * Input: database, account id, conversation id, incoming text, optional model
- * stub, skills root, options with onEvent.
- * Output: replies saved this turn (one+ per speaker when multi-bubble), in
- * speaker then emission order. Conversation row stays locked until done.
+ * Runs one room turn with send_message voice and a crash-safe run ledger.
+ * Why: the old whole-turn transaction + FOR UPDATE lock held a Postgres tx
+ * open for the entire turn — a 2h job meant a 2h open tx, and a restart left
+ * nothing behind. Now: claim (or join) a run row, commit per step, heartbeat
+ * while the model works, land done/failed. Room serialization moved from the
+ * lock to the one-running-run-per-room index + wait-acquire.
+ * Input: database, account id, conversation id, incoming text/blocks, optional
+ * model stub, skills root, options (onEvent/alreadySaved/existingRun/kind/timeout).
+ * Output: replies saved this turn, in speaker then emission order.
  */
 export async function runTurn(
   db: Db,
@@ -86,211 +119,294 @@ export async function runTurn(
   skillsRoot?: string,
   options?: TurnOptions,
 ) {
-  const pendingEvents: TurnEvent[] = [];
-  const replies = await db.transaction(async (tx) => {
-    const [room] = await tx
-      .select()
-      .from(conversations)
-      .where(and(eq(conversations.id, conversationId), eq(conversations.accountId, accountId)))
-      .for("update");
-    if (!room) {
-      throw new Error("Room not found");
+  // Validate without locking: serialization lives in the run ledger now.
+  const [room] = await db
+    .select()
+    .from(conversations)
+    .where(and(eq(conversations.id, conversationId), eq(conversations.accountId, accountId)));
+  if (!room) {
+    throw new Error("Room not found");
+  }
+
+  const memberRows = await db
+    .select({ id: agents.id, name: agents.name })
+    .from(members)
+    .innerJoin(agents, eq(members.agentId, agents.id))
+    .where(and(eq(members.conversationId, conversationId), eq(members.accountId, accountId)));
+
+  // Claim the turn slot (or join a run the HTTP layer already claimed).
+  // Throws "room is busy" past the timeout — POST treats that as queued.
+  const runId =
+    options?.existingRunId ??
+    (await acquireRun(db, accountId, conversationId, options?.kind ?? "turn", options?.acquireTimeoutMs)).id;
+  await heartbeatRun(db, runId).catch(() => {
+    // Heartbeat best-effort; the turn proceeds regardless.
+  });
+
+  // Persist-then-fanout: every event lands in the durable log first (cursor
+  // attached for SSE resume), then goes live. Log failure degrades to live
+  // only — the message row itself already committed separately.
+  const emit = async (event: TurnEvent): Promise<void> => {
+    try {
+      const row = await appendEvent(db, { accountId, conversationId, runId, event });
+      options?.onEvent?.({ ...event, cursor: row.id });
+    } catch {
+      options?.onEvent?.(event);
     }
+  };
 
-    const memberRows = await tx
-      .select({ id: agents.id, name: agents.name })
-      .from(members)
-      .innerJoin(agents, eq(members.agentId, agents.id))
-      .where(and(eq(members.conversationId, conversationId), eq(members.accountId, accountId)));
+  let stamp = Date.now();
+  const nextTime = () => new Date(stamp++);
+  const incoming = typeof body === "string" ? { text: body, blocks: null as null, replyTo: null as null } : body;
+  if (options?.alreadySavedUserMessage) {
+    // Durable-first path: tag the pre-saved row with this run for traceability.
+    await db
+      .update(messages)
+      .set({ runId })
+      .where(and(eq(messages.id, options.alreadySavedUserMessage.id), eq(messages.accountId, accountId)));
+  } else {
+    await saveUserMessage(db, accountId, conversationId, {
+      text: incoming.text,
+      blocks: incoming.blocks,
+      replyTo: incoming.replyTo,
+      runId,
+    });
+  }
 
-    let stamp = Date.now();
-    const nextTime = () => new Date(stamp++);
-    const incoming = typeof body === "string" ? { text: body, blocks: null as null, replyTo: null as null } : body;
-    if (options?.alreadySavedUserMessage) {
-      // Durable-first path: the HTTP layer already stored this message, so any
-      // client refresh — even mid-turn — finds it. Never insert twice.
-    } else {
-      await saveUserMessage(tx as never, accountId, conversationId, {
-        text: incoming.text,
-        blocks: incoming.blocks,
-        replyTo: incoming.replyTo,
-      });
-    }
+  // Heartbeat while the model works so the scheduler never mistakes a live
+  // 2h turn for a crash. Unref'd: tests and CLI exits never hang on it.
+  const beat = setInterval(() => {
+    void heartbeatRun(db, runId).catch(() => {});
+  }, HEARTBEAT_MS);
+  (beat as unknown as { unref?: () => void }).unref?.();
 
+  const saved: (typeof messages.$inferSelect)[] = [];
+  try {
     const spoken = new Set<string>();
     const queue = speakers(incoming.text, memberRows, room.ownerAgentId);
-    const saved: (typeof messages.$inferSelect)[] = [];
     while (queue.length > 0) {
       const agentId = queue.shift();
       if (!agentId || spoken.has(agentId)) {
         continue;
       }
       spoken.add(agentId);
-      let [agent] = await tx.select().from(agents).where(and(eq(agents.id, agentId), eq(agents.accountId, accountId)));
-      if (!agent) {
-        throw new Error("Agent not found");
-      }
-      // Lazy OS profile: model-hired subagents join the room without a Unix
-      // user, and containers can vanish under long-lived accounts. Provision
-      // here so the speaker always has computer tools when the daemon is up.
-      // Degrades gracefully — chat still works, just without shell/desktop —
-      // because a computer outage must not silence the conversation.
-      if (!agent.linuxProfile) {
-        try {
-          const profile = await createProfile(tx as never, accountId, agentId);
-          const [refreshed] = await tx
-            .select()
-            .from(agents)
-            .where(and(eq(agents.id, agentId), eq(agents.accountId, accountId)));
-          if (refreshed) agent = refreshed;
-          void profile;
-        } catch {
-          // Computer unavailable; continue with linuxProfile null.
-        }
-      }
-      const history = await tx
-        .select()
-        .from(messages)
-        .where(and(eq(messages.conversationId, conversationId), eq(messages.accountId, accountId)))
-        .orderBy(asc(messages.createdAt));
-      const summary = await tx
-        .select()
-        .from(summaryItems)
-        .where(and(eq(summaryItems.conversationId, conversationId), eq(summaryItems.accountId, accountId)));
-      const catalog = skillsRoot
-        ? skillCatalog(skillsRoot)
-            .map((skill) => `${skill.name}: ${skill.description}`)
-            .join("\n")
-        : "";
-      const context = buildContext({
+      await speakOnce(db, {
         accountId,
-        agentId: agent.id,
-        promptVersion: agent.promptVersion,
-        description: agent.description,
-        summary: summary.map((item) => ({ key: item.key, body: item.body })),
-        messages: history.map((message) => ({ body: message.body })),
-        tools: listTools([]).map((t) => t.name),
-        catalog,
-        room: {
-          title: room.title,
-          kind: room.kind,
-          members: memberRows.map((member) => member.name),
-          selfName: agent.name,
-        },
+        conversationId,
+        agentId,
+        memberRows,
+        room,
+        skillsRoot,
+        generate,
+        nextTime,
+        runId,
+        emit,
+        saved,
+        queue,
+        spoken,
       });
-      // Per-speaker emission buffer: the real model path appends via tool
-      // closures in replyWithModelTx; injected stubs return plain text.
-      // History carries vision parts for recent user images (toModelMessages)
-      // plus text fallback in the tail, so the agent sees attachments.
-      const emittedMessages: (typeof messages.$inferSelect)[] = [];
-      const modelMessages = toModelMessages(history);
-      const useStub = typeof generate === "function";
-      const generateWithTx = useStub
-        ? () =>
-            (generate as (input: TurnInput) => Promise<GenerateResult>)({
-              agentId,
-              provider: agent.provider,
-              modelId: agent.modelId,
-              system: context.prefix,
-              prefix: context.prefix,
-              tail: context.tail,
-              promptCacheKey: context.openai.promptCacheKey,
-              accountId,
-              linuxProfile: agent.linuxProfile,
-              messages: modelMessages,
-            })
-        : () =>
-            replyWithModelTx(db, tx, {
-              agentId,
-              provider: agent.provider,
-              modelId: agent.modelId,
-              system: context.prefix,
-              prefix: context.prefix,
-              tail: context.tail,
-              promptCacheKey: context.openai.promptCacheKey,
-              accountId,
-              linuxProfile: agent.linuxProfile,
-              conversationId,
-              skillsRoot,
-              nextTime,
-              emittedMessages,
-              pendingEvents,
-              onEvent: options?.onEvent,
-              messages: modelMessages,
-            });
-      let result: ReturnType<typeof unwrap>;
-      try {
-        result = unwrap(await generateWithTx());
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "";
-        result = {
-          text: message.startsWith("Add an API key")
-            ? message
-            : "The model provider failed. Check the provider key, model id, and endpoint.",
-          cacheReadTokens: null,
-        };
-      }
-      if (emittedMessages.length > 0) {
-        // Real tool path: send_message rows already inserted in order.
-        for (const row of emittedMessages) {
-          saved.push(row);
-          pendingEvents.push({ type: "message", message: row });
-          await mergeSummary(tx, accountId, conversationId, [{ key: "topics", body: row.body, messageId: row.id }]);
-        }
-        if (result.proposal) {
-          await propose(tx, accountId, {
-            agentId,
-            kind: result.proposal.kind,
-            body: result.proposal.body,
-            messageIds: result.proposal.messageIds,
-          });
-        }
-        const chainSource = emittedMessages.map((m) => m.body).join("\n");
-        for (const next of mentioned(chainSource, memberRows, true)) {
-          if (!spoken.has(next)) queue.push(next);
-        }
-        continue;
-      }
-      // Stub/compat path: wrap raw text as one rich bubble.
-      const text = result.text.trim();
-      const bodyText = text || "The tools finished, but the model sent no message.";
-      const [wrapped] = await tx
-        .insert(messages)
-        .values({
-          accountId,
-          conversationId,
-          agentId,
-          body: bodyText,
-          kind: "rich",
-          payload: [{ kind: "text", markdown: bodyText }],
-          cacheReadTokens: result.cacheReadTokens,
-          createdAt: nextTime(),
-        })
-        .returning();
-      saved.push(wrapped!);
-      pendingEvents.push({ type: "message", message: wrapped! });
-      if (text) {
-        await mergeSummary(tx, accountId, conversationId, [{ key: "topics", body: text, messageId: wrapped!.id }]);
-      }
-      if (result.proposal) {
-        await propose(tx, accountId, {
-          agentId,
-          kind: result.proposal.kind,
-          body: result.proposal.body,
-          messageIds: result.proposal.messageIds,
-        });
-      }
-      for (const next of mentioned(result.text, memberRows, true)) {
-        if (!spoken.has(next)) {
-          queue.push(next);
-        }
-      }
+      await heartbeatRun(db, runId).catch(() => {});
     }
+    await finishRun(db, runId);
+    await emit({ type: "run", run: { id: runId, status: "done" as const, error: null } });
+    options?.onEvent?.({ type: "done" });
     return saved;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "The turn failed.";
+    await failRun(db, runId, message).catch(() => {});
+    await emit({ type: "error", error: message });
+    throw error;
+  } finally {
+    clearInterval(beat);
+  }
+}
+
+/**
+ * Runs one speaker's step: load, think, emit, summarize, chain.
+ * Why: extracted from runTurn so the loop stays readable — each step is
+ * independent short transactions, never one giant tx. Emits (message events,
+ * summaries, proposals) commit per bubble; a later failure keeps earlier work.
+ * Input: db + speaker context (ids, rows, buffers, queue). Output: nothing;
+ * appends to saved/emitted buffers and the mention queue in place.
+ */
+async function speakOnce(
+  db: Db,
+  input: {
+    accountId: string;
+    conversationId: string;
+    agentId: string;
+    memberRows: { id: string; name: string }[];
+    room: { title: string; kind: string };
+    skillsRoot?: string;
+    generate?: (input: TurnInput) => Promise<GenerateResult>;
+    nextTime: () => Date;
+    runId: string;
+    emit: (event: TurnEvent) => Promise<void>;
+    saved: (typeof messages.$inferSelect)[];
+    queue: (string | undefined)[];
+    spoken: Set<string>;
+  },
+): Promise<void> {
+  const { accountId, conversationId, agentId, memberRows, room, skillsRoot, generate, nextTime, runId, emit, saved, queue, spoken } = input;
+  let [agent] = await db.select().from(agents).where(and(eq(agents.id, agentId), eq(agents.accountId, accountId)));
+  if (!agent) {
+    throw new Error("Agent not found");
+  }
+  // Lazy OS profile: model-hired subagents join the room without a Unix
+  // user, and containers can vanish under long-lived accounts. Provision
+  // here so the speaker always has computer tools when the daemon is up.
+  // Degrades gracefully — chat still works, just without shell/desktop —
+  // because a computer outage must not silence the conversation.
+  if (!agent.linuxProfile) {
+    try {
+      const profile = await createProfile(db, accountId, agentId);
+      const [refreshed] = await db
+        .select()
+        .from(agents)
+        .where(and(eq(agents.id, agentId), eq(agents.accountId, accountId)));
+      if (refreshed) agent = refreshed;
+      void profile;
+    } catch {
+      // Computer unavailable; continue with linuxProfile null.
+    }
+  }
+  const history = await db
+    .select()
+    .from(messages)
+    .where(and(eq(messages.conversationId, conversationId), eq(messages.accountId, accountId)))
+    .orderBy(asc(messages.createdAt));
+  const summary = await db
+    .select()
+    .from(summaryItems)
+    .where(and(eq(summaryItems.conversationId, conversationId), eq(summaryItems.accountId, accountId)));
+  const catalog = skillsRoot
+    ? skillCatalog(skillsRoot)
+        .map((skill) => `${skill.name}: ${skill.description}`)
+        .join("\n")
+    : "";
+  const context = buildContext({
+    accountId,
+    agentId: agent.id,
+    promptVersion: agent.promptVersion,
+    description: agent.description,
+    summary: summary.map((item) => ({ key: item.key, body: item.body })),
+    messages: history.map((message) => ({ body: message.body })),
+    tools: listTools([]).map((t) => t.name),
+    catalog,
+    room: {
+      title: room.title,
+      kind: room.kind,
+      members: memberRows.map((member) => member.name),
+      selfName: agent.name,
+    },
   });
-  for (const event of pendingEvents) options?.onEvent?.(event);
-  options?.onEvent?.({ type: "done" });
-  return replies;
+  // Per-speaker emission buffer: the real model path appends via tool
+  // closures in replyWithModelTx; injected stubs return plain text.
+  // History carries vision parts for recent user images (toModelMessages)
+  // plus text fallback in the tail, so the agent sees attachments.
+  const emittedMessages: (typeof messages.$inferSelect)[] = [];
+  const modelMessages = toModelMessages(history);
+  const useStub = typeof generate === "function";
+  const generateWithStore = useStub
+    ? () =>
+        (generate as (input: TurnInput) => Promise<GenerateResult>)({
+          agentId,
+          provider: agent.provider,
+          modelId: agent.modelId,
+          system: context.prefix,
+          prefix: context.prefix,
+          tail: context.tail,
+          promptCacheKey: context.openai.promptCacheKey,
+          accountId,
+          linuxProfile: agent.linuxProfile,
+          messages: modelMessages,
+        })
+    : () =>
+        replyWithModelTx(db, db, {
+          agentId,
+          provider: agent.provider,
+          modelId: agent.modelId,
+          system: context.prefix,
+          prefix: context.prefix,
+          tail: context.tail,
+          promptCacheKey: context.openai.promptCacheKey,
+          accountId,
+          linuxProfile: agent.linuxProfile,
+          conversationId,
+          runId,
+          skillsRoot,
+          nextTime,
+          emittedMessages,
+          emit,
+          messages: modelMessages,
+        });
+  let result: ReturnType<typeof unwrap>;
+  try {
+    result = unwrap(await generateWithStore());
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    result = {
+      text: message.startsWith("Add an API key")
+        ? message
+        : "The model provider failed. Check the provider key, model id, and endpoint.",
+      cacheReadTokens: null,
+    };
+  }
+  if (emittedMessages.length > 0) {
+    // Real tool path: send_message rows already inserted + emitted in order.
+    for (const row of emittedMessages) {
+      saved.push(row);
+      await mergeSummary(db, accountId, conversationId, [{ key: "topics", body: row.body, messageId: row.id }]);
+    }
+    if (result.proposal) {
+      await propose(db, accountId, {
+        agentId,
+        kind: result.proposal.kind,
+        body: result.proposal.body,
+        messageIds: result.proposal.messageIds,
+      });
+    }
+    const chainSource = emittedMessages.map((m) => m.body).join("\n");
+    for (const next of mentioned(chainSource, memberRows, true)) {
+      if (!spoken.has(next)) queue.push(next);
+    }
+    return;
+  }
+  // Stub/compat path: wrap raw text as one rich bubble.
+  const text = result.text.trim();
+  const bodyText = text || "The tools finished, but the model sent no message.";
+  const [wrapped] = await db
+    .insert(messages)
+    .values({
+      accountId,
+      conversationId,
+      agentId,
+      runId,
+      body: bodyText,
+      kind: "rich",
+      payload: [{ kind: "text", markdown: bodyText }],
+      cacheReadTokens: result.cacheReadTokens,
+      createdAt: nextTime(),
+    })
+    .returning();
+  saved.push(wrapped!);
+  await emit({ type: "message", message: wrapped! });
+  if (text) {
+    await mergeSummary(db, accountId, conversationId, [{ key: "topics", body: text, messageId: wrapped!.id }]);
+  }
+  if (result.proposal) {
+    await propose(db, accountId, {
+      agentId,
+      kind: result.proposal.kind,
+      body: result.proposal.body,
+      messageIds: result.proposal.messageIds,
+    });
+  }
+  for (const next of mentioned(result.text, memberRows, true)) {
+    if (!spoken.has(next)) {
+      queue.push(next);
+    }
+  }
 }
 
 /**
@@ -308,8 +424,11 @@ export function linuxToolNames(): string[] {
     "computer_mouse",
     "computer_screenshot",
     "computer_type",
+    "glob",
+    "grep",
     "read",
     "web_fetch",
+    "web_search",
     "write",
   ].sort();
 }
@@ -320,9 +439,11 @@ export function linuxToolNames(): string[] {
  * single-shot) so the catalog, the prefix, and the callable tools can never
  * drift apart. Computer tools operate on the agent's assigned deterministic
  * display — the same :N the viewer proxies — and serialize per screen.
- * Input: account id + Linux username. Output: AI SDK tool map.
+ * Search/files tools ride along because they exec inside the same container.
+ * Input: database (for search keys), account id, Linux username.
+ * Output: AI SDK tool map.
  */
-function linuxTools(accountId: string, profile: string) {
+function linuxTools(db: Db, accountId: string, profile: string) {
   const home = accountHome(accountId, profile);
   const shared = accountShared(accountId);
   return {
@@ -415,6 +536,45 @@ function linuxTools(accountId: string, profile: string) {
           page.markdown,
         ].join("\n");
       },
+    }),
+    web_search: tool({
+      description:
+        "Search the web first, then web_fetch the promising hits. Keyed providers (Brave, Exa) when configured, keyless DuckDuckGo otherwise. Returns title/url/snippet triples, not page text.",
+      inputSchema: jsonSchema<{ query: string; numResults?: number }>({
+        type: "object",
+        properties: { query: { type: "string" }, numResults: { type: "number" } },
+        required: ["query"],
+      }),
+      execute: async ({ query, numResults }) => {
+        const [braveKey, exaKey] = await Promise.all([
+          toolKeyFor(db, accountId, "brave").catch(() => null),
+          toolKeyFor(db, accountId, "exa").catch(() => null),
+        ]);
+        const searched = await webSearch(accountId, profile, query, { numResults, braveKey, exaKey });
+        if (searched.results.length === 0) return `No results (${searched.provider}). Try different words.`;
+        return [
+          `Search via ${searched.provider}:`,
+          ...searched.results.map((row, index) => `${index + 1}. ${row.title}\n   ${row.url}\n   ${row.snippet}`),
+        ].join("\n");
+      },
+    }),
+    glob: tool({
+      description: "List files matching a glob (e.g. **/*.ts) under your home or /shared. Capped at 100 paths.",
+      inputSchema: jsonSchema<{ pattern: string; path?: string }>({
+        type: "object",
+        properties: { pattern: { type: "string" }, path: { type: "string" } },
+        required: ["pattern"],
+      }),
+      execute: async ({ pattern, path }) => globFiles(accountId, profile, pattern, path),
+    }),
+    grep: tool({
+      description: "Search file contents for a regex under your home or /shared. Returns file:line hits, capped at 100.",
+      inputSchema: jsonSchema<{ pattern: string; path?: string; include?: string }>({
+        type: "object",
+        properties: { pattern: { type: "string" }, path: { type: "string" }, include: { type: "string" } },
+        required: ["pattern"],
+      }),
+      execute: async ({ pattern, path, include }) => grepFiles(accountId, profile, pattern, { path, include }),
     }),
   };
 }
@@ -550,21 +710,160 @@ export function toModelPrompt(input: Pick<TurnInput, "provider" | "prefix" | "ta
 }
 
 /**
- * Builds the send_message tool bound to one speaker's emission buffer.
- * Why: shared by the ack-first phase and the full agentic loop so both speak
- * through the identical durable path (insert + buffer + immediate fanout).
- * Input: tx plus speaker ids, timestamp fn, buffer, optional fanout.
+ * Runs a delegated child now, inside the parent's turn.
+ * Why: a visible handoff has to actually speak — recording the intent is not
+ * delivery. Bubbles save under the child with viaAgentId set to the parent,
+ * so the room shows who asked. History is a short slice plus the task, not
+ * the whole transcript. Mentions in the child's text do not wake anyone;
+ * depth is capped by the caller before this runs.
+ * Input: db, parent/child/run ids, task, emission buffers, optional generate stub.
+ * Output: the child's bubbles, in send order. Throws if the child is gone.
+ */
+export async function runDelegatedTurn(
+  db: Db,
+  input: {
+    accountId: string;
+    conversationId: string;
+    runId: string;
+    parentAgentId: string;
+    childAgentId: string;
+    delegationId: string;
+    task: string;
+    skillsRoot?: string;
+    nextTime: () => Date;
+    emittedMessages: (typeof messages.$inferSelect)[];
+    emit: (event: TurnEvent) => Promise<void>;
+    delegationDepth: number;
+    generate?: (input: TurnInput) => Promise<GenerateResult>;
+  },
+): Promise<(typeof messages.$inferSelect)[]> {
+  const [child] = await db
+    .select()
+    .from(agents)
+    .where(and(eq(agents.id, input.childAgentId), eq(agents.accountId, input.accountId)));
+  if (!child) throw new Error("Delegate target is not on this account.");
+  const recent = (
+    await db
+      .select({ agentId: messages.agentId, body: messages.body })
+      .from(messages)
+      .where(and(eq(messages.conversationId, input.conversationId), eq(messages.accountId, input.accountId)))
+      .orderBy(desc(messages.createdAt))
+      .limit(DELEGATION_HISTORY_SLICE)
+  ).reverse();
+
+  if (input.generate) {
+    const result = unwrap(
+      await input.generate({
+        agentId: child.id,
+        provider: child.provider,
+        modelId: child.modelId,
+        system: child.description,
+        prefix: child.description,
+        tail: input.task,
+        promptCacheKey: `${input.accountId}:${child.id}`,
+        accountId: input.accountId,
+        linuxProfile: child.linuxProfile,
+        messages: [{ role: "user", content: input.task }],
+      }),
+    );
+    const text = result.text.trim() || "The delegated agent sent no message.";
+    const [wrapped] = await db
+      .insert(messages)
+      .values({
+        accountId: input.accountId,
+        conversationId: input.conversationId,
+        agentId: child.id,
+        runId: input.runId,
+        viaAgentId: input.parentAgentId,
+        body: text,
+        kind: "rich",
+        payload: [{ kind: "text", markdown: text }],
+        createdAt: input.nextTime(),
+      })
+      .returning();
+    if (!wrapped) throw new Error("Delegated reply insert returned no row.");
+    input.emittedMessages.push(wrapped);
+    await input.emit({ type: "message", message: wrapped });
+    return [wrapped];
+  }
+
+  let profile: string | null = child.linuxProfile;
+  if (!profile) {
+    try {
+      profile = await createProfile(db, input.accountId, child.id);
+    } catch {
+      profile = null;
+    }
+  }
+  const [room] = await db
+    .select()
+    .from(conversations)
+    .where(and(eq(conversations.id, input.conversationId), eq(conversations.accountId, input.accountId)));
+  if (!room) throw new Error("Room not found");
+  const memberRows = await db
+    .select({ id: agents.id, name: agents.name })
+    .from(members)
+    .innerJoin(agents, eq(members.agentId, agents.id))
+    .where(and(eq(members.conversationId, input.conversationId), eq(members.accountId, input.accountId)));
+  const context = buildContext({
+    accountId: input.accountId,
+    agentId: child.id,
+    promptVersion: child.promptVersion,
+    description: child.description,
+    summary: [],
+    messages: recent.map((row) => ({ body: row.body })),
+    tools: listTools([]).map((item) => item.name),
+    room: {
+      title: room.title,
+      kind: room.kind,
+      members: memberRows.map((member) => member.name),
+      selfName: child.name,
+    },
+  });
+  const local: (typeof messages.$inferSelect)[] = [];
+  await replyWithModelTx(db, db, {
+    agentId: child.id,
+    provider: child.provider,
+    modelId: child.modelId,
+    system: context.prefix,
+    prefix: context.prefix,
+    tail: `${context.tail}\n\nDelegated task (do this, do not fan out mentions): ${input.task}`,
+    promptCacheKey: context.openai.promptCacheKey,
+    accountId: input.accountId,
+    linuxProfile: profile,
+    conversationId: input.conversationId,
+    runId: input.runId,
+    skillsRoot: input.skillsRoot,
+    nextTime: input.nextTime,
+    emittedMessages: local,
+    emit: input.emit,
+    viaAgentId: input.parentAgentId,
+    delegationDepth: input.delegationDepth,
+    messages: [{ role: "user", content: input.task }],
+  });
+  for (const row of local) input.emittedMessages.push(row);
+  return local;
+}
+
+/**
+ * Builds the send_message tool bound to one speaker's run.
+ * Why: shared by the full agentic loop so voice always speaks through the
+ * identical durable path (short-tx insert + event log + immediate fanout).
+ * Input: store plus speaker/run ids, timestamp fn, buffer, emit fn.
  * Output: the AI SDK send_message tool.
  */
 function makeSendMessageTool(
-  tx: Tx,
+  store: Store,
   input: {
     accountId: string;
     conversationId: string;
     agentId: string;
+    runId: string;
+    // Delegated speech renders under the child but attributed to the parent.
+    viaAgentId?: string | null;
     nextTime: () => Date;
     emittedMessages: (typeof messages.$inferSelect)[];
-    onEvent?: (event: TurnEvent) => void;
+    emit: (event: TurnEvent) => Promise<void>;
   },
 ) {
   return tool({
@@ -577,43 +876,45 @@ function makeSendMessageTool(
     }),
     execute: async ({ blocks, replyTo }) => {
       const parsed = sendMessageInputSchema.parse({ blocks, replyTo: replyTo ?? null });
-      const saved = await saveSendMessage(tx, {
+      const saved = await saveSendMessage(store, {
         accountId: input.accountId,
         conversationId: input.conversationId,
         agentId: input.agentId,
+        runId: input.runId,
+        viaAgentId: input.viaAgentId ?? null,
         blocks: parsed.blocks,
         replyTo: parsed.replyTo,
         createdAt: input.nextTime(),
       });
       input.emittedMessages.push(saved);
-      input.onEvent?.({ type: "message", message: saved });
+      await input.emit({ type: "message", message: saved });
       return { messageId: saved.id };
     },
   });
 }
 
 /**
- * Calls the selected provider with the full voice + team toolset.
+ * Calls the selected provider with the full voice + team + notify toolset.
  * Why: this is the only place model I/O happens, so all durable side effects
- * (send_message inserts, reactions, subagent hires, delegations) funnel through
- * tx-backed tool executes in call order. Stateless stubs bypass it in tests.
- * Input: db + tx, agent/room ids, prompt parts, skills root, timestamp fn,
- * emission buffers. Output: reply text (usually empty — voice went via tools),
- * cache tokens, optional proposal.
+ * (send_message inserts, reactions, notifies, subagent hires, delegations)
+ * funnel through short-tx tool executes in call order. Stateless stubs bypass
+ * it in tests. Every emission also hits the event log + immediate fanout.
+ * Input: db + store, agent/room/run ids, prompt parts, skills root, timestamp
+ * fn, emission buffer, emit fn. Output: reply text (usually empty — voice went
+ * via tools), cache tokens, optional proposal.
  */
 async function replyWithModelTx(
   db: Db,
-  tx: Tx,
+  store: Store,
   input: TurnInput & {
     conversationId: string;
+    runId: string;
     skillsRoot?: string;
     nextTime: () => Date;
     emittedMessages: (typeof messages.$inferSelect)[];
-    pendingEvents: TurnEvent[];
-    // Immediate fanout for perceived latency: called per tool execution so
-    // bubbles paint mid-turn. The post-commit flush in runTurn re-delivers
-    // the same rows; the client dedups by id.
-    onEvent?: (event: TurnEvent) => void;
+    emit: (event: TurnEvent) => Promise<void>;
+    viaAgentId?: string | null;
+    delegationDepth?: number;
   },
 ): Promise<GenerateResult> {
   const credential = await keyFor(db, input.accountId, input.provider);
@@ -622,15 +923,19 @@ async function replyWithModelTx(
   const accountId = input.accountId;
   const conversationId = input.conversationId;
   const agentId = input.agentId;
+  const runId = input.runId;
+  const emit = input.emit;
 
   const voice = {
-    send_message: makeSendMessageTool(tx, {
+    send_message: makeSendMessageTool(store, {
       accountId,
       conversationId,
       agentId,
+      runId,
+      viaAgentId: input.viaAgentId ?? null,
       nextTime: input.nextTime,
       emittedMessages: input.emittedMessages,
-      onEvent: input.onEvent,
+      emit,
     }),
     react_to_message: tool({
       description: "Single emoji tapback when a reaction is the whole response. Rare; mirrors the user.",
@@ -641,10 +946,32 @@ async function replyWithModelTx(
       }),
       execute: async ({ messageId, emoji }) => {
         const parsed = reactionSchema.parse({ messageId, emoji });
-        const saved = await saveReaction(tx, { accountId, conversationId, agentId, messageId: parsed.messageId, emoji: parsed.emoji });
-        input.pendingEvents.push({ type: "reaction", reaction: saved });
-        input.onEvent?.({ type: "reaction", reaction: saved });
+        const saved = await saveReaction(store, { accountId, conversationId, agentId, messageId: parsed.messageId, emoji: parsed.emoji });
+        await emit({ type: "reaction", reaction: saved });
         return { ok: true };
+      },
+    }),
+    notify_user: tool({
+      description:
+        "Ping the person NOW mid-turn — approval needed, blocked on them (CAPTCHA, login, decision), or an urgent find. Room open gives an in-app banner; closed gives a push per their notify setting. One active ping per run: repeat calls update it instead of stacking. Use action-needed when the run cannot proceed without them.",
+      inputSchema: jsonSchema<{ title: string; body: string; urgency?: string }>({
+        type: "object",
+        properties: { title: { type: "string" }, body: { type: "string" }, urgency: { type: "string" } },
+        required: ["title", "body"],
+      }),
+      execute: async ({ title, body, urgency }) => {
+        const parsed = notifyInputSchema.parse({ title, body, urgency: urgency ?? "info" });
+        const note = await saveNotification(store, {
+          accountId,
+          conversationId,
+          runId,
+          agentId,
+          title: parsed.title,
+          body: parsed.body,
+          urgency: parsed.urgency,
+        });
+        await emit({ type: "notify", notification: note });
+        return { notificationId: note.id };
       },
     }),
     read_history: tool({
@@ -655,8 +982,8 @@ async function replyWithModelTx(
       }),
       execute: async ({ messageId, search }) => {
         const rows = messageId
-          ? await readHistory(tx as never, accountId, conversationId, { messageId })
-          : await readHistory(tx as never, accountId, conversationId, { search: search ?? "" });
+          ? await readHistory(store, accountId, conversationId, { messageId })
+          : await readHistory(store, accountId, conversationId, { search: search ?? "" });
         return rows.map((r) => ({ id: r.id, body: r.body }));
       },
     }),
@@ -686,7 +1013,7 @@ async function replyWithModelTx(
       }),
       execute: async ({ label, description, provider, modelId }) => {
         const parsed = subagentCreateSchema.parse({ label, description, provider, modelId });
-        const child = await hireSubagent(tx, {
+        const child = await hireSubagent(store, {
           accountId,
           conversationId,
           parentAgentId: agentId,
@@ -695,20 +1022,22 @@ async function replyWithModelTx(
           provider: parsed.provider,
           modelId: parsed.modelId,
         });
-        const card = await saveSendMessage(tx, {
+        const card = await saveSendMessage(store, {
           accountId,
           conversationId,
           agentId,
+          runId,
           blocks: [{ kind: "widget", widget: "agent-card", props: { agentId: child.id, label: child.label, name: child.name } }],
           createdAt: input.nextTime(),
         });
         input.emittedMessages.push(card);
-        input.onEvent?.({ type: "message", message: card });
+        await emit({ type: "message", message: card });
         return { agentId: child.id, name: child.name };
       },
     }),
     delegate: tool({
-      description: "Ask a team agent in this room to do a scoped task. Their reply streams as via you.",
+      description:
+        "Hand a scoped task to a team agent IN THIS ROOM and wait for their answer. They run now — their bubbles stream attributed via you — and you get back what they did. Use for visible handoffs, not background work (that is spawn_worker).",
       inputSchema: jsonSchema<{ agentId: string; task: string }>({
         type: "object",
         properties: { agentId: { type: "string" }, task: { type: "string" } },
@@ -716,14 +1045,185 @@ async function replyWithModelTx(
       }),
       execute: async ({ agentId: childId, task }) => {
         const parsed = delegateSchema.parse({ agentId: childId, task });
-        const row = await recordDelegation(tx, { accountId, conversationId, parentAgentId: agentId, agentId: parsed.agentId, task: parsed.task });
-        return { delegationId: row.id };
+        if ((input.delegationDepth ?? 0) >= MAX_DELEGATION_DEPTH) {
+          throw new Error("Delegation is already two levels deep — do this part yourself.");
+        }
+        const row = await recordDelegation(store, { accountId, conversationId, parentAgentId: agentId, agentId: parsed.agentId, task: parsed.task });
+        try {
+          const bubbles = await runDelegatedTurn(db, {
+            accountId,
+            conversationId,
+            runId,
+            parentAgentId: agentId,
+            childAgentId: parsed.agentId,
+            delegationId: row.id,
+            task: parsed.task,
+            skillsRoot: input.skillsRoot,
+            nextTime: input.nextTime,
+            emittedMessages: input.emittedMessages,
+            emit,
+            delegationDepth: (input.delegationDepth ?? 0) + 1,
+          });
+          await db
+            .update(delegations)
+            .set({ status: "done", result: bubbles.map((bubble) => bubble.body).join("\n\n").slice(0, 20_000) })
+            .where(eq(delegations.id, row.id));
+          return { delegationId: row.id, bubbles: bubbles.length };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Delegation failed.";
+          await db
+            .update(delegations)
+            .set({ status: "failed", result: message.slice(0, 20_000) })
+            .where(eq(delegations.id, row.id))
+            .catch(() => {});
+          throw error;
+        }
       },
     }),
     list_team: tool({
       description: "List your team agents to pick a delegate.",
       inputSchema: jsonSchema<Record<string, never>>({ type: "object", properties: {} }),
-      execute: async () => listTeam(tx, accountId, agentId),
+      execute: async () => listTeam(store, accountId, agentId),
+    }),
+    todo_write: tool({
+      description:
+        "Replace your worklist for this job (opencode-style): break multi-step work into small todos with pending/in_progress/completed states, and keep them current as you go. Survives restarts and compaction — read it back with todo_list after any interruption.",
+      inputSchema: jsonSchema<{ todos: { content: string; status: string }[] }>({
+        type: "object",
+        properties: { todos: { type: "array" } },
+        required: ["todos"],
+      }),
+      execute: async ({ todos }) => todoWrite(store, accountId, agentId, todos),
+    }),
+    todo_list: tool({
+      description: "Read your current worklist. Use after interruptions, routine wakes, or worker revival to re-orient.",
+      inputSchema: jsonSchema<Record<string, never>>({ type: "object", properties: {} }),
+      execute: async () => todoList(store, accountId, agentId),
+    }),
+    create_group: tool({
+      description:
+        "Start a NEW group room with you as owner plus the listed agents — the only way to build a team thread. Private 1:1 chats can never gain members, so this is where teamwork happens. Announce the group with send_message after.",
+      inputSchema: jsonSchema<{ title: string; memberIds: string[] }>({
+        type: "object",
+        properties: { title: { type: "string" }, memberIds: { type: "array" } },
+        required: ["title", "memberIds"],
+      }),
+      execute: async ({ title, memberIds }) => {
+        const parsed = groupCreateInputSchema.parse({ title, memberIds });
+        const room = await createGroupRoom(store, {
+          accountId,
+          ownerAgentId: agentId,
+          title: parsed.title,
+          memberIds: parsed.memberIds,
+        });
+        return { conversationId: room.id, title: room.title, members: room.members.length };
+      },
+    }),
+    spawn_worker: tool({
+      description:
+        "Start private background help and keep chatting: a hidden worker (never a room member, never visible) does the long task while you stay responsive. Returns a process id — hand it to the user, then check_worker for the result and summarize it. Use for anything slow instead of blocking the chat.",
+      inputSchema: jsonSchema<{ label: string; description: string; task: string }>({
+        type: "object",
+        properties: { label: { type: "string" }, description: { type: "string" }, task: { type: "string" } },
+        required: ["label", "description", "task"],
+      }),
+      execute: async ({ label, description, task }) => {
+        const parsed = spawnWorkerInputSchema.parse({ label, description, task });
+        const spawned = await spawnWorker(store, {
+          accountId,
+          conversationId,
+          parentAgentId: agentId,
+          label: parsed.label,
+          description: parsed.description,
+          task: parsed.task,
+        });
+        void runWorker(db, {
+          accountId,
+          conversationId,
+          parentAgentId: agentId,
+          childId: spawned.workerId,
+          delegationId: spawned.delegationId,
+          task: parsed.task,
+          skillsRoot: input.skillsRoot,
+        });
+        return spawned;
+      },
+    }),
+    check_worker: tool({
+      description: "Check a background worker by its process id: running (keep chatting), done (summarize its result), or failed (explain and take over or retry).",
+      inputSchema: jsonSchema<{ workerId: string }>({
+        type: "object",
+        properties: { workerId: { type: "string" } },
+        required: ["workerId"],
+      }),
+      execute: async ({ workerId }) => checkWorker(store, accountId, workerId),
+    }),
+    stop_worker: tool({
+      description: "Abort a background worker that is wedged or obsolete. Stopped work reads as failed with the reason.",
+      inputSchema: jsonSchema<{ workerId: string }>({
+        type: "object",
+        properties: { workerId: { type: "string" } },
+        required: ["workerId"],
+      }),
+      execute: async ({ workerId }) => stopWorker(store, accountId, workerId),
+    }),
+    create_routine: tool({
+      description:
+        "Schedule your OWN recurring job ('remind me every day at 09:00 Europe/Berlin'). Cron shapes: '*/N * * * *', 'M H * * *' daily, 'M H * * D' weekly. Runs in this room through the normal turn path. Only ever creates for yourself.",
+      inputSchema: jsonSchema<{ body: string; cron: string; timezone?: string }>({
+        type: "object",
+        properties: { body: { type: "string" }, cron: { type: "string" }, timezone: { type: "string" } },
+        required: ["body", "cron"],
+      }),
+      execute: async ({ body, cron, timezone }) => {
+        const routine = await createOwnRoutine(store, {
+          accountId,
+          conversationId,
+          agentId,
+          body,
+          cron,
+          timezone: timezone ?? "UTC",
+        });
+        return { routineId: routine.id, nextRunAt: routine.nextRunAt };
+      },
+    }),
+    update_routine: tool({
+      description: "Change your own routine: new instructions, schedule, timezone, or paused true/false. Only your routines.",
+      inputSchema: jsonSchema<{ routineId: string; body?: string; cron?: string; timezone?: string; paused?: boolean }>({
+        type: "object",
+        properties: {
+          routineId: { type: "string" },
+          body: { type: "string" },
+          cron: { type: "string" },
+          timezone: { type: "string" },
+          paused: { type: "boolean" },
+        },
+        required: ["routineId"],
+      }),
+      execute: async ({ routineId, body, cron, timezone, paused }) => {
+        const updated = await updateOwnRoutine(store, accountId, agentId, { routineId, body, cron, timezone, paused });
+        if (!updated) throw new Error("No routine of yours with that id.");
+        return { routineId: updated.id, nextRunAt: updated.nextRunAt, paused: updated.paused };
+      },
+    }),
+    delete_routine: tool({
+      description: "Delete your own routine and its pending jobs. Only your routines.",
+      inputSchema: jsonSchema<{ routineId: string }>({
+        type: "object",
+        properties: { routineId: { type: "string" } },
+        required: ["routineId"],
+      }),
+      execute: async ({ routineId }) => {
+        const parsed = routineIdSchema.parse({ routineId });
+        const deleted = await deleteOwnRoutine(store, accountId, agentId, parsed.routineId);
+        if (!deleted) throw new Error("No routine of yours with that id.");
+        return { deleted: true };
+      },
+    }),
+    list_routines: tool({
+      description: "List your own routines with ids, schedules, pause state, and next run.",
+      inputSchema: jsonSchema<Record<string, never>>({ type: "object", properties: {} }),
+      execute: async () => listOwnRoutines(store, accountId, agentId),
     }),
   };
 
@@ -731,7 +1231,7 @@ async function replyWithModelTx(
     model: getModel(input.provider, input.modelId, credential.apiKey, credential.baseUrl),
     instructions: prompt.instructions,
     messages: prompt.messages,
-    tools: { ...voice, ...(profile ? linuxTools(accountId, profile) : {}) },
+    tools: { ...voice, ...(profile ? linuxTools(db, accountId, profile) : {}) },
     stopWhen: isStepCount(12),
     providerOptions:
       input.provider === "openai"
@@ -757,7 +1257,7 @@ export async function replyWithModel(db: Db, input: TurnInput): Promise<Generate
     model: getModel(input.provider, input.modelId, credential.apiKey, credential.baseUrl),
     instructions: prompt.instructions,
     messages: prompt.messages,
-    tools: profile ? linuxTools(input.accountId, profile) : undefined,
+    tools: profile ? linuxTools(db, input.accountId, profile) : undefined,
     stopWhen: profile ? isStepCount(12) : undefined,
     providerOptions:
       input.provider === "openai"

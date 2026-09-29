@@ -14,6 +14,15 @@ export function getDb(databaseUrl: string) {
 }
 
 /**
+ * Short-transaction query surface shared by db and tx.
+ * Why: Phase 11 removed the whole-turn transaction, so every helper that used
+ * to take a tx now takes a Store — implemented by either the root db (each
+ * call its own short transaction) or an explicit tx (batched callers).
+ * Input: none (type only). Output: select/insert/update/delete methods.
+ */
+export type Store = Pick<ReturnType<typeof getDb>, "select" | "insert" | "update" | "delete">;
+
+/**
  * Applies the committed SQL migrations.
  * Input: a Postgres connection URL.
  * Output: nothing. The database matches the migration folder when the promise resolves.

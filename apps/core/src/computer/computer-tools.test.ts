@@ -15,8 +15,11 @@ describe("computer-use wiring", () => {
       "computer_mouse",
       "computer_screenshot",
       "computer_type",
+      "glob",
+      "grep",
       "read",
       "web_fetch",
+      "web_search",
       "write",
     ]);
   });

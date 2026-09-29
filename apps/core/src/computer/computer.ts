@@ -12,6 +12,7 @@ import {
   DESKTOP_HEIGHT,
 } from "../desktop/desktop.js";
 import { accountHome, accountShared, exec } from "../linux/linux.js";
+import { assertInside } from "./find.js";
 
 // Why: the agent must work on its assigned desktop — the one the viewer shows
 // — never boot a private X server on another display (the Grok blank-viewer
@@ -140,13 +141,8 @@ export async function pressKeys(accountId: string, profile: string, combo: strin
 }
 
 function assertPath(accountId: string, path: string, profile: string): void {
-  const home = accountHome(accountId, profile);
-  const shared = accountShared(accountId);
-  const parts = path.split("/");
-  const inside = path === home || path.startsWith(`${home}/`) || path === shared || path.startsWith(`${shared}/`);
-  if (!path.startsWith("/") || parts.includes("..") || !inside) {
-    throw new Error("Path is outside the home and /shared.");
-  }
+  // Single gate lives in find.ts — one definition, no drift between tools.
+  assertInside(accountId, profile, path);
 }
 
 export { clampPoint, DESKTOP_WIDTH, DESKTOP_HEIGHT };

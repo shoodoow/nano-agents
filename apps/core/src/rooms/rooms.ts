@@ -1,6 +1,6 @@
 import { memberAddSchema, messageCreateSchema, roomCreateSchema, sendMessageInputSchema } from "@nano-agents/shared";
 import { and, asc, eq, inArray } from "drizzle-orm";
-import type { getDb } from "../db/client.js";
+import type { getDb, Store } from "../db/client.js";
 import { agents, conversations, members, messages, reactions } from "../db/schema.js";
 import { materializeBlocks } from "./uploads.js";
 
@@ -50,6 +50,41 @@ export async function createRoom(db: Database, accountId: string, input: unknown
       .returning();
     return { ...room, members: roomMembers };
   });
+}
+
+/**
+ * Opens a GROUP room owned by the caller with the given members.
+ * Why: the only room-creation path model tools may call — structurally
+ * incapable of touching 1:1 chats. Private chats stay 1:1 because no tool
+ * exists that adds to them; teams always form in fresh groups.
+ * Input: store, account id, owner agent id, title, member agent ids.
+ * Output: the saved conversation + members. Throws on foreign members or >20 total.
+ */
+export async function createGroupRoom(
+  store: Store,
+  input: { accountId: string; ownerAgentId: string; title: string; memberIds: string[] },
+) {
+  const title = input.title.trim();
+  if (!title || title.length > 200) throw new Error("Group title must be 1-200 characters.");
+  const agentIds = [...new Set([input.ownerAgentId, ...input.memberIds])];
+  if (agentIds.length > 20) throw new RoomCapacityError();
+  const owned = await store
+    .select({ id: agents.id })
+    .from(agents)
+    .where(and(eq(agents.accountId, input.accountId), inArray(agents.id, agentIds)));
+  if (owned.length !== agentIds.length) {
+    throw new Error("Unknown agent id — invite only agents on this account.");
+  }
+  const [room] = await store
+    .insert(conversations)
+    .values({ accountId: input.accountId, kind: "group", ownerAgentId: input.ownerAgentId, title })
+    .returning();
+  if (!room) throw new Error("The room insert returned no row.");
+  const roomMembers = await store
+    .insert(members)
+    .values(agentIds.map((agentId) => ({ conversationId: room.id, accountId: input.accountId, agentId })))
+    .returning();
+  return { ...room, members: roomMembers };
 }
 
 /**
@@ -161,14 +196,20 @@ export async function listMembers(db: Database, accountId: string, conversationI
  * the optimistic bubble — the message "vanished". Durable-first ordering
  * (insert, then 202 + background turn) makes the message impossible to lose:
  * every later refresh finds it.
- * Input: db, account/conversation ids, {text, blocks?, replyTo?}.
+ * Input: db, account/conversation ids, {text, blocks?, replyTo?, runId?, queued?}.
  * Output: the saved row, or null when the room is outside the account.
  */
 export async function saveUserMessage(
   db: Database,
   accountId: string,
   conversationId: string,
-  input: { text: string; blocks?: { kind: string; [key: string]: unknown }[] | null; replyTo?: string | null },
+  input: {
+    text: string;
+    blocks?: { kind: string; [key: string]: unknown }[] | null;
+    replyTo?: string | null;
+    runId?: string | null;
+    queued?: boolean;
+  },
 ) {
   const [room] = await db
     .select({ id: conversations.id })
@@ -198,6 +239,8 @@ export async function saveUserMessage(
       accountId,
       conversationId,
       agentId: null,
+      runId: input.runId ?? null,
+      queued: input.queued ?? false,
       body: input.text,
       kind: input.blocks && input.blocks.length > 0 ? "rich" : "text",
       payload: input.blocks && input.blocks.length > 0 ? input.blocks : null,
@@ -235,6 +278,27 @@ export async function saveUserMessage(
  * list re-downloads on each poll). Blocks above this budget keep metadata +
  * blobRef; the client fetches bytes lazily once and caches them.
  */
+/**
+ * Atomically claims the oldest queued user messages for the scheduler drain.
+ * Why: POST marks busy-room arrivals queued=true and returns; one UPDATE..
+ * RETURNING flips them to false so two scheduler ticks (or two future cores)
+ * can never start the same room twice. Callers group by conversation and run
+ * one turn per room speaking for the latest text.
+ * Input: db, batch limit. Output: claimed rows oldest-first.
+ */
+export async function claimQueuedBatch(db: Database, limit = 10) {
+  const pending = db
+    .select({ id: messages.id })
+    .from(messages)
+    .where(eq(messages.queued, true))
+    .orderBy(asc(messages.createdAt))
+    .limit(Math.min(Math.max(limit, 1), 100));
+  return db
+    .update(messages)
+    .set({ queued: false })
+    .where(inArray(messages.id, pending))
+    .returning();
+}
 export const INLINE_BLOB_BUDGET = 200_000;
 
 /**

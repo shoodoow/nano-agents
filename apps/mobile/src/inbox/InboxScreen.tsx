@@ -17,6 +17,7 @@ import { IconPlus, IconReply, IconSearch } from "../ui/icons";
 export function InboxScreen({
   agents,
   groups,
+  pendingCount,
   onAccount,
   onNew,
   onOpen,
@@ -25,6 +26,7 @@ export function InboxScreen({
 }: {
   agents: RosterAgent[];
   groups: { id: string; title: string; memberCount: number }[];
+  pendingCount?: number;
   onAccount: () => void;
   onNew: () => void;
   onOpen: (agent: RosterAgent) => void;
@@ -51,6 +53,11 @@ export function InboxScreen({
           <Avatar id="account" size={36} person />
         </Pressable>
         <View style={styles.headerActions}>
+          {pendingCount != null && pendingCount > 0 ? (
+            <View style={styles.pingBadge} accessibilityLabel={`${pendingCount} unread pings`}>
+              <Text style={styles.pingText}>{pendingCount > 99 ? "99+" : String(pendingCount)}</Text>
+            </View>
+          ) : null}
           <CircleButton label="Search" onPress={() => setSearching((open) => !open)}>
             <IconSearch />
           </CircleButton>
@@ -145,7 +152,9 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingTop: 8 },
   account: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
-  headerActions: { flexDirection: "row", gap: 4 },
+  headerActions: { flexDirection: "row", gap: 4, alignItems: "center" },
+  pingBadge: { backgroundColor: colors.danger, borderRadius: 11, minWidth: 22, height: 22, alignItems: "center", justifyContent: "center", paddingHorizontal: 6 },
+  pingText: { color: "#fff", fontSize: 12, fontWeight: "700" },
   menu: { position: "absolute", top: 60, left: 8, right: 8, bottom: 12 },
   search: {
     marginHorizontal: 16,

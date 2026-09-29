@@ -5,10 +5,12 @@ import { fromNodeHeaders, toNodeHandler } from "better-auth/node";
 import express, { Router, type Express, type NextFunction, type Request, type Response } from "express";
 import pino from "pino";
 import { pinoHttp } from "pino-http";
-import { reactionSchema } from "@nano-agents/shared";
+import { reactionSchema, deviceSchema, subagentCreateSchema } from "@nano-agents/shared";
 import { createAuth, localBrowserOrigins } from "../auth/auth.js";
 import { handBack, profileOnAccount, startDesktop, takeOver } from "../desktop/desktop.js";
 import type { getDb } from "../db/client.js";
+import { devices, notifications } from "../db/schema.js";
+import { and, desc, eq } from "drizzle-orm";
 import { listProviderKeys, saveProviderKey } from "../keys/keys.js";
 import { createProfile, pipeExec } from "../linux/linux.js";
 import { buildInstructions } from "../prompt/build-instructions.js";
@@ -24,9 +26,14 @@ import {
   saveUserMessage,
   RoomCapacityError,
 } from "../rooms/rooms.js";
-import { runTurn, type TurnEvent, type TurnInput } from "../rooms/turn.js";
+import { runTurn, type TurnInput } from "../rooms/turn.js";
+import { acquireRun } from "../rooms/runs.js";
+import { listEventsSince } from "../rooms/events.js";
+import { attach, publish, type StreamEvent } from "../rooms/stream.js";
 import { saveReaction } from "../rooms/send-message.js";
+import type { TurnEvent } from "../rooms/send-message.js";
 import { createAccount, createAgent, getAgent, listAgents, updateAgentFlags, AgentNameError } from "../roster/roster.js";
+import { hireSubagent, listTeam } from "../rooms/subagents.js";
 import { approve, listProposals, reject } from "../skills/proposals.js";
 
 type Database = ReturnType<typeof getDb>;
@@ -38,37 +45,8 @@ type AppContext = {
   generate?: (input: TurnInput) => Promise<string | { text: string }>;
 };
 
-// In-process SSE fanout (single-core v1). Why: background turns must reach
-// open phones without polling; keyed by account+room so tenants never cross.
-// Scale seam: replace publish() with Redis pub/sub when a second core exists;
-// the event shape (message/reaction/done) stays identical.
-const streamClients = new Map<string, Set<Response>>();
-
-/**
- * Builds the fanout key isolating one room inside one account.
- * Input: account and conversation ids. Output: map key string.
- */
-function streamKey(accountId: string, conversationId: string): string {
-  return `${accountId}:${conversationId}`;
-}
-
-/**
- * Publishes one turn event to every SSE subscriber of that room.
- * Input: account/conversation ids and the event. Output: nothing.
- */
-function publish(accountId: string, conversationId: string, event: TurnEvent): void {
-  const clients = streamClients.get(streamKey(accountId, conversationId));
-  if (!clients || clients.size === 0) return;
-  const payload = `data: ${JSON.stringify({ ...event, conversationId })}\n\n`;
-  for (const res of clients) {
-    try {
-      res.write(payload);
-    } catch {
-      // Client went away; cleanup happens on close handler.
-    }
-  }
-}
-
+// Live fanout lives in rooms/stream.ts (shared with the scheduler); the
+// durable twin is the events table, replayed by cursor below.
 const logger = pino({
   level: process.env.LOG_LEVEL ?? (process.env.NODE_ENV === "test" ? "silent" : "info"),
   redact: ["req.headers.cookie", "req.headers.authorization", "res.headers['set-cookie']"],
@@ -315,13 +293,20 @@ function mountRoutes(app: Express, ctx: AppContext): void {
       "x-accel-buffering": "no",
     });
     res.write(`event: ready\ndata: {"conversationId":"${conversationId}"}\n\n`);
-    const key = streamKey(accountId, conversationId);
-    let set = streamClients.get(key);
-    if (!set) {
-      set = new Set();
-      streamClients.set(key, set);
+    // Resume: replay exactly what the client missed since its cursor, then
+    // attach to live fanout. A phone closed for an hour replays the tail and
+    // continues live with no gap and no duplicates (client dedups by cursor).
+    // Absent cursor = live-only (fresh loads already fetched the thread);
+    // present cursor (even 0) = replay everything after it.
+    const rawCursor = req.query.cursor;
+    const parsedCursor = typeof rawCursor === "string" && rawCursor !== "" ? Number(rawCursor) : NaN;
+    if (Number.isFinite(parsedCursor) && parsedCursor >= 0) {
+      const missed = await listEventsSince(ctx.db, accountId, conversationId, Math.floor(parsedCursor), 200);
+      for (const row of missed) {
+        res.write(`data: ${JSON.stringify({ ...(row.payload as Record<string, unknown>), cursor: row.id, conversationId })}\n\n`);
+      }
     }
-    set.add(res);
+    const detach = attach(res, accountId, conversationId);
     const heartbeat = setInterval(() => {
       try {
         res.write(`: ping\n\n`);
@@ -329,10 +314,12 @@ function mountRoutes(app: Express, ctx: AppContext): void {
         // Closed; interval cleared below.
       }
     }, 25000);
+    if (typeof (heartbeat as unknown as { unref?: () => void }).unref === "function") {
+      (heartbeat as unknown as { unref: () => void }).unref();
+    }
     req.on("close", () => {
       clearInterval(heartbeat);
-      set!.delete(res);
-      if (set!.size === 0) streamClients.delete(key);
+      detach();
     });
   });
   conversations.post("/:conversationId/messages", guard, async (req, res) => {
@@ -343,44 +330,73 @@ function mountRoutes(app: Express, ctx: AppContext): void {
       res.status(404).json({ error: "Room not found." });
       return;
     }
-    // Durable first: the user row commits before any background work starts,
-    // so the phone's optimistic bubble can never be wiped by a refresh racing
-    // the turn. The turn then speaks for this row (no second insert).
-    const userMessage = await saveUserMessage(ctx.db, accountId, conversationId, {
-      text: incoming.text,
-      blocks: incoming.blocks,
-      replyTo: incoming.replyTo,
-    });
-    if (!userMessage) {
-      res.status(404).json({ error: "Room not found." });
-      return;
-    }
-    const onEvent = (event: TurnEvent) => publish(accountId, conversationId, event);
-    const run = () =>
+    const onEvent = (event: StreamEvent) => publish(accountId, conversationId, event);
+    const runJoined = (existingRunId: string, userMessage: { id: string }) =>
       runTurn(ctx.db, accountId, conversationId, incoming, ctx.generate as never, process.env.SKILLS_DIR, {
         onEvent,
         alreadySavedUserMessage: { id: userMessage.id, text: incoming.text },
+        existingRunId,
       });
-    // ?sync=1 preserves the legacy blocking contract for tests and scripts.
-    // Default is 202 + background so closing the phone never kills the turn.
+    // ?sync=1 preserves the legacy blocking contract for tests and scripts:
+    // claim with waiting, run inline, return replies.
     if (req.query.sync === "1") {
-      const replies = await run();
+      const run = await acquireRun(ctx.db, accountId, conversationId, "turn");
+      const userMessage = await saveUserMessage(ctx.db, accountId, conversationId, {
+        text: incoming.text,
+        blocks: incoming.blocks,
+        replyTo: incoming.replyTo,
+        runId: run.id,
+      });
+      if (!userMessage) {
+        res.status(404).json({ error: "Room not found." });
+        return;
+      }
+      const replies = await runJoined(run.id, userMessage);
       res.status(201).json({ message: userMessage, replies });
       return;
     }
-    void run()
-      .catch((error: unknown) => {
-        logger.error({ err: error, conversationId }, "background turn failed");
-        publish(accountId, conversationId, {
-          type: "error",
-          error: error instanceof Error ? error.message : "The turn failed.",
-        });
+    // Default is fail-fast claim + 202: free room -> run now in background
+    // (closing the phone never kills the turn); busy room -> message saved
+    // queued and the scheduler drains it. HTTP never waits on model work.
+    try {
+      const run = await acquireRun(ctx.db, accountId, conversationId, "turn", 0);
+      const userMessage = await saveUserMessage(ctx.db, accountId, conversationId, {
+        text: incoming.text,
+        blocks: incoming.blocks,
+        replyTo: incoming.replyTo,
+        runId: run.id,
       });
-    res.status(202).json({
-      accepted: true,
-      message: userMessage,
-      stream: `/conversations/${conversationId}/stream?accountId=${accountId}`,
-    });
+      if (!userMessage) {
+        res.status(404).json({ error: "Room not found." });
+        return;
+      }
+      void runJoined(run.id, userMessage).catch((error: unknown) => {
+        // runTurn already failed the run + emitted the error event; this only logs.
+        logger.error({ err: error, conversationId }, "background turn failed");
+      });
+      res.status(202).json({
+        accepted: true,
+        message: userMessage,
+        stream: `/conversations/${conversationId}/stream?accountId=${accountId}`,
+      });
+    } catch (error) {
+      if (error instanceof Error && /busy/.test(error.message)) {
+        const userMessage = await saveUserMessage(ctx.db, accountId, conversationId, {
+          text: incoming.text,
+          blocks: incoming.blocks,
+          replyTo: incoming.replyTo,
+          queued: true,
+        });
+        res.status(202).json({
+          accepted: true,
+          queued: true,
+          message: userMessage,
+          stream: `/conversations/${conversationId}/stream?accountId=${accountId}`,
+        });
+        return;
+      }
+      throw error;
+    }
   });
   conversations.post("/:conversationId/members", guard, async (req, res) => {
     const created = await addMember(ctx.db, queryAccountId(req), pathParam(req, "conversationId"), req.body);
@@ -447,16 +463,11 @@ function mountRoutes(app: Express, ctx: AppContext): void {
   agents.get("/:agentId/team", guard, async (req, res) => {
     const accountId = queryAccountId(req);
     const agentId = pathParam(req, "agentId");
-    const team = await ctx.db.transaction(async (tx) => {
-      const { listTeam } = await import("../rooms/subagents.js");
-      return listTeam(tx as never, accountId, agentId);
-    });
-    res.json(team);
+    res.json(await listTeam(ctx.db, accountId, agentId));
   });
   agents.post("/:agentId/subagents", guard, async (req, res) => {
     const accountId = queryAccountId(req);
     const parentAgentId = pathParam(req, "agentId");
-    const { subagentCreateSchema } = await import("@nano-agents/shared");
     const data = subagentCreateSchema.parse(req.body);
     const conversationId = typeof req.body?.conversationId === "string" ? req.body.conversationId : null;
     if (!conversationId) {
@@ -464,17 +475,14 @@ function mountRoutes(app: Express, ctx: AppContext): void {
       return;
     }
     try {
-      const child = await ctx.db.transaction(async (tx) => {
-        const { hireSubagent } = await import("../rooms/subagents.js");
-        return hireSubagent(tx as never, {
-          accountId,
-          conversationId,
-          parentAgentId,
-          label: data.label,
-          description: data.description,
-          provider: data.provider,
-          modelId: data.modelId,
-        });
+      const child = await hireSubagent(ctx.db, {
+        accountId,
+        conversationId,
+        parentAgentId,
+        label: data.label,
+        description: data.description,
+        provider: data.provider,
+        modelId: data.modelId,
       });
       // Best-effort OS user: the hire itself is the contract (201). If the
       // computer is down, the turn runner lazily provisions the profile on the
@@ -495,6 +503,54 @@ function mountRoutes(app: Express, ctx: AppContext): void {
     }
   });
   app.use("/agents", agents);
+
+  const devicesRouter = Router();
+  devicesRouter.post("/", guard, async (req, res) => {
+    // Upserts one push device per account. Why: token refresh rotates the
+    // ExpoPushToken — upsert on the token keeps exactly one row per device.
+    // Invalid tokens 400 here so the phone can fall back to polling visibly.
+    const data = deviceSchema.parse(req.body);
+    const accountId = queryAccountId(req);
+    const [existing] = await ctx.db
+      .select({ id: devices.id })
+      .from(devices)
+      .where(eq(devices.expoPushToken, data.expoPushToken));
+    if (existing) {
+      await ctx.db
+        .update(devices)
+        .set({ accountId, platform: data.platform ?? null })
+        .where(eq(devices.id, existing.id));
+      res.json({ id: existing.id });
+      return;
+    }
+    const [saved] = await ctx.db
+      .insert(devices)
+      .values({ accountId, expoPushToken: data.expoPushToken, platform: data.platform ?? null })
+      .returning();
+    res.status(201).json({ id: saved!.id });
+  });
+  app.use("/devices", devicesRouter);
+
+  const notificationsRouter = Router();
+  notificationsRouter.get("/", guard, async (req, res) => {
+    // Pending pings for the badge/inbox. Why: pushes can be missed or
+    // dismissed — the list is the durable fallback the phone reconciles on
+    // every foreground, newest first, capped for cheap polling.
+    const accountId = queryAccountId(req);
+    const pendingOnly = req.query.pending !== "0";
+    const rows = await ctx.db
+      .select()
+      .from(notifications)
+      .where(
+        pendingOnly
+          ? and(eq(notifications.accountId, accountId), eq(notifications.status, "pending"))
+          : eq(notifications.accountId, accountId),
+      )
+      .orderBy(desc(notifications.createdAt))
+      .limit(50);
+    res.json(rows);
+  });
+  app.use("/notifications", notificationsRouter);
 }
 
 /**

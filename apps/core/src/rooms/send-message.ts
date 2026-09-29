@@ -1,14 +1,18 @@
 import { sendMessageInputSchema, reactionSchema, type MessageBlock } from "@nano-agents/shared";
 import { and, eq } from "drizzle-orm";
-import type { getDb } from "../db/client.js";
-import { messages, reactions } from "../db/schema.js";
+import type { Store } from "../db/client.js";
+import { messages, notifications, reactions, runs } from "../db/schema.js";
 
-type Db = ReturnType<typeof getDb>;
-type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
-
+// Single voice/event vocabulary for turns (Phase 11-14). Why: one union used
+// by tool executes, the run loop, SSE fanout, and the durable event log —
+// replay and live share the shape, so a future Redis Streams layer slots in
+// without client changes. `done` stays live-only (run events persist terminal
+// state for resume).
 export type TurnEvent =
   | { type: "message"; message: typeof messages.$inferSelect }
   | { type: "reaction"; reaction: typeof reactions.$inferSelect }
+  | { type: "run"; run: Pick<typeof runs.$inferSelect, "id" | "status" | "error"> }
+  | { type: "notify"; notification: typeof notifications.$inferSelect }
   | { type: "error"; error: string }
   | { type: "done" };
 
@@ -53,19 +57,20 @@ export function isSafeImageUrl(url: string): boolean {
 }
 
 /**
- * Saves one send_message emission inside the turn transaction.
- * Why: agent voice must be durable and ordered even if a later tool step fails;
- * buffering alone would lose early bubbles on rollback. Runs in-tx so ordering
- * follows tool-call order via nextTime().
- * Input: tx, ids, validated blocks, optional replyTo/attribution, timestamp fn.
+ * Saves one send_message emission in its own short transaction.
+ * Why: Phase 11 removed the whole-turn transaction, so each bubble commits
+ * alone — a later tool failure or a kill -9 keeps every earlier bubble. Tool
+ * call order still matches insert order because executes run sequentially.
+ * Input: store, ids, run id, validated blocks, optional replyTo/attribution, timestamp.
  * Output: the saved message row. Throws on cross-account replyTo or bad image.
  */
 export async function saveSendMessage(
-  tx: Tx,
+  store: Store,
   input: {
     accountId: string;
     conversationId: string;
     agentId: string;
+    runId?: string | null;
     blocks: MessageBlock[];
     replyTo?: string | null;
     viaAgentId?: string | null;
@@ -79,7 +84,7 @@ export async function saveSendMessage(
     }
   }
   if (parsed.replyTo) {
-    const [parent] = await tx
+    const [parent] = await store
       .select({ id: messages.id })
       .from(messages)
       .where(
@@ -92,12 +97,13 @@ export async function saveSendMessage(
     if (!parent) throw new Error("replyTo message is not in this room.");
   }
   const body = blocksToText(parsed.blocks);
-  const [saved] = await tx
+  const [saved] = await store
     .insert(messages)
     .values({
       accountId: input.accountId,
       conversationId: input.conversationId,
       agentId: input.agentId,
+      runId: input.runId ?? null,
       body,
       kind: "rich",
       payload: parsed.blocks,
@@ -111,18 +117,18 @@ export async function saveSendMessage(
 }
 
 /**
- * Saves one emoji tapback inside the turn transaction.
+ * Saves one emoji tapback in its own short transaction.
  * Why: reactions are Grok-style acknowledgements that must not create message
  * noise; unique per (message, user, emoji) so retries are idempotent.
- * Input: tx, account/conversation/agent ids, messageId, emoji.
+ * Input: store, account/conversation/agent ids, messageId, emoji.
  * Output: the saved (or existing) reaction row.
  */
 export async function saveReaction(
-  tx: Tx,
+  store: Store,
   input: { accountId: string; conversationId: string; agentId: string | null; messageId: string; emoji: string },
 ) {
   const parsed = reactionSchema.parse({ messageId: input.messageId, emoji: input.emoji });
-  const [parent] = await tx
+  const [parent] = await store
     .select({ id: messages.id })
     .from(messages)
     .where(
@@ -134,12 +140,12 @@ export async function saveReaction(
     );
   if (!parent) throw new Error("Reaction target is not in this room.");
   const userKey = input.agentId ?? "owner";
-  const [existing] = await tx
+  const [existing] = await store
     .select()
     .from(reactions)
     .where(and(eq(reactions.messageId, parsed.messageId), eq(reactions.userKey, userKey), eq(reactions.emoji, parsed.emoji)));
   if (existing) return existing;
-  const [saved] = await tx
+  const [saved] = await store
     .insert(reactions)
     .values({
       accountId: input.accountId,

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getDb } from "../db/client.js";
+import { acquireRun, failRun } from "../rooms/runs.js";
 import { textOf } from "../rooms/turn.js";
 import { startServer } from "./server.js";
 
@@ -216,8 +217,7 @@ describe("server", () => {
     expect(blocked.status).toBe(404);
   });
 
-  it("rejects a 21st member", async () => {
-    const account = await postJson<{ id: string }>(`${baseUrl}/accounts`, { name: "Full" });
+  it("rejects a 21st member", async () => {    const account = await postJson<{ id: string }>(`${baseUrl}/accounts`, { name: "Full" });
     const hired = [];
     for (let index = 0; index < 20; index += 1) {
       hired.push(await postJson<{ id: string }>(`${baseUrl}/accounts/${account.id}/agents`, agent(`M${index}`)));
@@ -235,6 +235,77 @@ describe("server", () => {
     });
     expect(rejected.status).toBe(409);
   });
+
+  it("replays missed events by cursor on the stream", async () => {    const account = await postJson<{ id: string }>(`${baseUrl}/accounts`, { name: "Resume" });
+    const ada = await postJson<{ id: string }>(`${baseUrl}/accounts/${account.id}/agents`, agent("Ada"));
+    const room = await postJson<{ id: string }>(`${baseUrl}/accounts/${account.id}/conversations`, {
+      kind: "direct",
+      title: "resume",
+      ownerAgentId: ada.id,
+      memberAgentIds: [ada.id],
+    });
+    const sent = await fetch(`${baseUrl}/conversations/${room.id}/messages?accountId=${account.id}&sync=1`, {
+      method: "POST",
+      body: JSON.stringify({ body: "hello" }),
+    });
+    expect(sent.status).toBe(201);
+    // Full replay from zero carries the agent bubble with a cursor.
+    const full = await readStream(`${baseUrl}/conversations/${room.id}/stream?accountId=${account.id}&cursor=0`, 2);
+    const cursors = full.map((event) => event.cursor).filter((cursor): cursor is number => typeof cursor === "number");
+    expect(cursors.length).toBeGreaterThan(0);
+    const max = Math.max(...cursors);
+    // Resume after the last cursor replays nothing further.
+    const empty = await readStream(
+      `${baseUrl}/conversations/${room.id}/stream?accountId=${account.id}&cursor=${max}`,
+      0,
+    );
+    expect(empty).toHaveLength(0);
+  }, 15000);
+
+  it("registers push devices idempotently and lists pending pings", async () => {
+    const account = await postJson<{ id: string }>(`${baseUrl}/accounts`, { name: "Push" });
+    const token = `ExponentPushToken[push-${Date.now()}]`;
+    const first = await postJson<{ id: string }>(`${baseUrl}/devices?accountId=${account.id}`, {
+      expoPushToken: token,
+      platform: "ios",
+    });
+    expect(first.id).toBeDefined();
+    const second = await postJson<{ id: string }>(`${baseUrl}/devices?accountId=${account.id}`, {
+      expoPushToken: token,
+      platform: "android",
+    });
+    expect(second.id).toBe(first.id);
+    const bad = await fetch(`${baseUrl}/devices?accountId=${account.id}`, {
+      method: "POST",
+      body: JSON.stringify({ expoPushToken: "" }),
+    });
+    expect(bad.status).toBe(400);
+    const pending = (await (
+      await fetch(`${baseUrl}/notifications?accountId=${account.id}`)
+    ).json()) as unknown[];
+    expect(Array.isArray(pending)).toBe(true);
+  });
+
+  it("queues arrivals on a busy room instead of holding HTTP", async () => {
+    const account = await postJson<{ id: string }>(`${baseUrl}/accounts`, { name: "Busy" });
+    const ada = await postJson<{ id: string }>(`${baseUrl}/accounts/${account.id}/agents`, agent("Ada"));
+    const room = await postJson<{ id: string }>(`${baseUrl}/accounts/${account.id}/conversations`, {
+      kind: "direct",
+      title: "busy",
+      ownerAgentId: ada.id,
+      memberAgentIds: [ada.id],
+    });
+    // Wedge the room with a running run, then POST without sync.
+    const wedge = await acquireRun(db, account.id, room.id, "turn", 0);
+    const sent = await fetch(`${baseUrl}/conversations/${room.id}/messages?accountId=${account.id}`, {
+      method: "POST",
+      body: JSON.stringify({ body: "while busy" }),
+    });
+    expect(sent.status).toBe(202);
+    const accepted = (await sent.json()) as { queued?: boolean; message: { id: string } };
+    expect(accepted.queued).toBe(true);
+    await failRun(db, wedge.id, "test released the wedge");
+  });
 });
 
 function agent(name: string) {
@@ -245,6 +316,60 @@ function agent(name: string) {
     provider: "openai",
     modelId: "gpt-5",
   };
+}
+
+/**
+ * Reads SSE data events until enough arrive or the timeout hits.
+ * Why: the stream endpoint never closes on its own — read what the replay
+ * delivers, then abort. Input: stream URL + wanted event count.
+ * Output: parsed data payloads in arrival order.
+ */
+async function readStream(url: string, want: number): Promise<{ cursor?: number }[]> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2500);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok || !response.body) return [];
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const out: { cursor?: number }[] = [];
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let index = buffer.indexOf("\n\n");
+      while (index >= 0) {
+        const chunk = buffer.slice(0, index);
+        buffer = buffer.slice(index + 2);
+        const line = chunk.split("\n").find((l) => l.startsWith("data: "));
+        if (line) {
+          try {
+            const payload = JSON.parse(line.slice(6)) as { cursor?: number; type?: string };
+            // Skip the ready marker (no cursor, no type) — only real events count.
+            if (payload && typeof payload === "object" && ("cursor" in payload || "type" in payload)) {
+              out.push(payload);
+            }
+          } catch {
+            // Keepalive or partial frame; ignore.
+          }
+          if (out.length >= want && want > 0) return out;
+        }
+        index = buffer.indexOf("\n\n");
+      }
+      if (want === 0) {
+        // Give the replay one extra beat to (not) deliver, then stop.
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        break;
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
+  }
 }
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
