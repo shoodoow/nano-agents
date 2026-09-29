@@ -2,33 +2,21 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { buildInstructions } from "./build-instructions.js";
 
-const fileNames = ["identity", "voice", "autonomy", "security", "memory", "group", "skills", "computer"] as const;
-const promptsDirectory = new URL("../../../../prompts/", import.meta.url);
-
-function promptText(name: (typeof fileNames)[number]): string {
-  return readFileSync(new URL(`${name}.md`, promptsDirectory), "utf8").trim();
-}
+const promptUrl = new URL("../../../../prompts/system.md", import.meta.url);
+const systemPrompt = readFileSync(promptUrl, "utf8").trim();
 
 describe("buildInstructions", () => {
-  it("places the static files in order and the description after them", () => {
+  it("places the system prompt and the description after it", () => {
     const description = "Auditor for the books.";
     const result = buildInstructions(description);
-    let cursor = 0;
-    for (const name of fileNames) {
-      const part = promptText(name);
-      const at = result.indexOf(part, cursor);
-      expect(at).toBeGreaterThanOrEqual(cursor);
-      cursor = at + part.length;
-    }
-    expect(result.slice(cursor)).toContain(description);
+    expect(result.indexOf(systemPrompt)).toBe(0);
+    expect(result.endsWith(description)).toBe(true);
   });
 
   it("changes only the tail when the description changes", () => {
     const first = buildInstructions("First hire.");
     const second = buildInstructions("Second hire.");
-    const skills = promptText("skills");
-    const splitAt = first.indexOf(skills) + skills.length;
-    expect(second.slice(0, splitAt)).toBe(first.slice(0, splitAt));
+    expect(first.slice(0, systemPrompt.length)).toBe(second.slice(0, systemPrompt.length));
     expect(first).toContain("First hire.");
     expect(second).toContain("Second hire.");
     expect(second).not.toContain("First hire.");

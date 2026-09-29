@@ -6,7 +6,7 @@ import { startServer } from "./server.js";
 
 const databaseUrl = process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/nano_agents";
 const db = getDb(databaseUrl);
-const identity = readFileSync(new URL("../../../../prompts/identity.md", import.meta.url), "utf8").trim();
+const systemPrompt = readFileSync(new URL("../../../../prompts/system.md", import.meta.url), "utf8").trim();
 
 describe("server", () => {
   let baseUrl = "";
