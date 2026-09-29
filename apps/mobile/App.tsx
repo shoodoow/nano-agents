@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { Platform, SafeAreaView, StatusBar, StyleSheet, Text } from "react-native";
+import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system";
+import * as ImagePicker from "expo-image-picker";
 import {
   configureAuthCookie,
   createCore,
+  type MessageBlock,
   type Proposal,
   type ProviderSetting,
+  type Reaction,
+  type RichMessage,
   type RosterAgent,
 } from "./src/api";
 import { authClient } from "./src/auth";
@@ -21,21 +27,61 @@ configureAuthCookie(authClient.getCookie);
 const core = createCore();
 
 /**
- * Turns saved rows into chat bubbles.
- * Input: the message rows and the account roster.
- * Output: bubbles with the speaker name and a clock time.
+ * Turns one saved row into a bubble, resolving reply quotes and names.
+ * Why: shared by full refreshes and live SSE appends so streamed bubbles look
+ * identical to reloaded ones. Reactions attach separately (fetched in bulk).
+ * Input: row, id lookup, reactions-by-message, roster. Output: one bubble.
  */
-function toBubbles(
-  rows: { id: string; agentId: string | null; body: string; createdAt: string }[],
+function toBubble(
+  row: RichMessage,
+  byId: Map<string, RichMessage>,
+  byMessage: Map<string, Reaction[]>,
   roster: RosterAgent[],
-): Bubble[] {
-  return rows.map((row) => ({
+): Bubble {
+  const parent = row.replyTo ? byId.get(row.replyTo) : undefined;
+  const blocks: MessageBlock[] | null =
+    row.kind === "rich" && Array.isArray(row.payload) ? (row.payload as MessageBlock[]) : null;
+  return {
     id: row.id,
     author: row.agentId ? (roster.find((agent) => agent.id === row.agentId)?.name ?? "Agent") : "You",
     body: row.body,
     time: new Date(row.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }),
-  }));
+    blocks,
+    replyTo: row.replyTo ?? null,
+    replyPreview: parent?.body.slice(0, 80) ?? null,
+    via: row.viaAgentId ? (roster.find((agent) => agent.id === row.viaAgentId)?.name ?? null) : null,
+    reactions: byMessage.get(row.id) ?? [],
+  };
 }
+
+/**
+ * Turns saved rich rows into chat bubbles with reply context.
+ * Why: thread shows blocks/images/widgets inline plus quoted parents and
+ * tapbacks; body stays the fallback for text-only rows.
+ * Input: message rows, reactions, roster, by-id lookup. Output: bubbles.
+ */
+function toBubbles(
+  rows: RichMessage[],
+  reactions: Reaction[],
+  roster: RosterAgent[],
+): Bubble[] {
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const byMessage = new Map<string, Reaction[]>();
+  for (const reaction of reactions) {
+    const list = byMessage.get(reaction.messageId) ?? [];
+    list.push(reaction);
+    byMessage.set(reaction.messageId, list);
+  }
+  return rows.map((row) => toBubble(row, byId, byMessage, roster));
+}
+
+export type Attachment = {
+  id: string;
+  kind: "image" | "file";
+  url: string;
+  name?: string;
+  mime?: string | null;
+};
 
 type Screen =
   | { name: "inbox" }
@@ -61,6 +107,10 @@ export default function App() {
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<Bubble[]>([]);
   const [sending, setSending] = useState(false);
+  const [typing, setTyping] = useState(false);
+  const [replyTo, setReplyTo] = useState<Bubble | null>(null);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [attachOpen, setAttachOpen] = useState(false);
   const [note, setNote] = useState("");
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [profile, setProfile] = useState<RosterAgent | null>(null);
@@ -189,9 +239,22 @@ export default function App() {
   }
 
   /**
-   * Opens a direct chat with one agent.
+   * Reloads one thread with messages + reactions.
+   * Why: single refresh keeps bubbles, quotes, and tapbacks consistent after
+   * sends, streams, and reaction picks.
+   */
+  async function refreshThread(roomId: string, roster: RosterAgent[]): Promise<void> {
+    const [history, taps] = await Promise.all([
+      core.listMessages(accountId.trim(), roomId),
+      core.listReactions(accountId.trim(), roomId),
+    ]);
+    setMessages(toBubbles(history, taps, roster));
+  }
+
+  /**
+   * Opens a direct chat with one agent and subscribes to live turns.
    * Input: the agent from the roster.
-   * Output: nothing. The conversation screen is shown.
+   * Output: nothing. The conversation screen is shown and streams.
    */
   async function openAgent(agent: RosterAgent): Promise<void> {
     const id = accountId.trim();
@@ -201,38 +264,208 @@ export default function App() {
     const rows = await core.listAgents(id);
     const fresh = rows.find((row) => row.id === agent.id) ?? agent;
     const history = await core.listMessages(id, room.id);
+    const taps = await core.listReactions(id, room.id);
     setAgents(rows);
     setConversationId(room.id);
     setScreen({ name: "chat", agent: fresh, conversationId: room.id });
-    setMessages(toBubbles(history, rows));
+    setMessages(toBubbles(history, taps, rows));
     setDraft("");
+    setReplyTo(null);
+    setAttachments([]);
+    setAttachOpen(false);
     setNote("");
   }
 
   /**
-   * Sends the composer text to the core and appends the replies.
-   * Input: the open chat. It reads the draft, which may contain an @mention.
-   * Output: nothing. The thread shows the message and the agent's reply.
+   * Sends composer text and/or attachments via 202 background turn.
+   * Why: POST now returns the saved user row synchronously, so the optimistic
+   * bubble is swapped for the confirmed id instead of being wiped by the
+   * safety refresh — a sent message can never vanish. Agent bubbles stream in
+   * live via SSE; done/error ends typing with a final reconciling refresh.
+   * Input: the open chat. Reads draft, attachments, reply target. Output: nothing.
    */
   async function send(conversationId: string): Promise<void> {
     const body = draft.trim();
-    if (!body || sending) {
+    if ((!body && attachments.length === 0) || sending) {
       return;
     }
+    const blocks: MessageBlock[] = [];
+    if (body) {
+      blocks.push({ kind: "text", markdown: body });
+    }
+    for (const attachment of attachments) {
+      if (attachment.kind === "image") {
+        blocks.push({ kind: "image", url: attachment.url, alt: attachment.name });
+      } else {
+        blocks.push({ kind: "file", url: attachment.url, name: attachment.name ?? "file", mime: attachment.mime ?? undefined });
+      }
+    }
+    const fallback = body || (attachments.length === 1 && attachments[0]?.kind === "image" ? "[image]" : `[${attachments.length} attachments]`);
+    const pendingId = `pending-${Date.now()}`;
     const pending: Bubble = {
-      id: `pending-${Date.now()}`,
+      id: pendingId,
       author: "You",
-      body,
+      body: fallback,
       time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }),
+      blocks,
+      replyTo: replyTo?.id ?? null,
+      replyPreview: replyTo?.body.slice(0, 80) ?? null,
+      reactions: [],
     };
     setSending(true);
+    setTyping(true);
     setDraft("");
+    setAttachments([]);
+    const target = replyTo;
+    setReplyTo(null);
+    setAttachOpen(false);
     setNote("");
     setMessages((current) => [...current, pending]);
-    await core.sendMessage(accountId.trim(), conversationId, body);
-    const history = await core.listMessages(accountId.trim(), conversationId);
-    setMessages(toBubbles(history, agents));
+    // A failed POST must restore the composer so nothing the user wrote is lost.
+    let confirmedId = pendingId;
+    try {
+      const saved = await core.sendMessage(accountId.trim(), conversationId, fallback, {
+        blocks,
+        replyTo: target?.id ?? null,
+      });
+      confirmedId = saved.message.id;
+      setMessages((current) => current.map((bubble) => (bubble.id === pendingId ? { ...bubble, id: confirmedId } : bubble)));
+    } catch (error) {
+      setMessages((current) => current.filter((bubble) => bubble.id !== pendingId));
+      setDraft(body);
+      setTyping(false);
+      setSending(false);
+      throw error;
+    }
+    const roster = agents;
+    const unsubscribe = core.subscribeMessages(accountId.trim(), conversationId, (event) => {
+      if (event.type === "done" || event.type === "error") {
+        setTyping(false);
+        unsubscribe();
+        if (event.type === "error") {
+          show(new Error(event.error ?? "The turn failed."));
+        }
+        void refreshThread(conversationId, roster).catch(show);
+      } else if (event.message) {
+        setTyping(false);
+        setMessages((current) => {
+          if (current.some((bubble) => bubble.id === event.message!.id)) {
+            return current;
+          }
+          const byId = new Map<string, RichMessage>();
+          return [...current, toBubble(event.message!, byId, new Map(), roster)];
+        });
+      } else if (event.reaction) {
+        void refreshThread(conversationId, roster).catch(show);
+      }
+    });
+    // Safety net: reconcile after 12s even if SSE drops (background turn).
+    setTimeout(() => {
+      setTyping(false);
+      unsubscribe();
+      void refreshThread(conversationId, roster).catch(show);
+    }, 12000);
     setSending(false);
+  }
+
+  const MAX_IMAGE_BYTES = 5_000_000;
+  const MAX_FILE_BYTES = 2_000_000;
+
+  /**
+   * Picks one image from the library and stages it as an attachment.
+   * Why: images travel as data URIs inside image blocks so the agent's vision
+   * grounding receives pixels, not a phone-local path it cannot open.
+   * Compresses to cap the row size. Input: none (uses picker UI). Output: nothing.
+   */
+  async function pickImage(): Promise<void> {
+    setAttachOpen(false);
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      setNote("Photo access is needed to attach images.");
+      return;
+    }
+    const picked = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      base64: true,
+      quality: 0.7,
+    });
+    if (picked.canceled || picked.assets.length === 0) {
+      return;
+    }
+    const asset = picked.assets[0]!;
+    if (!asset.base64) {
+      setNote("That image could not be read. Try another.");
+      return;
+    }
+    const bytes = Math.floor((asset.base64.length * 3) / 4);
+    if (bytes > MAX_IMAGE_BYTES) {
+      setNote("That image is too large (over 5MB). Try a smaller one.");
+      return;
+    }
+    const mime = asset.mimeType ?? "image/jpeg";
+    const url = `data:${mime};base64,${asset.base64}`;
+    try {
+      await core.upload(accountId.trim(), { url, name: asset.fileName ?? "image" });
+    } catch (error) {
+      show(error);
+      return;
+    }
+    setAttachments((current) => [
+      ...current,
+      { id: `att-${Date.now()}`, kind: "image", url, name: asset.fileName ?? "image", mime },
+    ]);
+  }
+
+  /**
+   * Picks one file and stages it as an attachment.
+   * Why: small working files (text, csv, pdf) embed as data URIs in file
+   * blocks so the agent can read them on its Linux. Hard-capped at 2MB to
+   * keep rows and prompts bounded; larger files need object storage (later seam).
+   * Input: none (uses picker UI). Output: nothing.
+   */
+  async function pickFile(): Promise<void> {
+    setAttachOpen(false);
+    const picked = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
+    if (picked.canceled || picked.assets.length === 0) {
+      return;
+    }
+    const asset = picked.assets[0]!;
+    if (asset.size != null && asset.size > MAX_FILE_BYTES) {
+      setNote("That file is too large (over 2MB).");
+      return;
+    }
+    let base64: string;
+    try {
+      base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: "base64" });
+    } catch {
+      setNote("That file could not be read.");
+      return;
+    }
+    if (Math.floor((base64.length * 3) / 4) > MAX_FILE_BYTES) {
+      setNote("That file is too large (over 2MB).");
+      return;
+    }
+    const mime = asset.mimeType ?? "application/octet-stream";
+    const url = `data:${mime};base64,${base64}`;
+    try {
+      await core.upload(accountId.trim(), { url, name: asset.name });
+    } catch (error) {
+      show(error);
+      return;
+    }
+    setAttachments((current) => [
+      ...current,
+      { id: `att-${Date.now()}`, kind: "file", url, name: asset.name, mime },
+    ]);
+  }
+
+  /**
+   * Toggles one emoji tapback on a bubble and refreshes the row.
+   * Why: reactions are idempotent per (message, owner, emoji) server-side.
+   */
+  async function toggleReaction(conversationId: string, bubble: Bubble, emoji: string): Promise<void> {
+    await core.react(accountId.trim(), conversationId, bubble.id, emoji);
+    await refreshThread(conversationId, agents);
   }
 
   /**
@@ -362,10 +595,24 @@ export default function App() {
           messages={messages}
           draft={draft}
           sending={sending}
+          typing={typing}
           error={note}
+          replyTo={replyTo}
+          attachments={attachments}
+          attachOpen={attachOpen}
           onDraft={setDraft}
           onSend={() => void send(screen.conversationId).catch(show).finally(() => setSending(false))}
+          onAttach={() => setAttachOpen((open) => !open)}
+          onCloseAttach={() => setAttachOpen(false)}
+          onPickImage={() => void pickImage().catch(show)}
+          onPickFile={() => void pickFile().catch(show)}
+          onRemoveAttachment={(id) => setAttachments((current) => current.filter((attachment) => attachment.id !== id))}
           onMention={() => setDraft(core.mention(draft, screen.agent.name))}
+          onReply={setReplyTo}
+          onClearReply={() => setReplyTo(null)}
+          onReact={(bubble, emoji) => void toggleReaction(screen.conversationId, bubble, emoji).catch(show)}
+          onApprove={() => void refreshProposals().catch(show)}
+          onDeny={() => void refreshProposals().catch(show)}
           onBack={() => setScreen({ name: "inbox" })}
           onDesktop={() => setScreen({ name: "desktop", agent: screen.agent })}
         />

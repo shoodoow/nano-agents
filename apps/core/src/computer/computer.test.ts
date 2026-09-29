@@ -8,7 +8,7 @@ const databaseUrl = process.env.DATABASE_URL ?? "postgres://postgres:postgres@12
 const db = getDb(databaseUrl);
 
 afterAll(async () => {
-  await removeAccountContainers();
+  await removeAccountContainers({ testOnly: true });
   await db.$client.end();
 });
 

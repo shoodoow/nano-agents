@@ -1,4 +1,4 @@
-import { boolean, check, integer, pgTable, primaryKey, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { boolean, check, integer, jsonb, pgTable, primaryKey, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 export const accounts = pgTable("accounts", {
@@ -24,6 +24,9 @@ export const agents = pgTable(
     notify: boolean("notify").notNull().default(true),
     pinned: boolean("pinned").notNull().default(false),
     hidden: boolean("hidden").notNull().default(false),
+    // Teams (Phase 10): null for top-level hires, parent agent id for subagents.
+    parentId: uuid("parent_id"),
+    teamId: text("team_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [unique("agents_account_id_linux_profile_unique").on(table.accountId, table.linuxProfile)],
@@ -62,19 +65,76 @@ export const members = pgTable(
   (table) => [primaryKey({ columns: [table.conversationId, table.agentId] })],
 );
 
-export const messages = pgTable("messages", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  accountId: uuid("account_id")
-    .notNull()
-    .references(() => accounts.id),
-  conversationId: uuid("conversation_id")
-    .notNull()
-    .references(() => conversations.id),
-  agentId: uuid("agent_id").references(() => agents.id),
-  body: text("body").notNull(),
-  cacheReadTokens: integer("cache_read_tokens"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const messages = pgTable(
+  "messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id),
+    agentId: uuid("agent_id").references(() => agents.id),
+    body: text("body").notNull(),
+    // Rich protocol (Phase 08): text rows keep kind=text with null payload;
+    // send_message rows store kind=rich plus a JSONB blocks array for images/widgets.
+    kind: text("kind").notNull().default("text"),
+    payload: jsonb("payload"),
+    // Optional swipe-reply parent. Null means top-level. No FK to allow
+    // backfill ordering; ownership is enforced in application code per account.
+    replyTo: uuid("reply_to"),
+    viaAgentId: uuid("via_agent_id").references(() => agents.id),
+    cacheReadTokens: integer("cache_read_tokens"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [check("messages_kind_check", sql`${table.kind} in ('text', 'rich')`)],
+);
+
+export const reactions = pgTable(
+  "reactions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id),
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    // Null agentId = the human user reacted; non-null = an agent tapback.
+    agentId: uuid("agent_id").references(() => agents.id),
+    userKey: text("user_key").notNull().default("owner"),
+    emoji: text("emoji").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("reactions_message_user_emoji_unique").on(table.messageId, table.userKey, table.emoji),
+    check("reactions_emoji_check", sql`${table.emoji} in ('👍', '❤️', '👀', '🚀', '😮', '🎉', '✅', '❌')`),
+  ],
+);
+
+export const delegations = pgTable(
+  "delegations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id),
+    parentAgentId: uuid("parent_agent_id")
+      .notNull()
+      .references(() => agents.id),
+    childAgentId: uuid("child_agent_id")
+      .notNull()
+      .references(() => agents.id),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id),
+    task: text("task").notNull(),
+    status: text("status").notNull().default("running"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [check("delegations_status_check", sql`${table.status} in ('running', 'done', 'failed')`)],
+);
 
 export const summaryKeys = ["decisions", "actions", "open", "entities", "corrections", "topics"] as const;
 

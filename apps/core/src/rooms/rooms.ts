@@ -1,7 +1,8 @@
-import { memberAddSchema, messageCreateSchema, roomCreateSchema } from "@nano-agents/shared";
+import { memberAddSchema, messageCreateSchema, roomCreateSchema, sendMessageInputSchema } from "@nano-agents/shared";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
-import { agents, conversations, members, messages } from "../db/schema.js";
+import { agents, conversations, members, messages, reactions } from "../db/schema.js";
+import { materializeBlocks } from "./uploads.js";
 
 type Database = ReturnType<typeof getDb>;
 
@@ -90,11 +91,12 @@ export async function addMember(db: Database, accountId: string, conversationId:
 }
 
 /**
- * Reads one message body for a room this account owns.
- * Input: unknown JSON. Output: the message text, or null when the room is outside the account.
+ * Reads one user message for a room this account owns.
+ * Why: accepts legacy {body} and new {blocks, replyTo}; returns text for the
+ * turn engine plus rich passthrough so user-sent images render like agent ones.
+ * Input: unknown JSON. Output: {text, blocks?, replyTo?}, or null outside account.
  */
 export async function readMessage(db: Database, accountId: string, conversationId: string, input: unknown) {
-  const data = messageCreateSchema.parse(input);
   const [room] = await db
     .select({ id: conversations.id })
     .from(conversations)
@@ -102,7 +104,17 @@ export async function readMessage(db: Database, accountId: string, conversationI
   if (!room) {
     return null;
   }
-  return data.body;
+  if (typeof input === "object" && input !== null && "blocks" in input) {
+    const rich = sendMessageInputSchema.parse(input);
+    const text = rich.blocks
+      .map((block) =>
+        block.kind === "text" ? block.markdown : block.kind === "code" ? block.code : `[${block.kind}]`,
+      )
+      .join("\n\n");
+    return { text, blocks: rich.blocks, replyTo: rich.replyTo ?? null };
+  }
+  const data = messageCreateSchema.parse(input);
+  return { text: data.body, blocks: null, replyTo: null };
 }
 
 /**
@@ -123,9 +135,87 @@ export async function listConversations(db: Database, accountId: string) {
 }
 
 /**
- * Lists the saved messages in one room.
+ * Saves one user message synchronously (outside the turn transaction).
+ * Why: POST /messages used to insert the user text inside the background
+ * runTurn, so the phone's safety refresh could run before the insert and wipe
+ * the optimistic bubble — the message "vanished". Durable-first ordering
+ * (insert, then 202 + background turn) makes the message impossible to lose:
+ * every later refresh finds it.
+ * Input: db, account/conversation ids, {text, blocks?, replyTo?}.
+ * Output: the saved row, or null when the room is outside the account.
+ */
+export async function saveUserMessage(
+  db: Database,
+  accountId: string,
+  conversationId: string,
+  input: { text: string; blocks?: { kind: string; [key: string]: unknown }[] | null; replyTo?: string | null },
+) {
+  const [room] = await db
+    .select({ id: conversations.id })
+    .from(conversations)
+    .where(and(eq(conversations.id, conversationId), eq(conversations.accountId, accountId)));
+  if (!room) {
+    return null;
+  }
+  if (input.replyTo) {
+    const [parent] = await db
+      .select({ id: messages.id })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.id, input.replyTo),
+          eq(messages.conversationId, conversationId),
+          eq(messages.accountId, accountId),
+        ),
+      );
+    if (!parent) {
+      throw new Error("replyTo message is not in this room.");
+    }
+  }
+  const [saved] = await db
+    .insert(messages)
+    .values({
+      accountId,
+      conversationId,
+      agentId: null,
+      body: input.text,
+      kind: input.blocks && input.blocks.length > 0 ? "rich" : "text",
+      payload: input.blocks && input.blocks.length > 0 ? input.blocks : null,
+      replyTo: input.replyTo ?? null,
+    })
+    .returning();
+  if (!saved) {
+    throw new Error("The message insert returned no row.");
+  }
+  // Land attachments on the account Linux before anyone reads the thread: the
+  // agent then works with /shared/uploads paths instead of megabytes of
+  // base64. Best-effort — a computer outage degrades to inline blocks, and
+  // the message itself is already durable so nothing is lost.
+  if (input.blocks && input.blocks.length > 0) {
+    try {
+      const landed = await materializeBlocks(accountId, saved.id, input.blocks as never);
+      const changed = JSON.stringify(landed) !== JSON.stringify(input.blocks);
+      if (changed) {
+        const [updated] = await db
+          .update(messages)
+          .set({ payload: landed as never })
+          .where(and(eq(messages.id, saved.id), eq(messages.accountId, accountId)))
+          .returning();
+        if (updated) return updated;
+      }
+    } catch {
+      // Computer unavailable; inline blocks still carry the content.
+    }
+  }
+  return saved;
+}
+/**
+ * Lists the saved messages in one room with rich payloads.
+ * Why: the phone renders blocks/images/widgets inline; body stays as text
+ * fallback for search and legacy clients. Reactions are fetched separately to
+ * keep the hot path small.
  * Input: a database client, the account id, and the conversation id.
- * Output: the messages in time order, or null when the room is outside the account.
+ * Output: the messages in time order with kind/payload/replyTo/via, or null outside account.
  */
 export async function listMessages(db: Database, accountId: string, conversationId: string) {
   const [room] = await db
@@ -140,9 +230,32 @@ export async function listMessages(db: Database, accountId: string, conversation
       id: messages.id,
       agentId: messages.agentId,
       body: messages.body,
+      kind: messages.kind,
+      payload: messages.payload,
+      replyTo: messages.replyTo,
+      viaAgentId: messages.viaAgentId,
       createdAt: messages.createdAt,
     })
     .from(messages)
     .where(and(eq(messages.conversationId, conversationId), eq(messages.accountId, accountId)))
     .orderBy(asc(messages.createdAt));
+}
+
+/**
+ * Lists tapbacks for messages in one room.
+ * Why: reactions render under bubbles without re-fetching threads.
+ * Input: db, account id, conversation id. Output: reactions in time order.
+ */
+export async function listReactions(db: Database, accountId: string, conversationId: string) {
+  const messageIds = await db
+    .select({ id: messages.id })
+    .from(messages)
+    .where(and(eq(messages.conversationId, conversationId), eq(messages.accountId, accountId)));
+  if (messageIds.length === 0) return [];
+  const ids = messageIds.map((m) => m.id);
+  return db
+    .select()
+    .from(reactions)
+    .where(and(eq(reactions.accountId, accountId), inArray(reactions.messageId, ids)))
+    .orderBy(asc(reactions.createdAt));
 }

@@ -59,6 +59,103 @@ export const messageCreateSchema = z.object({
   body: z.string().trim().min(1).max(100_000),
 });
 
+// --- Rich turn protocol (Phase 08): blocks, send_message input, reactions ---
+
+export const textBlockSchema = z.object({
+  kind: z.literal("text"),
+  markdown: z.string().min(1).max(100_000),
+});
+
+export const imageBlockSchema = z.object({
+  kind: z.literal("image"),
+  // https URL or data:image/*;base64 URI (capped to keep rows + prompts bounded).
+  url: z.string().min(1).max(8_000_000),
+  alt: z.string().max(500).optional(),
+  // Filled server-side when a data: URI is materialized onto the account
+  // Linux: the agent opens/copies this path instead of the raw base64.
+  savedPath: z.string().max(500).optional(),
+  // Small resized data URI for vision grounding (full file stays on disk).
+  previewUrl: z.string().max(1_000_000).optional(),
+});
+
+export const codeBlockSchema = z.object({
+  kind: z.literal("code"),
+  language: z.string().max(50).optional(),
+  code: z.string().min(1).max(100_000),
+});
+
+export const fileBlockSchema = z.object({
+  kind: z.literal("file"),
+  // https URL or small data: URI (text, pdf, json — capped like images so a
+  // phone attachment cannot blow up the row or the prompt).
+  url: z.string().min(1).max(8_000_000),
+  name: z.string().min(1).max(255),
+  mime: z.string().max(127).optional(),
+  // Filled server-side when a data: URI is materialized onto the account Linux.
+  savedPath: z.string().max(500).optional(),
+});
+
+export const widgetBlockSchema = z.object({
+  kind: z.literal("widget"),
+  widget: z.enum(["checklist", "chart", "approval", "agent-card"]),
+  // Validated per-widget on the client; kept loose on the wire for forward compat.
+  props: z.record(z.string(), z.unknown()),
+});
+
+export const messageBlockSchema = z.discriminatedUnion("kind", [
+  textBlockSchema,
+  imageBlockSchema,
+  codeBlockSchema,
+  fileBlockSchema,
+  widgetBlockSchema,
+]);
+
+export type MessageBlock = z.infer<typeof messageBlockSchema>;
+
+export const sendMessageInputSchema = z
+  .object({
+    blocks: z.array(messageBlockSchema).min(1).max(10),
+    replyTo: z.string().uuid().nullable().optional(),
+  })
+  .superRefine((value, context) => {
+    const textChars = value.blocks
+      .filter((block) => block.kind === "text")
+      .map((block) => (block as { markdown: string }).markdown.length)
+      .reduce((sum, length) => sum + length, 0);
+    if (textChars > 100_000) {
+      context.addIssue({ code: "custom", message: "Text blocks exceed 100k chars." });
+    }
+  });
+
+export type SendMessageInput = z.infer<typeof sendMessageInputSchema>;
+
+export const allowedEmojis = ["👍", "❤️", "👀", "🚀", "😮", "🎉", "✅", "❌"] as const;
+
+export const reactionSchema = z.object({
+  messageId: z.string().uuid(),
+  emoji: z.enum(allowedEmojis),
+});
+
+export type ReactionInput = z.infer<typeof reactionSchema>;
+
+// --- Teams / subagents (Phase 10) ---
+
+export const subagentCreateSchema = z.object({
+  label: z.string().trim().min(1).max(100),
+  description: z.string().trim().min(1).max(10_000),
+  provider: z.enum(providerNames).optional(),
+  modelId: z.string().trim().min(1).max(200).optional(),
+});
+
+export type SubagentCreate = z.infer<typeof subagentCreateSchema>;
+
+export const delegateSchema = z.object({
+  agentId: z.string().uuid(),
+  task: z.string().trim().min(1).max(20_000),
+});
+
+export type DelegateInput = z.infer<typeof delegateSchema>;
+
 export const memberAddSchema = z.object({
   agentId: z.string().uuid(),
 });

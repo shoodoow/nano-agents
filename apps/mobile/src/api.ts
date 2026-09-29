@@ -4,7 +4,28 @@ import {
   messageCreateSchema,
   roomCreateSchema,
   type AgentProfile,
+  type MessageBlock,
 } from "@nano-agents/shared";
+
+export type { MessageBlock };
+
+export type RichMessage = {
+  id: string;
+  agentId: string | null;
+  body: string;
+  kind?: string | null;
+  payload?: MessageBlock[] | null;
+  replyTo?: string | null;
+  viaAgentId?: string | null;
+  createdAt: string;
+};
+
+export type Reaction = {
+  id: string;
+  messageId: string;
+  agentId: string | null;
+  emoji: string;
+};
 
 export type RosterAgent = {
   id: string;
@@ -37,20 +58,36 @@ export type CoreClient = {
     accountId: string,
     input: { name: string; description: string; provider: ProviderSetting["provider"]; modelId: string },
   ) => Promise<RosterAgent>;
+  hireSubagent: (
+    accountId: string,
+    parentAgentId: string,
+    conversationId: string,
+    input: { label: string; description: string },
+  ) => Promise<RosterAgent>;
+  listTeam: (accountId: string, agentId: string) => Promise<RosterAgent[]>;
   listProviders: (accountId: string) => Promise<ProviderSetting[]>;
   saveProvider: (
     accountId: string,
     input: { provider: ProviderSetting["provider"]; secret: string; baseUrl: string | null },
   ) => Promise<ProviderSetting>;
   listConversations: (accountId: string) => Promise<{ id: string; kind: string; ownerAgentId: string }[]>;
-  listMessages: (accountId: string, conversationId: string) => Promise<{ id: string; agentId: string | null; body: string; createdAt: string }[]>;
+  listMessages: (accountId: string, conversationId: string) => Promise<RichMessage[]>;
+  listReactions: (accountId: string, conversationId: string) => Promise<Reaction[]>;
+  react: (accountId: string, conversationId: string, messageId: string, emoji: string) => Promise<Reaction>;
+  upload: (accountId: string, input: { url: string; name?: string; mime?: string | null }) => Promise<{ url: string }>;
   openChat: (accountId: string, agent: RosterAgent) => Promise<{ id: string }>;
   createGroup: (accountId: string, title: string, agentIds: string[]) => Promise<{ id: string }>;
   sendMessage: (
     accountId: string,
     conversationId: string,
     body: string,
-  ) => Promise<{ replies: { id: string; body: string }[] }>;
+    rich?: { blocks?: MessageBlock[]; replyTo?: string | null },
+  ) => Promise<{ accepted: boolean; message: RichMessage; replies?: { id: string; body: string }[] }>;
+  subscribeMessages: (
+    accountId: string,
+    conversationId: string,
+    onEvent: (event: { type: string; message?: RichMessage; reaction?: Reaction; error?: string }) => void,
+  ) => () => void;
   mention: (draft: string, name: string) => string;
   listProposals: (accountId: string) => Promise<Proposal[]>;
   approve: (accountId: string, proposalId: string) => Promise<Proposal[]>;
@@ -85,13 +122,22 @@ export function createCore(
   return {
     listAgents: (accountId) => listAgents(baseUrl, accountId, fetchImpl),
     hireAgent: (accountId, input) => hireAgent(baseUrl, accountId, input, fetchImpl),
+    hireSubagent: (accountId, parentAgentId, conversationId, input) =>
+      hireSubagent(baseUrl, accountId, parentAgentId, conversationId, input, fetchImpl),
+    listTeam: (accountId, agentId) => listTeam(baseUrl, accountId, agentId, fetchImpl),
     listProviders: (accountId) => listProviders(baseUrl, accountId, fetchImpl),
     saveProvider: (accountId, input) => saveProvider(baseUrl, accountId, input, fetchImpl),
     listConversations: (accountId) => listConversations(baseUrl, accountId, fetchImpl),
     listMessages: (accountId, conversationId) => listMessages(baseUrl, accountId, conversationId, fetchImpl),
+    listReactions: (accountId, conversationId) => listReactions(baseUrl, accountId, conversationId, fetchImpl),
+    react: (accountId, conversationId, messageId, emoji) =>
+      react(baseUrl, accountId, conversationId, messageId, emoji, fetchImpl),
+    upload: (accountId, input) => upload(baseUrl, input, fetchImpl),
     openChat: (accountId, agent) => openChat(baseUrl, accountId, agent, fetchImpl),
     createGroup: (accountId, title, agentIds) => createGroup(baseUrl, accountId, title, agentIds, fetchImpl),
-    sendMessage: (accountId, conversationId, body) => sendMessage(baseUrl, accountId, conversationId, body, fetchImpl),
+    sendMessage: (accountId, conversationId, body, rich) =>
+      sendMessage(baseUrl, accountId, conversationId, body, rich, fetchImpl),
+    subscribeMessages: (accountId, conversationId, onEvent) => subscribeMessages(baseUrl, accountId, conversationId, onEvent, fetchImpl),
     mention,
     listProposals: (accountId) => listProposals(baseUrl, accountId, fetchImpl),
     approve: (accountId, proposalId) => decide(baseUrl, accountId, proposalId, "approve", fetchImpl),
@@ -176,17 +222,96 @@ async function listConversations(
 }
 
 /**
- * Loads the saved messages for one room.
+ * Loads the saved messages for one room with rich payloads.
+ * Why: thread renders blocks/images/widgets; body is the text fallback.
  * Input: the core base URL, the account id, the conversation id, and fetch.
- * Output: the messages in time order.
+ * Output: the messages in time order including kind/payload/replyTo.
  */
 async function listMessages(
   baseUrl: string,
   accountId: string,
   conversationId: string,
   fetchImpl: typeof fetch,
-): Promise<{ id: string; agentId: string | null; body: string; createdAt: string }[]> {
+): Promise<RichMessage[]> {
   return readJson(fetchImpl, `${baseUrl}/conversations/${conversationId}/messages?accountId=${accountId}`);
+}
+
+/**
+ * Loads tapbacks for one room.
+ * Why: reactions render under bubbles without refetching the thread.
+ * Input: base URL, account id, conversation id, fetch. Output: reactions.
+ */
+async function listReactions(
+  baseUrl: string,
+  accountId: string,
+  conversationId: string,
+  fetchImpl: typeof fetch,
+): Promise<Reaction[]> {
+  return readJson(fetchImpl, `${baseUrl}/conversations/${conversationId}/reactions?accountId=${accountId}`);
+}
+
+/**
+ * Adds one emoji tapback as the human owner.
+ * Why: user reactions mirror agent react_to_message; idempotent per emoji.
+ * Input: ids + emoji + fetch. Output: saved reaction.
+ */
+async function react(
+  baseUrl: string,
+  accountId: string,
+  conversationId: string,
+  messageId: string,
+  emoji: string,
+  fetchImpl: typeof fetch,
+): Promise<Reaction> {
+  return readJson<Reaction>(fetchImpl, `${baseUrl}/conversations/${conversationId}/reactions?accountId=${accountId}`, {
+    method: "POST",
+    body: JSON.stringify({ messageId, emoji }),
+  });
+}
+
+/**
+ * Registers an image/file URL for use in a block.
+ * Why: rows store URLs not bytes; this validates https/data URIs server-side
+ * before the client embeds them. S3 presigned upload is the later seam.
+ * Input: base URL, url/name/mime, fetch. Output: echoed {url}.
+ */
+async function upload(
+  baseUrl: string,
+  input: { url: string; name?: string; mime?: string | null },
+  fetchImpl: typeof fetch,
+): Promise<{ url: string }> {
+  return readJson(fetchImpl, `${baseUrl}/uploads`, { method: "POST", body: JSON.stringify(input) });
+}
+
+/**
+ * Lists the hiring agent's team (children or shared teamId).
+ * Why: phone team sheet needs to pick delegates without full roster dump.
+ */
+async function listTeam(
+  baseUrl: string,
+  accountId: string,
+  agentId: string,
+  fetchImpl: typeof fetch,
+): Promise<RosterAgent[]> {
+  return readJson(fetchImpl, `${baseUrl}/agents/${agentId}/team?accountId=${accountId}`);
+}
+
+/**
+ * Hires a child specialist into the same room.
+ * Why: lets users build Grok-style teams from the phone, not just via model tool.
+ */
+async function hireSubagent(
+  baseUrl: string,
+  accountId: string,
+  parentAgentId: string,
+  conversationId: string,
+  input: { label: string; description: string },
+  fetchImpl: typeof fetch,
+): Promise<RosterAgent> {
+  return readJson(fetchImpl, `${baseUrl}/agents/${parentAgentId}/subagents?accountId=${accountId}`, {
+    method: "POST",
+    body: JSON.stringify({ ...input, conversationId }),
+  });
 }
 
 /**
@@ -242,26 +367,93 @@ async function createGroup(
 
 /**
  * Sends a chat message, including any @mention in the text.
- * Input: the core base URL, the account id, the conversation id, the message text, and fetch.
- * Output: the replies the core saved for this turn.
+ * Why: the server saves the user row synchronously and returns it, so the
+ * phone swaps the optimistic bubble for the confirmed id — the message can
+ * never vanish. Default is 202 background + SSE streaming for agent bubbles.
+ * Input: base URL, ids, text, optional rich blocks. Output: accepted flag,
+ * the saved user message, plus replies only on the sync path (tests).
  */
 async function sendMessage(
   baseUrl: string,
   accountId: string,
   conversationId: string,
   body: string,
+  rich: { blocks?: MessageBlock[]; replyTo?: string | null } | undefined,
   fetchImpl: typeof fetch,
-): Promise<{ replies: { id: string; body: string }[] }> {
-  const message = messageCreateSchema.parse({ body });
-  const saved = await readJson<{ replies?: { id: string; body: string }[] }>(
+): Promise<{ accepted: boolean; message: RichMessage; replies?: { id: string; body: string }[] }> {
+  const payload =
+    rich?.blocks && rich.blocks.length > 0
+      ? { blocks: rich.blocks, replyTo: rich.replyTo ?? null }
+      : messageCreateSchema.parse({ body });
+  const saved = await readJson<{ accepted?: boolean; message: RichMessage; replies?: { id: string; body: string }[] }>(
     fetchImpl,
     `${baseUrl}/conversations/${conversationId}/messages?accountId=${accountId}`,
     {
       method: "POST",
-      body: JSON.stringify(message),
+      body: JSON.stringify(payload),
     },
   );
-  return { replies: saved.replies ?? [] };
+  return { accepted: saved.accepted ?? false, message: saved.message, replies: saved.replies };
+}
+
+/**
+ * Subscribes to live turn events via SSE.
+ * Why: progressive multi-bubble turns need push; polling would miss ordering
+ * and waste battery. Uses fetch reader so no EventSource polyfill is needed
+ * on React Native. Falls back silently when streaming unsupported (tests).
+ * Input: base URL, ids, onEvent, fetch. Output: unsubscribe function.
+ */
+function subscribeMessages(
+  baseUrl: string,
+  accountId: string,
+  conversationId: string,
+  onEvent: (event: { type: string; message?: RichMessage; reaction?: Reaction; error?: string }) => void,
+  fetchImpl: typeof fetch,
+): () => void {
+  let cancelled = false;
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  void (async () => {
+    try {
+      const cookie = readAuthCookie();
+      const response = await fetchImpl(
+        `${baseUrl}/conversations/${conversationId}/stream?accountId=${accountId}`,
+        { headers: { ...(cookie ? { cookie } : {}) }, signal: controller?.signal as never },
+      );
+      if (!response.ok || !response.body) return;
+      const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done || cancelled) break;
+        buffer += decoder.decode(value, { stream: true });
+        let index = buffer.indexOf("\n\n");
+        while (index >= 0) {
+          const chunk = buffer.slice(0, index);
+          buffer = buffer.slice(index + 2);
+          const line = chunk.split("\n").find((l) => l.startsWith("data: "));
+          if (line) {
+            try {
+              onEvent(JSON.parse(line.slice(6)) as { type: string; message?: RichMessage; reaction?: Reaction; error?: string });
+            } catch {
+              // Malformed keepalive; ignore.
+            }
+          }
+          index = buffer.indexOf("\n\n");
+        }
+      }
+    } catch {
+      // Stream closed or unsupported (tests); caller still has REST fallback.
+    }
+  })();
+  return () => {
+    cancelled = true;
+    try {
+      controller?.abort();
+    } catch {
+      // Already closed.
+    }
+  };
 }
 
 /**

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getDb } from "../db/client.js";
+import { textOf } from "../rooms/turn.js";
 import { startServer } from "./server.js";
 
 const databaseUrl = process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/nano_agents";
@@ -14,7 +15,7 @@ describe("server", () => {
 
   beforeAll(async () => {
     const server = await startServer(db, 0, async ({ messages }) => {
-      const mentionedBea = messages.some((message) => message.content.includes("@Bea"));
+      const mentionedBea = messages.some((message) => textOf(message.content).includes("@Bea"));
       return mentionedBea ? "finished" : "@Bea your turn";
     });
     const address = server.address() as AddressInfo;
@@ -70,7 +71,7 @@ describe("server", () => {
 
     const prompt = await fetch(`${baseUrl}/agents/${agent.id}/prompt?accountId=${account.id}`);
     const body = (await prompt.json()) as { prompt: string };
-    expect(body.prompt.indexOf(identity)).toBe(0);
+    expect(body.prompt.indexOf(systemPrompt)).toBe(0);
     expect(body.prompt.endsWith("Keep the ledger.")).toBe(true);
 
     const other = await fetch(`${baseUrl}/accounts`, {
@@ -92,7 +93,7 @@ describe("server", () => {
       ownerAgentId: ada.id,
       memberAgentIds: [ada.id, bea.id],
     });
-    const sent = await fetch(`${baseUrl}/conversations/${room.id}/messages?accountId=${account.id}`, {
+    const sent = await fetch(`${baseUrl}/conversations/${room.id}/messages?accountId=${account.id}&sync=1`, {
       method: "POST",
       body: JSON.stringify({ body: "@Ada start" }),
     });
@@ -102,11 +103,53 @@ describe("server", () => {
     expect(stored.replies.map((reply) => reply.body)).toEqual(["@Bea your turn", "finished"]);
 
     const other = await postJson<{ id: string }>(`${baseUrl}/accounts`, { name: "Outsider" });
-    const blocked = await fetch(`${baseUrl}/conversations/${room.id}/messages?accountId=${other.id}`, {
+    const blocked = await fetch(`${baseUrl}/conversations/${room.id}/messages?accountId=${other.id}&sync=1`, {
       method: "POST",
       body: JSON.stringify({ body: "@Ada start" }),
     });
     expect(blocked.status).toBe(404);
+  });
+
+  it("persists the user message before the background turn (never vanishes)", async () => {
+    const account = await postJson<{ id: string }>(`${baseUrl}/accounts`, { name: "Durable" });
+    const ada = await postJson<{ id: string }>(`${baseUrl}/accounts/${account.id}/agents`, agent("Ada"));
+    const room = await postJson<{ id: string }>(`${baseUrl}/accounts/${account.id}/conversations`, {
+      kind: "direct",
+      title: "desk",
+      ownerAgentId: ada.id,
+      memberAgentIds: [ada.id],
+    });
+    const sent = await fetch(`${baseUrl}/conversations/${room.id}/messages?accountId=${account.id}`, {
+      method: "POST",
+      body: JSON.stringify({ body: "check octessa.com SEO" }),
+    });
+    expect(sent.status).toBe(202);
+    const accepted = (await sent.json()) as { message: { id: string; body: string } };
+    expect(accepted.message.body).toBe("check octessa.com SEO");
+    // The message is durable immediately — a refresh racing the turn finds it.
+    const thread = (await (
+      await fetch(`${baseUrl}/conversations/${room.id}/messages?accountId=${account.id}`)
+    ).json()) as { id: string }[];
+    expect(thread.map((row) => row.id)).toContain(accepted.message.id);
+  });
+
+  it("accepts multi-megabyte image attachments (no 413)", async () => {
+    const account = await postJson<{ id: string }>(`${baseUrl}/accounts`, { name: "Large" });
+    const ada = await postJson<{ id: string }>(`${baseUrl}/accounts/${account.id}/agents`, agent("Ada"));
+    const room = await postJson<{ id: string }>(`${baseUrl}/accounts/${account.id}/conversations`, {
+      kind: "direct",
+      title: "desk",
+      ownerAgentId: ada.id,
+      memberAgentIds: [ada.id],
+    });
+    const big = `data:image/png;base64,${"A".repeat(2_000_000)}`;
+    const sent = await fetch(`${baseUrl}/conversations/${room.id}/messages?accountId=${account.id}`, {
+      method: "POST",
+      body: JSON.stringify({ blocks: [{ kind: "image", url: big, alt: "photo" }] }),
+    });
+    expect(sent.status).toBe(202);
+    const accepted = (await sent.json()) as { message: { id: string } };
+    expect(accepted.message.id).toBeDefined();
   });
 
   it("rejects a 21st member", async () => {

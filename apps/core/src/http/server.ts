@@ -5,14 +5,25 @@ import { fromNodeHeaders, toNodeHandler } from "better-auth/node";
 import express, { Router, type Express, type NextFunction, type Request, type Response } from "express";
 import pino from "pino";
 import { pinoHttp } from "pino-http";
+import { reactionSchema } from "@nano-agents/shared";
 import { createAuth, localBrowserOrigins } from "../auth/auth.js";
 import { handBack, profileOnAccount, startDesktop, takeOver } from "../desktop/desktop.js";
 import type { getDb } from "../db/client.js";
 import { listProviderKeys, saveProviderKey } from "../keys/keys.js";
 import { createProfile, pipeExec } from "../linux/linux.js";
 import { buildInstructions } from "../prompt/build-instructions.js";
-import { addMember, createRoom, listConversations, listMessages, readMessage, RoomCapacityError } from "../rooms/rooms.js";
-import { runTurn, type TurnInput } from "../rooms/turn.js";
+import {
+  addMember,
+  createRoom,
+  listConversations,
+  listMessages,
+  listReactions,
+  readMessage,
+  saveUserMessage,
+  RoomCapacityError,
+} from "../rooms/rooms.js";
+import { runTurn, type TurnEvent, type TurnInput } from "../rooms/turn.js";
+import { saveReaction } from "../rooms/send-message.js";
 import { createAccount, createAgent, getAgent, listAgents, updateAgentFlags } from "../roster/roster.js";
 import { approve, listProposals, reject } from "../skills/proposals.js";
 
@@ -22,8 +33,39 @@ type Auth = ReturnType<typeof createAuth>;
 type AppContext = {
   db: Database;
   auth: Auth;
-  generate?: (input: TurnInput) => Promise<string>;
+  generate?: (input: TurnInput) => Promise<string | { text: string }>;
 };
+
+// In-process SSE fanout (single-core v1). Why: background turns must reach
+// open phones without polling; keyed by account+room so tenants never cross.
+// Scale seam: replace publish() with Redis pub/sub when a second core exists;
+// the event shape (message/reaction/done) stays identical.
+const streamClients = new Map<string, Set<Response>>();
+
+/**
+ * Builds the fanout key isolating one room inside one account.
+ * Input: account and conversation ids. Output: map key string.
+ */
+function streamKey(accountId: string, conversationId: string): string {
+  return `${accountId}:${conversationId}`;
+}
+
+/**
+ * Publishes one turn event to every SSE subscriber of that room.
+ * Input: account/conversation ids and the event. Output: nothing.
+ */
+function publish(accountId: string, conversationId: string, event: TurnEvent): void {
+  const clients = streamClients.get(streamKey(accountId, conversationId));
+  if (!clients || clients.size === 0) return;
+  const payload = `data: ${JSON.stringify({ ...event, conversationId })}\n\n`;
+  for (const res of clients) {
+    try {
+      res.write(payload);
+    } catch {
+      // Client went away; cleanup happens on close handler.
+    }
+  }
+}
 
 const logger = pino({
   level: process.env.LOG_LEVEL ?? (process.env.NODE_ENV === "test" ? "silent" : "info"),
@@ -101,7 +143,12 @@ function createApp(ctx: AppContext): Express {
     Promise.resolve(authHandler(req, res)).catch(next);
   });
 
-  app.use(express.json({ limit: "1mb", type: acceptsJson }));
+  // 12mb because a single message can carry phone attachments: image/file
+  // blocks allow data: URIs up to 8MB, and base64 has no JSON-escapable
+  // characters, so the JSON body is roughly the attachment size. Per-block
+  // caps in @nano-agents/shared stay the real guard; this only stops
+  // absurd payloads. Single-tenant local core, not a public API.
+  app.use(express.json({ limit: "12mb", type: acceptsJson }));
   app.get("/health", (_req, res) => {
     res.status(200).json({ ok: true });
   });
@@ -150,8 +197,17 @@ function mountRoutes(app: Express, ctx: AppContext): void {
       res.status(404).json({ error: "Agent not found." });
       return;
     }
-    for (const member of created.members) {
-      await createProfile(ctx.db, accountId, member.agentId);
+    // Profiles are idempotent (existing usernames return as-is), so a retry
+    // after a computer failure heals without duplicating anything. The room
+    // itself is kept so the retry has something to attach to.
+    try {
+      for (const member of created.members) {
+        await createProfile(ctx.db, accountId, member.agentId);
+      }
+    } catch (error) {
+      logger.error({ err: error, accountId }, "agent profile setup failed");
+      res.status(503).json({ error: "The account computer is starting. Retry in a few seconds." });
+      return;
     }
     res.status(201).json(created);
   });
@@ -171,16 +227,111 @@ function mountRoutes(app: Express, ctx: AppContext): void {
     }
     res.json(rows);
   });
-  conversations.post("/:conversationId/messages", guard, async (req, res) => {
+  conversations.get("/:conversationId/reactions", guard, async (req, res) => {
+    res.json(await listReactions(ctx.db, queryAccountId(req), pathParam(req, "conversationId")));
+  });
+  conversations.post("/:conversationId/reactions", guard, async (req, res) => {
     const accountId = queryAccountId(req);
     const conversationId = pathParam(req, "conversationId");
-    const body = await readMessage(ctx.db, accountId, conversationId, req.body);
-    if (!body) {
+    const room = await listMessages(ctx.db, accountId, conversationId);
+    if (!room) {
       res.status(404).json({ error: "Room not found." });
       return;
     }
-    const replies = await runTurn(ctx.db, accountId, conversationId, body, ctx.generate);
-    res.status(201).json({ replies });
+    const parsed = reactionSchema.parse(req.body);
+    const saved = await ctx.db.transaction(async (tx) =>
+      saveReaction(tx as never, {
+        accountId,
+        conversationId,
+        agentId: null,
+        messageId: parsed.messageId,
+        emoji: parsed.emoji,
+      }),
+    );
+    publish(accountId, conversationId, { type: "reaction", reaction: saved as never });
+    res.status(201).json(saved);
+  });
+  conversations.get("/:conversationId/stream", guard, async (req, res) => {
+    const accountId = queryAccountId(req);
+    const conversationId = pathParam(req, "conversationId");
+    const rows = await listMessages(ctx.db, accountId, conversationId);
+    if (!rows) {
+      res.status(404).json({ error: "Room not found." });
+      return;
+    }
+    res.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-store",
+      connection: "keep-alive",
+      "x-accel-buffering": "no",
+    });
+    res.write(`event: ready\ndata: {"conversationId":"${conversationId}"}\n\n`);
+    const key = streamKey(accountId, conversationId);
+    let set = streamClients.get(key);
+    if (!set) {
+      set = new Set();
+      streamClients.set(key, set);
+    }
+    set.add(res);
+    const heartbeat = setInterval(() => {
+      try {
+        res.write(`: ping\n\n`);
+      } catch {
+        // Closed; interval cleared below.
+      }
+    }, 25000);
+    req.on("close", () => {
+      clearInterval(heartbeat);
+      set!.delete(res);
+      if (set!.size === 0) streamClients.delete(key);
+    });
+  });
+  conversations.post("/:conversationId/messages", guard, async (req, res) => {
+    const accountId = queryAccountId(req);
+    const conversationId = pathParam(req, "conversationId");
+    const incoming = await readMessage(ctx.db, accountId, conversationId, req.body);
+    if (!incoming) {
+      res.status(404).json({ error: "Room not found." });
+      return;
+    }
+    // Durable first: the user row commits before any background work starts,
+    // so the phone's optimistic bubble can never be wiped by a refresh racing
+    // the turn. The turn then speaks for this row (no second insert).
+    const userMessage = await saveUserMessage(ctx.db, accountId, conversationId, {
+      text: incoming.text,
+      blocks: incoming.blocks,
+      replyTo: incoming.replyTo,
+    });
+    if (!userMessage) {
+      res.status(404).json({ error: "Room not found." });
+      return;
+    }
+    const onEvent = (event: TurnEvent) => publish(accountId, conversationId, event);
+    const run = () =>
+      runTurn(ctx.db, accountId, conversationId, incoming, ctx.generate as never, process.env.SKILLS_DIR, {
+        onEvent,
+        alreadySavedUserMessage: { id: userMessage.id, text: incoming.text },
+      });
+    // ?sync=1 preserves the legacy blocking contract for tests and scripts.
+    // Default is 202 + background so closing the phone never kills the turn.
+    if (req.query.sync === "1") {
+      const replies = await run();
+      res.status(201).json({ message: userMessage, replies });
+      return;
+    }
+    void run()
+      .catch((error: unknown) => {
+        logger.error({ err: error, conversationId }, "background turn failed");
+        publish(accountId, conversationId, {
+          type: "error",
+          error: error instanceof Error ? error.message : "The turn failed.",
+        });
+      });
+    res.status(202).json({
+      accepted: true,
+      message: userMessage,
+      stream: `/conversations/${conversationId}/stream?accountId=${accountId}`,
+    });
   });
   conversations.post("/:conversationId/members", guard, async (req, res) => {
     const created = await addMember(ctx.db, queryAccountId(req), pathParam(req, "conversationId"), req.body);
@@ -236,7 +387,87 @@ function mountRoutes(app: Express, ctx: AppContext): void {
     }
     res.json(agent);
   });
+  agents.get("/:agentId/team", guard, async (req, res) => {
+    const accountId = queryAccountId(req);
+    const agentId = pathParam(req, "agentId");
+    const team = await ctx.db.transaction(async (tx) => {
+      const { listTeam } = await import("../rooms/subagents.js");
+      return listTeam(tx as never, accountId, agentId);
+    });
+    res.json(team);
+  });
+  agents.post("/:agentId/subagents", guard, async (req, res) => {
+    const accountId = queryAccountId(req);
+    const parentAgentId = pathParam(req, "agentId");
+    const { subagentCreateSchema } = await import("@nano-agents/shared");
+    const data = subagentCreateSchema.parse(req.body);
+    const conversationId = typeof req.body?.conversationId === "string" ? req.body.conversationId : null;
+    if (!conversationId) {
+      res.status(400).json({ error: "conversationId is required to join the room." });
+      return;
+    }
+    try {
+      const child = await ctx.db.transaction(async (tx) => {
+        const { hireSubagent } = await import("../rooms/subagents.js");
+        return hireSubagent(tx as never, {
+          accountId,
+          conversationId,
+          parentAgentId,
+          label: data.label,
+          description: data.description,
+          provider: data.provider,
+          modelId: data.modelId,
+        });
+      });
+      // Best-effort OS user: the hire itself is the contract (201). If the
+      // computer is down, the turn runner lazily provisions the profile on the
+      // child's first speak, so we return the child instead of failing and
+      // risking a duplicate on client retry.
+      try {
+        await createProfile(ctx.db, accountId, child.id);
+      } catch (error) {
+        logger.warn({ err: error, accountId, childId: child.id }, "subagent OS profile deferred to first turn");
+      }
+      res.status(201).json(child);
+    } catch (error) {
+      if (error instanceof RoomCapacityError) {
+        res.status(409).json({ error: error.message });
+        return;
+      }
+      throw error;
+    }
+  });
   app.use("/agents", agents);
+
+  const uploads = Router();
+  uploads.post("/", guard, async (req, res) => {
+    // Minimal URL-accepting upload: the phone sends an https URL or a data:
+    // URI (images, text, pdf, json) from the picker. Why no disk writes:
+    // binary blobs belong in object storage (S3 seam); rows store the URL,
+    // not bytes, keeping Postgres small and prompts bounded. data: URIs are
+    // mime-allowlisted so the row cannot smuggle executables.
+    const { url, name, mime } = req.body ?? {};
+    if (typeof url !== "string" || url.length === 0 || url.length > 8_000_000) {
+      res.status(400).json({ error: "url is required (https or data: base64, <=8MB)." });
+      return;
+    }
+    const ok =
+      url.startsWith("data:image/") ||
+      /^data:(text\/[a-z0-9.+-]+|application\/(pdf|json));base64,/.test(url) ||
+      (() => {
+        try {
+          return new URL(url).protocol === "https:";
+        } catch {
+          return false;
+        }
+      })();
+    if (!ok) {
+      res.status(400).json({ error: "Only https URLs or image/text/pdf/json data URIs are accepted." });
+      return;
+    }
+    res.status(201).json({ url, name: typeof name === "string" ? name : "upload", mime: typeof mime === "string" ? mime : null });
+  });
+  app.use("/uploads", uploads);
 }
 
 /**

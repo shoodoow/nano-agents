@@ -8,7 +8,25 @@ describe("listTools", () => {
       { server: "pluginA", tools: [{ name: "search", description: "Search A." }] },
     ];
     const names = listTools(plugins).map((tool) => tool.name);
-    expect(names).toEqual(["bash", "computer", "pluginA_search", "pluginB_search", "read", "write"]);
+    expect(names).toEqual([
+      "bash",
+      "computer_click",
+      "computer_key",
+      "computer_mouse",
+      "computer_screenshot",
+      "computer_type",
+      "delegate",
+      "hire_subagent",
+      "list_team",
+      "pluginA_search",
+      "pluginB_search",
+      "react_to_message",
+      "read",
+      "read_history",
+      "read_skill",
+      "send_message",
+      "write",
+    ]);
     expect(listTools(plugins).map((tool) => tool.name)).toEqual(names);
   });
 });

@@ -1,0 +1,97 @@
+import { afterAll, describe, expect, it } from "vitest";
+import { getDb } from "../db/client.js";
+import { conversations, members } from "../db/schema.js";
+import { createAccount, createAgent } from "../roster/roster.js";
+import { blocksToText, saveReaction, saveSendMessage, isSafeImageUrl } from "./send-message.js";
+
+const databaseUrl = process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/nano_agents";
+const db = getDb(databaseUrl);
+
+/**
+ * Locks rich-turn voice behavior: multi-block inserts stay ordered, reactions
+ * are idempotent, and unsafe image URLs are rejected before touching the DB.
+ */
+describe("send_message protocol", () => {
+  afterAll(async () => {
+    await db.$client.end();
+  });
+
+  it("converts blocks to searchable text with fallbacks", () => {
+    expect(blocksToText([{ kind: "text", markdown: "hello" }])).toBe("hello");
+    expect(blocksToText([{ kind: "image", url: "https://x/y.png", alt: "cat" }])).toBe("[image: cat]");
+    expect(blocksToText([{ kind: "widget", widget: "checklist", props: {} }])).toBe("[widget:checklist]");
+  });
+
+  it("rejects non-https image urls", () => {
+    expect(isSafeImageUrl("https://cdn.example/pic.png")).toBe(true);
+    expect(isSafeImageUrl("http://evil.example/pic.png")).toBe(false);
+    expect(isSafeImageUrl("data:image/png;base64,iVBOR")).toBe(true);
+  });
+
+  it("saves two bubbles in order plus an idempotent reaction", async () => {
+    const account = await createAccount(db, { name: "Voice" });
+    const agent = await createAgent(db, account.id, {
+      name: "Ada",
+      label: "Ada",
+      description: "Speaks in bubbles.",
+      provider: "openai",
+      modelId: "gpt-5",
+    });
+    const [room] = await db
+      .insert(conversations)
+      .values({ accountId: account.id, kind: "direct", ownerAgentId: agent.id, title: "voice" })
+      .returning();
+    await db.insert(members).values({ conversationId: room!.id, accountId: account.id, agentId: agent.id });
+
+    const saved = await db.transaction(async (tx) => {
+      const first = await saveSendMessage(tx as never, {
+        accountId: account.id,
+        conversationId: room!.id,
+        agentId: agent.id,
+        blocks: [{ kind: "text", markdown: "On it, checking now." }],
+        createdAt: new Date(1000),
+      });
+      const second = await saveSendMessage(tx as never, {
+        accountId: account.id,
+        conversationId: room!.id,
+        agentId: agent.id,
+        blocks: [
+          { kind: "text", markdown: "Found it." },
+          { kind: "image", url: "https://cdn.example/shot.png", alt: "screen" },
+        ],
+        replyTo: first.id,
+        createdAt: new Date(1001),
+      });
+      const r1 = await saveReaction(tx as never, {
+        accountId: account.id,
+        conversationId: room!.id,
+        agentId: agent.id,
+        messageId: first.id,
+        emoji: "👍",
+      });
+      const r2 = await saveReaction(tx as never, {
+        accountId: account.id,
+        conversationId: room!.id,
+        agentId: agent.id,
+        messageId: first.id,
+        emoji: "👍",
+      });
+      return { first, second, r1, r2 };
+    });
+
+    expect(saved.second.replyTo).toBe(saved.first.id);
+    expect(saved.second.body).toContain("Found it.");
+    expect(saved.r1.id).toBe(saved.r2.id);
+    await expect(
+      db.transaction(async (tx) =>
+        saveSendMessage(tx as never, {
+          accountId: account.id,
+          conversationId: room!.id,
+          agentId: agent.id,
+          blocks: [{ kind: "image", url: "http://evil.example/x.png" }],
+          createdAt: new Date(),
+        }),
+      ),
+    ).rejects.toThrow();
+  });
+});

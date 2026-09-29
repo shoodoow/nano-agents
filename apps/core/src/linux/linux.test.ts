@@ -1,18 +1,19 @@
 import { afterAll, describe, expect, it } from "vitest";
 import type { AddressInfo } from "node:net";
+import Dockerode from "dockerode";
 import { eq } from "drizzle-orm";
 import { getDb } from "../db/client.js";
 import { agents } from "../db/schema.js";
 import { startServer } from "../http/server.js";
 import { createAccount, createAgent } from "../roster/roster.js";
-import { accountHome, accountShared, createProfile, exec, removeAccountContainers } from "./linux.js";
+import { accountHome, accountShared, createLinux, createProfile, exec, removeAccountContainers } from "./linux.js";
 
 const databaseUrl = process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/nano_agents";
 const db = getDb(databaseUrl);
 
 describe("linux", () => {
   afterAll(async () => {
-    await removeAccountContainers();
+    await removeAccountContainers({ testOnly: true });
     await db.$client.end();
   });
 
@@ -43,8 +44,7 @@ describe("linux", () => {
     expect(hidden.code).not.toBe(0);
   });
 
-  it("creates one profile per member when a group is opened", async () => {
-    const account = await createAccount(db, { name: "Group" });
+  it("creates one profile per member when a group is opened", async () => {    const account = await createAccount(db, { name: "Group" });
     const ada = await createAgent(db, account.id, hired("Ada"));
     const bea = await createAgent(db, account.id, hired("Bea"));
     const server = await startServer(db, 0);
@@ -65,6 +65,46 @@ describe("linux", () => {
     const rows = await db.select().from(agents).where(eq(agents.accountId, account.id));
     expect(rows.map((row) => row.linuxProfile).every((profile) => profile !== null)).toBe(true);
     expect(new Set(rows.map((row) => row.linuxProfile)).size).toBe(2);
+  });
+
+  it("keeps exactly one container per account across repeated and concurrent calls", async () => {
+    const docker = new Dockerode({ socketPath: process.env.DOCKER_SOCKET ?? "/var/run/docker.sock" });
+    const account = await createAccount(db, { name: "Single" });
+    // Sequential repeats plus a concurrent burst must all resolve to the
+    // same container instead of 409ing or duplicating it.
+    const ids = await Promise.all([createLinux(account.id), createLinux(account.id), createLinux(account.id)]);
+    expect(new Set(ids).size).toBe(1);
+    const listed = await docker.listContainers({
+      all: true,
+      filters: { label: [`nano.account=${account.id}`] },
+    });
+    expect(listed).toHaveLength(1);
+  });
+
+  it("labels test computers and spares unlabeled ones on scoped cleanup", async () => {
+    const docker = new Dockerode({ socketPath: process.env.DOCKER_SOCKET ?? "/var/run/docker.sock" });
+    const account = await createAccount(db, { name: "Labeled" });
+    const info = await docker.getContainer(`nano-${account.id}`).inspect();
+    expect(info.Config.Labels["nano.test"]).toBe("1");
+    // An unlabeled stand-in for the developer's real computer: scoped cleanup
+    // must leave it alone while removing the test one.
+    const spare = await docker.createContainer({
+      name: "nano-spare-check",
+      Image: "nano-agents-linux:1",
+      Labels: { "nano.account": "spare" },
+    });
+    await removeAccountContainers({ testOnly: true });
+    const survivors = await docker.listContainers({
+      all: true,
+      filters: { label: [`nano.account=${account.id}`] },
+    });
+    expect(survivors).toHaveLength(0);
+    const spareAlive = await docker.listContainers({
+      all: true,
+      filters: { label: ["nano.account=spare"] },
+    });
+    expect(spareAlive).toHaveLength(1);
+    await spare.remove({ force: true });
   });
 });
 
