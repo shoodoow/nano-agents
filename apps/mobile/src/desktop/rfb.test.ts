@@ -85,8 +85,8 @@ describe("rfb", () => {
     update[19] = 0;
     update[20] = 0;
     feed(update);
-    expect(frames).toHaveLength(1);
-    expect([...reader.rgba]).toEqual([0, 0, 0, 0]);
+    expect(frames).toHaveLength(0);
+    expect(sent.at(-1)?.[0]).toBe(3);
   });
 
   it("maps a touch inside the fitted picture and ignores the margin", () => {

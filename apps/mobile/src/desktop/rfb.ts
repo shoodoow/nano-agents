@@ -17,6 +17,8 @@ export class RfbReader {
   private securityCount = 0;
   private nameLength = 0;
   private pixels = new Uint8Array(0);
+  private nextFrameAt = 0;
+  private waiting = false;
 
   push(chunk: Uint8Array): RfbEvent[] {
     this.append(chunk);
@@ -26,6 +28,35 @@ export class RfbReader {
       progressed = this.consume(events);
     }
     return events;
+  }
+
+  /**
+   * Says how long to wait before a held frame should be shown.
+   * Input: the current time in milliseconds.
+   * Output: the delay, or null when nothing is waiting.
+   */
+  dueIn(now: number): number | null {
+    if (!this.waiting) {
+      return null;
+    }
+    return Math.max(0, this.nextFrameAt - now);
+  }
+
+  /**
+   * Publishes a frame that was held back so the screen can keep up.
+   * Input: the current time in milliseconds.
+   * Output: the picture and the next framebuffer request, or nothing when it is too soon.
+   */
+  pump(now: number): RfbEvent[] {
+    if (!this.waiting || !this.size || now < this.nextFrameAt) {
+      return [];
+    }
+    this.waiting = false;
+    this.nextFrameAt = now + 150;
+    return [
+      { type: "frame", uri: pngDataUri(this.size.width, this.size.height, this.pixels) },
+      { type: "send", data: framebufferRequest(this.size, 1) },
+    ];
   }
 
   /**
@@ -202,6 +233,7 @@ export class RfbReader {
       return false;
     }
     let start = 4;
+    let painted = false;
     for (let index = 0; index < rectangles; index += 1) {
       const x = read16(message, start);
       const y = read16(message, start + 2);
@@ -211,12 +243,24 @@ export class RfbReader {
       const pixels = rectangleBytes(encoding, width, height) ?? 0;
       if (encoding === 0) {
         paint(this.pixels, this.size, x, y, width, height, message.subarray(start + 12, start + 12 + width * height * 4));
+        painted = true;
       }
       start += 12 + pixels;
     }
-    this.rgba = this.pixels.slice();
-    events.push({ type: "frame", uri: pngDataUri(this.size.width, this.size.height, this.pixels) });
-    events.push({ type: "send", data: framebufferRequest(this.size, 1) });
+    if (!painted) {
+      events.push({ type: "send", data: framebufferRequest(this.size, 1) });
+      return true;
+    }
+    const now = Date.now();
+    if (now >= this.nextFrameAt) {
+      this.waiting = false;
+      this.nextFrameAt = now + 150;
+      this.rgba = this.pixels.slice();
+      events.push({ type: "frame", uri: pngDataUri(this.size.width, this.size.height, this.pixels) });
+      events.push({ type: "send", data: framebufferRequest(this.size, 1) });
+    } else {
+      this.waiting = true;
+    }
     return true;
   }
 
@@ -325,7 +369,29 @@ function framebufferRequest(frame: FrameSize, incremental: number): Uint8Array {
 }
 
 function pngDataUri(width: number, height: number, rgba: Uint8Array): string {
-  return `data:image/png;base64,${base64(encodePng(width, height, rgba))}`;
+  const preview = downscale(width, height, rgba);
+  return `data:image/png;base64,${base64(encodePng(preview.width, preview.height, preview.rgba))}`;
+}
+
+function downscale(width: number, height: number, rgba: Uint8Array): { width: number; height: number; rgba: Uint8Array } {
+  if (width < 800 || height < 800) {
+    return { width, height, rgba };
+  }
+  const nextWidth = width >> 1;
+  const nextHeight = height >> 1;
+  const out = new Uint8Array(nextWidth * nextHeight * 4);
+  for (let y = 0; y < nextHeight; y += 1) {
+    const sourceRow = y * 2 * width;
+    for (let x = 0; x < nextWidth; x += 1) {
+      const source = (sourceRow + x * 2) * 4;
+      const target = (y * nextWidth + x) * 4;
+      out[target] = rgba[source] ?? 0;
+      out[target + 1] = rgba[source + 1] ?? 0;
+      out[target + 2] = rgba[source + 2] ?? 0;
+      out[target + 3] = rgba[source + 3] ?? 0;
+    }
+  }
+  return { width: nextWidth, height: nextHeight, rgba: out };
 }
 
 /**

@@ -40,6 +40,7 @@ export function DesktopScreen({
   const socketRef = useRef<WebSocket | null>(null);
   const readerRef = useRef(new RfbReader());
   const viewRef = useRef<ViewSize>({ width: 0, height: 0 });
+  const waitRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!profile) {
@@ -59,13 +60,8 @@ export function DesktopScreen({
         : new NativeWebSocket(url, null, { headers: { cookie: authClient.getCookie() } });
     socket.binaryType = "arraybuffer";
     socketRef.current = socket;
-    socket.onopen = () => setOpen(true);
-    socket.onmessage = (event) => {
-      const bytes = messageBytes(event.data);
-      if (!bytes) {
-        return;
-      }
-      for (const item of reader.push(bytes)) {
+    const publish = (events: ReturnType<RfbReader["push"]>) => {
+      for (const item of events) {
         if (item.type === "send") {
           socket.send(item.data.slice().buffer);
         } else if (item.type === "frame") {
@@ -76,8 +72,29 @@ export function DesktopScreen({
         }
       }
     };
+    socket.onopen = () => setOpen(true);
+    socket.onmessage = (event) => {
+      const bytes = messageBytes(event.data);
+      if (!bytes) {
+        return;
+      }
+      publish(reader.push(bytes));
+      const delay = reader.dueIn(Date.now());
+      if (delay === null) {
+        return;
+      }
+      if (waitRef.current) {
+        clearTimeout(waitRef.current);
+      }
+      waitRef.current = setTimeout(() => {
+        publish(reader.pump(Date.now()));
+      }, delay);
+    };
     socket.onerror = () => onError(new Error("The screen socket failed."));
     return () => {
+      if (waitRef.current) {
+        clearTimeout(waitRef.current);
+      }
       socketRef.current = null;
       socket.close();
     };

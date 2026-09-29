@@ -186,7 +186,7 @@ if command -v pkill >/dev/null; then
   pkill -f "websockify 127.0.0.1:${novncPort}" || true
   sleep 0.2
 fi
-nohup x11vnc -display :${display} -localhost -nopw -cursor most -rfbport ${rfbPort} -forever -shared >/tmp/vnc-${display}.log 2>&1 &
+nohup x11vnc -display :${display} -localhost -nopw -cursor arrow -ncache 0 -wait 10 -defer 10 -rfbport ${rfbPort} -forever -shared >/tmp/vnc-${display}.log 2>&1 &
 nohup websockify 127.0.0.1:${novncPort} 127.0.0.1:${rfbPort} >/tmp/novnc-${display}.log 2>&1 &
 `;
 }
@@ -209,7 +209,7 @@ function bootDesktop(display: number, profile: string): string {
 
 function jwmConfig(display: number): string {
   const root = `/tmp/desktop-${display}`;
-  const chrome = "chromium --no-sandbox --disable-dev-shm-usage --disable-gpu --no-first-run";
+  const chrome = "chromium --no-sandbox --disable-dev-shm-usage --disable-gpu --no-first-run --start-maximized";
   return `<JWM>
 <WindowStyle>
 <Font>DejaVu Sans-11</Font>
@@ -218,10 +218,14 @@ function jwmConfig(display: number): string {
 <Active><Text>#f2f2f2</Text><Title>#2a2a2a</Title></Active>
 <Inactive><Text>#bdbdbd</Text><Title>#1a1a1a</Title></Inactive>
 </WindowStyle>
+<Group>
+<Class>Chromium</Class>
+<Option>maximized</Option>
+</Group>
 <Desktops width="1" height="1">
 <Desktop><Background type="image">${root}/wallpaper.png</Background></Desktop>
 </Desktops>
-<Tray x="0" y="-1" height="72" valign="center">
+<Tray x="0" y="728" height="72">
 <Spacer/>
 <TrayButton label="Chrome" icon="${root}/chrome.png">exec:${chrome}</TrayButton>
 <TrayButton label="Files" icon="${root}/files.png">exec:pcmanfm</TrayButton>

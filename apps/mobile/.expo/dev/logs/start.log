@@ -503,3 +503,40 @@
 {"_e":"metro:bundling:progress","_t":1790625930305,"id":"4","progress":0,"total":1,"current":0}
 {"_e":"metro:bundling:done","_t":1790625930330,"id":"4","total":1,"ms":25.340916}
 {"_e":"metro:client_log","_t":1790625930383,"level":"warn","data":["SafeAreaView has been deprecated and will be removed in a future release. Please use 'react-native-safe-area-context' instead. See https://github.com/AppAndFlow/react-native-safe-area-context"]}
+{"_e":"metro:client_log","_t":1790626279212,"level":"error","data":["[ReferenceError: Property 'publish' doesn't exist]"]}
+{"_e":"metro:client_log","_t":1790626283477,"level":"error","data":["[ReferenceError: Property 'publish' doesn't exist]"]}
+{"_e":"metro:bundling:started","_t":1790626292068,"id":"7","platform":"ios","environment":null,"entry":"node_modules/.pnpm/expo@57.0.25_@babel+core@7.29.7_supports-color@8.1.1__@expo+dom-webview@57.0.1_react-do_2c26f833f2cd4035bed4d82de2bae3ed/node_modules/expo/AppEntry.js"}
+{"_e":"metro:bundling:progress","_t":1790626292068,"id":"7","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:done","_t":1790626292106,"id":"7","total":1,"ms":37.335083}
+{"_e":"metro:bundling:started","_t":1790626292341,"id":"8","platform":"ios","environment":null,"entry":"node_modules/.pnpm/expo-network@57.0.2_expo@57.0.25_react@19.2.3/node_modules/expo-network/build/Network.js"}
+{"_e":"metro:bundling:progress","_t":1790626292341,"id":"8","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:done","_t":1790626292371,"id":"8","total":1,"ms":29.585542}
+{"_e":"metro:client_log","_t":1790626292419,"level":"warn","data":["SafeAreaView has been deprecated and will be removed in a future release. Please use 'react-native-safe-area-context' instead. See https://github.com/AppAndFlow/react-native-safe-area-context"]}
+{"_e":"root:init","_t":1790626345162,"format":"v0-jsonl","version":"57.0.27"}
+{"_e":"env:mode","_t":1790626345163,"nodeEnv":"development","babelEnv":"development","mode":"development"}
+{"_e":"env:load","_t":1790626345164,"mode":"development","files":[],"env":{}}
+{"_e":"devserver:start","_t":1790626345275,"mode":"development","web":true,"baseUrl":"","asyncRoutes":false,"routerRoot":"../../../app","serverComponents":false,"serverActions":false,"serverRendering":false,"apiRoutes":false,"exporting":false}
+{"_e":"metro:config","_t":1790626345664,"serverRoot":"../../../../..","projectRoot":"../../..","exporting":false,"flags":{"autolinkingModuleResolution":true,"serverActions":false,"serverComponents":false,"reactCompiler":false,"optimizeGraph":false,"treeshaking":false,"logbox":false}}
+{"_e":"expo:dev-tools-plugin:load","_t":1790626345721,"plugins":[]}
+{"_e":"metro:instantiate","_t":1790626346148,"atlas":false,"workers":9,"host":"::","port":8081}
+{"_e":"metro:bundling:started","_t":1790626349400,"id":"1","platform":"ios","environment":null,"entry":"node_modules/.pnpm/expo@57.0.25_@babel+core@7.29.7_supports-color@8.1.1__@expo+dom-webview@57.0.1_react-do_2c26f833f2cd4035bed4d82de2bae3ed/node_modules/expo/AppEntry.js"}
+{"_e":"metro:bundling:progress","_t":1790626349400,"id":"1","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:progress","_t":1790626349402,"id":"1","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:progress","_t":1790626349504,"id":"1","progress":0.2514858808301561,"total":337,"current":169}
+{"_e":"metro:bundling:progress","_t":1790626349604,"id":"1","progress":0.6463418274985141,"total":607,"current":488}
+{"_e":"metro:bundling:progress","_t":1790626349704,"id":"1","progress":0.9121782149904201,"total":935,"current":893}
+{"_e":"metro:bundling:done","_t":1790626349748,"id":"1","total":935,"ms":348.162417}
+{"_e":"metro:bundling:started","_t":1790626349995,"id":"2","platform":"ios","environment":null,"entry":"node_modules/.pnpm/expo-network@57.0.2_expo@57.0.25_react@19.2.3/node_modules/expo-network/build/Network.js"}
+{"_e":"metro:bundling:progress","_t":1790626349995,"id":"2","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:progress","_t":1790626349996,"id":"2","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:progress","_t":1790626350055,"id":"2","progress":0,"total":1,"current":0}
+{"_e":"metro:client_log","_t":1790626350076,"level":"warn","data":["SafeAreaView has been deprecated and will be removed in a future release. Please use 'react-native-safe-area-context' instead. See https://github.com/AppAndFlow/react-native-safe-area-context"]}
+{"_e":"metro:bundling:progress","_t":1790626350076,"id":"2","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:done","_t":1790626350094,"id":"2","total":1,"ms":98.78525}
+{"_e":"metro:bundling:started","_t":1790627307998,"id":"3","platform":"ios","environment":null,"entry":"node_modules/.pnpm/expo@57.0.25_@babel+core@7.29.7_supports-color@8.1.1__@expo+dom-webview@57.0.1_react-do_2c26f833f2cd4035bed4d82de2bae3ed/node_modules/expo/AppEntry.js"}
+{"_e":"metro:bundling:progress","_t":1790627307998,"id":"3","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:done","_t":1790627308035,"id":"3","total":1,"ms":37.460042}
+{"_e":"metro:bundling:started","_t":1790627308257,"id":"4","platform":"ios","environment":null,"entry":"node_modules/.pnpm/expo-network@57.0.2_expo@57.0.25_react@19.2.3/node_modules/expo-network/build/Network.js"}
+{"_e":"metro:bundling:progress","_t":1790627308257,"id":"4","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:done","_t":1790627308287,"id":"4","total":1,"ms":30.009875}
+{"_e":"metro:client_log","_t":1790627308331,"level":"warn","data":["SafeAreaView has been deprecated and will be removed in a future release. Please use 'react-native-safe-area-context' instead. See https://github.com/AppAndFlow/react-native-safe-area-context"]}

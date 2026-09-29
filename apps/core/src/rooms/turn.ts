@@ -1,4 +1,4 @@
-import { generateText, jsonSchema, tool, type ModelMessage, type SystemModelMessage } from "ai";
+import { generateText, isStepCount, jsonSchema, tool, type ModelMessage, type SystemModelMessage } from "ai";
 import { and, asc, eq } from "drizzle-orm";
 import { buildContext } from "../memory/context.js";
 import type { getDb } from "../db/client.js";
@@ -114,12 +114,6 @@ export async function runTurn(
         catalog,
       });
       let result: ReturnType<typeof unwrap>;
-      console.log(context.prefix);
-      console.log(context.tail);
-      console.log(context.openai.promptCacheKey);
-      console.log(context.openai.promptCacheRetention);
-      console.log(context.openai.promptCacheKey);
-      console.log(history.map((message) => ({ role: message.agentId ? "assistant" : "user", content: message.body })));
       try {
         result = unwrap(
         await generate({
@@ -147,19 +141,23 @@ export async function runTurn(
           cacheReadTokens: null,
         };
       }
+      const text = result.text.trim();
+      const bodyText = text || "The tools finished, but the model sent no message.";
       const [saved] = await tx
         .insert(messages)
         .values({
           accountId,
           conversationId,
           agentId,
-          body: result.text,
+          body: bodyText,
           cacheReadTokens: result.cacheReadTokens,
           createdAt: nextTime(),
         })
         .returning();
       replies.push(saved!);
-      await mergeSummary(tx, accountId, conversationId, [{ key: "topics", body: result.text, messageId: saved!.id }]);
+      if (text) {
+        await mergeSummary(tx, accountId, conversationId, [{ key: "topics", body: text, messageId: saved!.id }]);
+      }
       if (result.proposal) {
         await propose(tx, accountId, {
           agentId,
@@ -264,6 +262,8 @@ export function toModelPrompt(input: Pick<TurnInput, "provider" | "prefix" | "ta
  * Output: the reply text and the cache read tokens the provider reported.
  */
 async function replyWithModel(db: Db, input: TurnInput): Promise<GenerateResult> {
+  console.log(input)
+  console.log("----------------------------------------------------------\n\n\n");
   const credential = await keyFor(db, input.accountId, input.provider);
   const prompt = toModelPrompt(input);
   const profile = input.linuxProfile;
@@ -272,10 +272,18 @@ async function replyWithModel(db: Db, input: TurnInput): Promise<GenerateResult>
     instructions: prompt.instructions,
     messages: prompt.messages,
     tools: profile ? linuxTools(input.accountId, profile) : undefined,
+    stopWhen: profile ? isStepCount(8) : undefined,
     providerOptions:
       input.provider === "openai"
         ? { openai: { promptCacheKey: input.promptCacheKey, promptCacheRetention: "24h" } }
         : undefined,
   });
+
+  console.log("instructions: ", prompt.instructions);
+  console.log("messages: ", prompt.messages);
+  console.log('tools: ', profile ? linuxTools(input.accountId, profile) : undefined);
+  console.log('stopWhen: ', profile ? isStepCount(8) : undefined);
+
+  console.log('result: ', result);
   return { text: result.text, cacheReadTokens: result.usage.inputTokenDetails.cacheReadTokens ?? null };
 }

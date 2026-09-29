@@ -219,12 +219,19 @@ export default function App() {
     if (!body || sending) {
       return;
     }
+    const pending: Bubble = {
+      id: `pending-${Date.now()}`,
+      author: "You",
+      body,
+      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }),
+    };
     setSending(true);
+    setDraft("");
+    setNote("");
+    setMessages((current) => [...current, pending]);
     await core.sendMessage(accountId.trim(), conversationId, body);
     const history = await core.listMessages(accountId.trim(), conversationId);
     setMessages(toBubbles(history, agents));
-    setDraft("");
-    setNote("");
     setSending(false);
   }
 

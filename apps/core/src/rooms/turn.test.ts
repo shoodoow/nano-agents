@@ -82,6 +82,24 @@ describe("runTurn", () => {
     expect(calls).toEqual([ada.id, bea.id]);
   });
 
+  it("saves a reply when the model calls tools and returns no text", async () => {
+    const account = await createAccount(db, { name: "Tools" });
+    const owner = await createAgent(db, account.id, agent("Tools"));
+    const [room] = await db
+      .insert(conversations)
+      .values({ accountId: account.id, kind: "direct", ownerAgentId: owner.id, title: "tools" })
+      .returning();
+    await db.insert(members).values({ conversationId: room!.id, accountId: account.id, agentId: owner.id });
+
+    await runTurn(db, account.id, room!.id, "read the file", async () => ({ text: "   " }));
+
+    const stored = await db.select().from(messages).where(eq(messages.conversationId, room!.id));
+    expect(stored.filter((message) => message.agentId === null)).toHaveLength(1);
+    expect(stored.find((message) => message.agentId === owner.id)?.body).toBe(
+      "The tools finished, but the model sent no message.",
+    );
+  });
+
   it("runs overlapping turns one after another", async () => {
     const account = await createAccount(db, { name: "Lock" });
     const owner = await createAgent(db, account.id, agent("Owner"));
