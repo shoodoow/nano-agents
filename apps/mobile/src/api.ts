@@ -70,8 +70,13 @@ export type CoreClient = {
     accountId: string,
     input: { provider: ProviderSetting["provider"]; secret: string; baseUrl: string | null },
   ) => Promise<ProviderSetting>;
-  listConversations: (accountId: string) => Promise<{ id: string; kind: string; ownerAgentId: string }[]>;
+  listConversations: (accountId: string) => Promise<{ id: string; kind: string; title: string; ownerAgentId: string }[]>;
+  listMembers: (accountId: string, conversationId: string) => Promise<{ agentId: string }[]>;
   listMessages: (accountId: string, conversationId: string) => Promise<RichMessage[]>;
+  blob: (accountId: string, conversationId: string, messageId: string, index: number) => Promise<{
+    url?: string;
+    previewUrl?: string;
+  }>;
   listReactions: (accountId: string, conversationId: string) => Promise<Reaction[]>;
   react: (accountId: string, conversationId: string, messageId: string, emoji: string) => Promise<Reaction>;
   upload: (accountId: string, input: { url: string; name?: string; mime?: string | null }) => Promise<{ url: string }>;
@@ -128,11 +133,14 @@ export function createCore(
     listProviders: (accountId) => listProviders(baseUrl, accountId, fetchImpl),
     saveProvider: (accountId, input) => saveProvider(baseUrl, accountId, input, fetchImpl),
     listConversations: (accountId) => listConversations(baseUrl, accountId, fetchImpl),
+    listMembers: (accountId, conversationId) => listMembers(baseUrl, accountId, conversationId, fetchImpl),
     listMessages: (accountId, conversationId) => listMessages(baseUrl, accountId, conversationId, fetchImpl),
+    blob: (accountId, conversationId, messageId, index) =>
+      fetchBlob(baseUrl, accountId, conversationId, messageId, index, fetchImpl),
     listReactions: (accountId, conversationId) => listReactions(baseUrl, accountId, conversationId, fetchImpl),
     react: (accountId, conversationId, messageId, emoji) =>
       react(baseUrl, accountId, conversationId, messageId, emoji, fetchImpl),
-    upload: (accountId, input) => upload(baseUrl, input, fetchImpl),
+    upload: (accountId, input) => upload(baseUrl, accountId, input, fetchImpl),
     openChat: (accountId, agent) => openChat(baseUrl, accountId, agent, fetchImpl),
     createGroup: (accountId, title, agentIds) => createGroup(baseUrl, accountId, title, agentIds, fetchImpl),
     sendMessage: (accountId, conversationId, body, rich) =>
@@ -211,14 +219,29 @@ async function hireAgent(
 /**
  * Loads the rooms on the signed-in account.
  * Input: the core base URL, the account id, and fetch.
- * Output: the conversations, including each room's owner.
+ * Output: the conversations, including each room's title and owner.
  */
 async function listConversations(
   baseUrl: string,
   accountId: string,
   fetchImpl: typeof fetch,
-): Promise<{ id: string; kind: string; ownerAgentId: string }[]> {
+): Promise<{ id: string; kind: string; title: string; ownerAgentId: string }[]> {
   return readJson(fetchImpl, `${baseUrl}/accounts/${accountId}/conversations`);
+}
+
+/**
+ * Loads one room's member agent ids for the group header.
+ * Why: a group opens with its title plus member names, never disguised as
+ * one owner's 1:1 chat.
+ * Input: base URL, account id, conversation id, fetch. Output: member rows.
+ */
+async function listMembers(
+  baseUrl: string,
+  accountId: string,
+  conversationId: string,
+  fetchImpl: typeof fetch,
+): Promise<{ agentId: string }[]> {
+  return readJson(fetchImpl, `${baseUrl}/conversations/${conversationId}/members?accountId=${accountId}`);
 }
 
 /**
@@ -234,6 +257,26 @@ async function listMessages(
   fetchImpl: typeof fetch,
 ): Promise<RichMessage[]> {
   return readJson(fetchImpl, `${baseUrl}/conversations/${conversationId}/messages?accountId=${accountId}`);
+}
+
+/**
+ * Fetches one stripped attachment's bytes for lazy image rendering.
+ * Why: list responses carry blobRefs instead of megabytes; the thread shows
+ * previews instantly and each photo loads once, then caches client-side.
+ * Input: base URL, ids, block index, fetch. Output: {url?, previewUrl?}.
+ */
+async function fetchBlob(
+  baseUrl: string,
+  accountId: string,
+  conversationId: string,
+  messageId: string,
+  index: number,
+  fetchImpl: typeof fetch,
+): Promise<{ url?: string; previewUrl?: string }> {
+  return readJson(
+    fetchImpl,
+    `${baseUrl}/conversations/${conversationId}/blob/${messageId}/${index}?accountId=${accountId}`,
+  );
 }
 
 /**
@@ -272,15 +315,21 @@ async function react(
 /**
  * Registers an image/file URL for use in a block.
  * Why: rows store URLs not bytes; this validates https/data URIs server-side
- * before the client embeds them. S3 presigned upload is the later seam.
- * Input: base URL, url/name/mime, fetch. Output: echoed {url}.
+ * before the client embeds them. Scoped under the account so the session
+ * guard can match it (an account-less route can only 403). S3 presigned
+ * upload is the later seam.
+ * Input: base URL, account id, url/name/mime, fetch. Output: echoed {url}.
  */
 async function upload(
   baseUrl: string,
+  accountId: string,
   input: { url: string; name?: string; mime?: string | null },
   fetchImpl: typeof fetch,
 ): Promise<{ url: string }> {
-  return readJson(fetchImpl, `${baseUrl}/uploads`, { method: "POST", body: JSON.stringify(input) });
+  return readJson(fetchImpl, `${baseUrl}/accounts/${accountId}/uploads`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
 }
 
 /**

@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { buildInstructions } from "../prompt/build-instructions.js";
-import { buildContext } from "./context.js";
+import { buildContext, roomLine } from "./context.js";
 import { getDb } from "../db/client.js";
 import { conversations, messages } from "../db/schema.js";
 import { createAccount, createAgent } from "../roster/roster.js";
@@ -55,6 +55,20 @@ describe("buildContext", () => {
     expect(long.openai.promptCacheKey).toHaveLength(64);
     expect(context.openai.promptCacheRetention).toBe("24h");
     expect("truncation" in context.openai).toBe(false);
+  });
+
+  it("grounds the room situation as the first tail line", () => {
+    expect(roomLine({ title: "Group 1", kind: "group", members: ["Grok", "Jimmy", "Mossy"], selfName: "Jimmy" })).toBe(
+      'Room "Group 1" (group of 3). Members: Grok, Jimmy, Mossy. You are Jimmy — reply only when mentioned; members wake each other with @Name, a leading @Name is a direct handoff to that member.',
+    );
+    const withRoom = buildContext({
+      ...agent,
+      summary: [],
+      messages: [{ body: "hi" }],
+      room: { title: "Group 1", kind: "group", members: ["Jimmy", "Mossy"], selfName: "Jimmy" },
+    });
+    expect(withRoom.tail.startsWith('Room "Group 1"')).toBe(true);
+    expect(withRoom.prefix.includes("Group 1")).toBe(false);
   });
 });
 

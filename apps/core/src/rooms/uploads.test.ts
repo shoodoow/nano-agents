@@ -3,8 +3,9 @@ import { getDb } from "../db/client.js";
 import { createAccount } from "../roster/roster.js";
 import { exec } from "../linux/linux.js";
 import { blocksToText } from "./send-message.js";
+import { stripBloatedBlocks } from "./rooms.js";
 import { materializeBlocks, parseDataUri, sanitizeFileName } from "./uploads.js";
-import { textOf, toModelMessages } from "./turn.js";
+import { textOf, toImagePart, toModelMessages } from "./turn.js";
 
 const databaseUrl = process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/nano_agents";
 const db = getDb(databaseUrl);
@@ -59,12 +60,33 @@ describe("attachment pure helpers", () => {
       expect(Array.isArray(messages[index]!.content)).toBe(true);
     }
     expect(messages[3]!.content).toBe("ack");
-    // Preview preferred over the original; oversized originals skipped.
-    const parts = messages[4]!.content;
-    expect(((parts as { image?: string }[])[1] as { image: string }).image).toBe("data:image/jpeg;base64,XYZ");
+    // data: URIs become file parts with exact mimes (no deprecation warnings).
+    const parts = messages[4]!.content as { type: string; data?: string; mediaType?: string }[];
+    expect(parts.map((part) => part.type)).toEqual(["text", "file"]);
+    expect(parts[1]).toEqual({ type: "file", data: "XYZ", mediaType: "image/jpeg" });
+    // Oversized originals are skipped (the agent opens those via savedPath).
     expect(messages[5]!.content).toBe("huge");
     expect(textOf(messages[4]!.content)).toBe("new");
     expect(textOf("plain")).toBe("plain");
+  });
+
+  it("keeps remote images as legacy parts and drops unusable refs", () => {
+    expect(toImagePart("https://cdn.example/a.png")).toEqual({ type: "image", image: "https://cdn.example/a.png" });
+    expect(toImagePart("http://evil.example/a.png")).toBeNull();
+    expect(toImagePart("not a url")).toBeNull();
+  });
+
+  it("strips oversized data URIs into blobRefs, keeping small ones inline", () => {
+    const big = `data:image/png;base64,${"A".repeat(300_000)}`;
+    const stripped = stripBloatedBlocks("msg-9", [
+      { kind: "text", markdown: "hi" },
+      { kind: "image", url: big, alt: "photo" },
+      { kind: "image", url: "https://cdn.example/a.png" },
+    ]) as { kind: string; url?: string; blobRef?: { messageId: string; index: number } }[];
+    expect(stripped[0]).toEqual({ kind: "text", markdown: "hi" });
+    expect(stripped[1]!.url).toBe("");
+    expect(stripped[1]!.blobRef).toEqual({ messageId: "msg-9", index: 1 });
+    expect(stripped[2]).toEqual({ kind: "image", url: "https://cdn.example/a.png" });
   });
 });
 

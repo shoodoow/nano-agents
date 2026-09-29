@@ -6,6 +6,13 @@ import { createLinux } from "../linux/linux.js";
 
 type Database = ReturnType<typeof getDb>;
 
+export class AgentNameError extends Error {
+  constructor() {
+    super("An agent with this name already exists on this account");
+    this.name = "AgentNameError";
+  }
+}
+
 /**
  * Creates an account row and that account's Linux.
  * Input: a database client and an object with a name.
@@ -28,11 +35,21 @@ export async function createAccount(db: Database, input: unknown) {
 
 /**
  * Hires an agent inside one account.
+ * Why: names are unique per account (case-insensitive) because @Name routing
+ * and the room header resolve by exact name — duplicates silently steal each
+ * other's mentions. Same name on another account is fine.
  * Input: a database client, the account id, and the agent's name, label, description, provider, and model id.
  * Output: the saved agent. linuxProfile is null because the chat creates the profile later.
  */
 export async function createAgent(db: Database, accountId: string, input: unknown) {
   const data = agentCreateSchema.parse(input);
+  const siblings = await db
+    .select({ name: agents.name })
+    .from(agents)
+    .where(eq(agents.accountId, accountId));
+  if (siblings.some((sibling) => sibling.name.toLowerCase() === data.name.toLowerCase())) {
+    throw new AgentNameError();
+  }
   const [row] = await db
     .insert(agents)
     .values({

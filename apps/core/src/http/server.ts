@@ -15,7 +15,9 @@ import { buildInstructions } from "../prompt/build-instructions.js";
 import {
   addMember,
   createRoom,
+  getMessage,
   listConversations,
+  listMembers,
   listMessages,
   listReactions,
   readMessage,
@@ -24,7 +26,7 @@ import {
 } from "../rooms/rooms.js";
 import { runTurn, type TurnEvent, type TurnInput } from "../rooms/turn.js";
 import { saveReaction } from "../rooms/send-message.js";
-import { createAccount, createAgent, getAgent, listAgents, updateAgentFlags } from "../roster/roster.js";
+import { createAccount, createAgent, getAgent, listAgents, updateAgentFlags, AgentNameError } from "../roster/roster.js";
 import { approve, listProposals, reject } from "../skills/proposals.js";
 
 type Database = ReturnType<typeof getDb>;
@@ -216,6 +218,36 @@ function mountRoutes(app: Express, ctx: AppContext): void {
   });
   accounts.post("/:accountId/screens/:profile/takeover", guard, (req, res) => setScreen(ctx.db, req, res, "takeover"));
   accounts.post("/:accountId/screens/:profile/handback", guard, (req, res) => setScreen(ctx.db, req, res, "handback"));
+  accounts.post("/:accountId/uploads", guard, async (req, res) => {
+    // Scoped under the account so requireSession can match the session's
+    // accountId. A standalone /uploads route has no account context and can
+    // only 403 — that was the "account is not available" bug on attach.
+    // Minimal URL-accepting upload: the phone sends an https URL or a data:
+    // URI (images, text, pdf, json) from the picker. Why no disk writes:
+    // binary blobs belong in object storage (S3 seam); rows store the URL,
+    // not bytes, keeping Postgres small and prompts bounded. data: URIs are
+    // mime-allowlisted so the row cannot smuggle executables.
+    const { url, name, mime } = req.body ?? {};
+    if (typeof url !== "string" || url.length === 0 || url.length > 8_000_000) {
+      res.status(400).json({ error: "url is required (https or data: base64, <=8MB)." });
+      return;
+    }
+    const ok =
+      url.startsWith("data:image/") ||
+      /^data:(text\/[a-z0-9.+-]+|application\/(pdf|json));base64,/.test(url) ||
+      (() => {
+        try {
+          return new URL(url).protocol === "https:";
+        } catch {
+          return false;
+        }
+      })();
+    if (!ok) {
+      res.status(400).json({ error: "Only https URLs or image/text/pdf/json data URIs are accepted." });
+      return;
+    }
+    res.status(201).json({ url, name: typeof name === "string" ? name : "upload", mime: typeof mime === "string" ? mime : null });
+  });
   app.use("/accounts", accounts);
 
   const conversations = Router();
@@ -229,6 +261,23 @@ function mountRoutes(app: Express, ctx: AppContext): void {
   });
   conversations.get("/:conversationId/reactions", guard, async (req, res) => {
     res.json(await listReactions(ctx.db, queryAccountId(req), pathParam(req, "conversationId")));
+  });
+  conversations.get("/:conversationId/blob/:messageId/:index", guard, async (req, res) => {
+    // Serves one stripped attachment's bytes for lazy image rendering.
+    // Ownership re-checked per request; index selects the block in payload.
+    const accountId = queryAccountId(req);
+    const conversationId = pathParam(req, "conversationId");
+    const row = await getMessage(ctx.db, accountId, conversationId, pathParam(req, "messageId"));
+    const index = Number(pathParam(req, "index"));
+    const blocks = Array.isArray(row?.payload) ? (row.payload as Record<string, unknown>[]) : [];
+    const block = Number.isInteger(index) ? blocks[index] : undefined;
+    const url = typeof block?.url === "string" ? (block.url as string) : "";
+    const preview = typeof block?.previewUrl === "string" ? (block.previewUrl as string) : "";
+    if (!row || !block || (url === "" && preview === "")) {
+      res.status(404).json({ error: "Attachment not found." });
+      return;
+    }
+    res.json({ url: url !== "" ? url : undefined, previewUrl: preview !== "" ? preview : undefined });
   });
   conversations.post("/:conversationId/reactions", guard, async (req, res) => {
     const accountId = queryAccountId(req);
@@ -341,6 +390,14 @@ function mountRoutes(app: Express, ctx: AppContext): void {
     }
     res.status(201).json(created);
   });
+  conversations.get("/:conversationId/members", guard, async (req, res) => {
+    const rows = await listMembers(ctx.db, queryAccountId(req), pathParam(req, "conversationId"));
+    if (!rows) {
+      res.status(404).json({ error: "Room not found." });
+      return;
+    }
+    res.json(rows);
+  });
   app.use("/conversations", conversations);
 
   const proposals = Router();
@@ -438,36 +495,6 @@ function mountRoutes(app: Express, ctx: AppContext): void {
     }
   });
   app.use("/agents", agents);
-
-  const uploads = Router();
-  uploads.post("/", guard, async (req, res) => {
-    // Minimal URL-accepting upload: the phone sends an https URL or a data:
-    // URI (images, text, pdf, json) from the picker. Why no disk writes:
-    // binary blobs belong in object storage (S3 seam); rows store the URL,
-    // not bytes, keeping Postgres small and prompts bounded. data: URIs are
-    // mime-allowlisted so the row cannot smuggle executables.
-    const { url, name, mime } = req.body ?? {};
-    if (typeof url !== "string" || url.length === 0 || url.length > 8_000_000) {
-      res.status(400).json({ error: "url is required (https or data: base64, <=8MB)." });
-      return;
-    }
-    const ok =
-      url.startsWith("data:image/") ||
-      /^data:(text\/[a-z0-9.+-]+|application\/(pdf|json));base64,/.test(url) ||
-      (() => {
-        try {
-          return new URL(url).protocol === "https:";
-        } catch {
-          return false;
-        }
-      })();
-    if (!ok) {
-      res.status(400).json({ error: "Only https URLs or image/text/pdf/json data URIs are accepted." });
-      return;
-    }
-    res.status(201).json({ url, name: typeof name === "string" ? name : "upload", mime: typeof mime === "string" ? mime : null });
-  });
-  app.use("/uploads", uploads);
 }
 
 /**
@@ -584,7 +611,7 @@ function onError(error: unknown, _req: Request, res: Response, _next: NextFuncti
   if (res.headersSent) {
     return;
   }
-  if (error instanceof RoomCapacityError) {
+  if (error instanceof RoomCapacityError || error instanceof AgentNameError) {
     res.status(409).json({ error: error.message });
     return;
   }

@@ -16,6 +16,7 @@ describe("computer-use wiring", () => {
       "computer_screenshot",
       "computer_type",
       "read",
+      "web_fetch",
       "write",
     ]);
   });

@@ -66,6 +66,11 @@ export const textBlockSchema = z.object({
   markdown: z.string().min(1).max(100_000),
 });
 
+export const blobRefSchema = z.object({
+  messageId: z.string().uuid(),
+  index: z.number().int().min(0).max(9),
+});
+
 export const imageBlockSchema = z.object({
   kind: z.literal("image"),
   // https URL or data:image/*;base64 URI (capped to keep rows + prompts bounded).
@@ -76,6 +81,9 @@ export const imageBlockSchema = z.object({
   savedPath: z.string().max(500).optional(),
   // Small resized data URI for vision grounding (full file stays on disk).
   previewUrl: z.string().max(1_000_000).optional(),
+  // Set by listMessages when url/previewUrl exceed the inline budget: the
+  // client fetches the bytes lazily from the blob endpoint instead.
+  blobRef: blobRefSchema.optional(),
 });
 
 export const codeBlockSchema = z.object({
@@ -93,6 +101,8 @@ export const fileBlockSchema = z.object({
   mime: z.string().max(127).optional(),
   // Filled server-side when a data: URI is materialized onto the account Linux.
   savedPath: z.string().max(500).optional(),
+  // Set by listMessages when url exceeds the inline budget (see blobRefSchema).
+  blobRef: blobRefSchema.optional(),
 });
 
 export const widgetBlockSchema = z.object({

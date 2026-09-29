@@ -14,16 +14,25 @@ import { skillCatalog, readSkill } from "../skills/skills.js";
 import { mergeSummary } from "../memory/summary.js";
 import { listTools } from "../skills/tools.js";
 import { bash, readFile, writeFile, screenshotImage, moveMouse, clickAt, typeText, pressKeys } from "../computer/computer.js";
+import { webFetch } from "../computer/web.js";
 import { accountHome, accountShared, createProfile } from "../linux/linux.js";
 import { saveSendMessage, saveReaction, blocksToText, type TurnEvent } from "./send-message.js";
+import { parseDataUri } from "./uploads.js";
 import { hireSubagent, recordDelegation, listTeam } from "./subagents.js";
 
 type Db = ReturnType<typeof getDb>;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
+export type TurnImagePart =
+  // File parts carry data: URIs with an exact mime (AI SDK v7; "image" parts
+  // are deprecated and warn). Remote https URLs keep the legacy image shape
+  // because their mime is unknown without fetching.
+  | { type: "file"; data: string; mediaType: string }
+  | { type: "image"; image: string };
+
 export type TurnMessageContent =
   | string
-  | Array<{ type: "text"; text: string } | { type: "image"; image: string }>;
+  | Array<{ type: "text"; text: string } | TurnImagePart>;
 
 export type TurnInput = {
   agentId: string;
@@ -162,6 +171,12 @@ export async function runTurn(
         messages: history.map((message) => ({ body: message.body })),
         tools: listTools([]).map((t) => t.name),
         catalog,
+        room: {
+          title: room.title,
+          kind: room.kind,
+          members: memberRows.map((member) => member.name),
+          selfName: agent.name,
+        },
       });
       // Per-speaker emission buffer: the real model path appends via tool
       // closures in replyWithModelTx; injected stubs return plain text.
@@ -200,6 +215,7 @@ export async function runTurn(
               nextTime,
               emittedMessages,
               pendingEvents,
+              onEvent: options?.onEvent,
               messages: modelMessages,
             });
       let result: ReturnType<typeof unwrap>;
@@ -230,7 +246,7 @@ export async function runTurn(
           });
         }
         const chainSource = emittedMessages.map((m) => m.body).join("\n");
-        for (const next of mentioned(chainSource, memberRows)) {
+        for (const next of mentioned(chainSource, memberRows, true)) {
           if (!spoken.has(next)) queue.push(next);
         }
         continue;
@@ -264,7 +280,7 @@ export async function runTurn(
           messageIds: result.proposal.messageIds,
         });
       }
-      for (const next of mentioned(result.text, memberRows)) {
+      for (const next of mentioned(result.text, memberRows, true)) {
         if (!spoken.has(next)) {
           queue.push(next);
         }
@@ -293,6 +309,7 @@ export function linuxToolNames(): string[] {
     "computer_screenshot",
     "computer_type",
     "read",
+    "web_fetch",
     "write",
   ].sort();
 }
@@ -380,11 +397,39 @@ function linuxTools(accountId: string, profile: string) {
       }),
       execute: async ({ key }) => pressKeys(accountId, profile, key),
     }),
+    web_fetch: tool({
+      description:
+        "Read one public web page as text (docs, skill directories, articles). JS-heavy pages render automatically. Returns title, text, and outlinks to follow. Never send the user to their own browser for something you can read yourself.",
+      inputSchema: jsonSchema<{ url: string }>({
+        type: "object",
+        properties: { url: { type: "string", description: "Full https:// address." } },
+        required: ["url"],
+      }),
+      execute: async ({ url }) => {
+        const page = await webFetch(accountId, profile, url);
+        const byline = [page.siteName, page.byline].filter((part) => part.length > 0).join(" · ");
+        return [
+          `# ${page.title || "(no title)"}${byline ? `\n${byline}` : ""}`,
+          `Source: ${page.url}${page.rendered ? " (JS-rendered)" : ""}${page.truncated ? " [truncated]" : ""}`,
+          "",
+          page.markdown,
+        ].join("\n");
+      },
+    }),
   };
 }
 
-function mentioned(body: string, memberRows: { id: string; name: string }[]): string[] {
-  return speakers(body, memberRows, "").filter((id) => id !== "");
+function mentioned(body: string, memberRows: { id: string; name: string }[], onlyLeading = false): string[] {
+  // User messages wake every @mentioned agent (explicit address). Agent
+  // replies chain-wake ONLY on a leading @Name — "@Smoke check the logs" is
+  // a handoff, "thanks @Smoke" is prose. Without this, any incidental mention
+  // in a reply summons uninvited speakers into the thread.
+  if (!onlyLeading) {
+    return speakers(body, memberRows, "").filter((id) => id !== "");
+  }
+  const leading = /^\s*@([A-Za-z0-9_-]+)/.exec(body)?.[1] ?? "";
+  const member = memberRows.find((row) => row.name === leading);
+  return member ? [member.id] : [];
 }
 
 /**
@@ -409,12 +454,14 @@ const MAX_VISION_CHARS = 1_000_000;
  * a photo of an error) instead of only reading "[image]". Only the newest 3
  * user images ride along — previews preferred, oversized originals skipped
  * (the agent opens those via savedPath) — so long threads stay cheap.
+ * data: URIs become file parts with exact mimes (no deprecation warnings);
+ * remote https URLs keep the legacy image shape (mime unknown).
  * Input: history rows with agentId/body/payload. Output: role+content rows.
  */
 export function toModelMessages(
   history: { agentId: string | null; body: string; payload: unknown }[],
 ): { role: "user" | "assistant"; content: TurnMessageContent }[] {
-  const wanted = new Map<number, string[]>();
+  const wanted = new Map<number, TurnImagePart[]>();
   let remaining = MAX_VISION_IMAGES;
   for (let index = history.length - 1; index >= 0 && remaining > 0; index -= 1) {
     const row = history[index]!;
@@ -425,21 +472,45 @@ export function toModelMessages(
       const image = block as { url?: string; previewUrl?: string };
       const ref = typeof image.previewUrl === "string" && image.previewUrl.length > 0 ? image.previewUrl : image.url;
       if (typeof ref !== "string" || ref.length === 0 || ref.length > MAX_VISION_CHARS) continue;
+      const part = toImagePart(ref);
+      if (!part) continue;
       const list = wanted.get(index) ?? [];
-      list.unshift(ref);
+      list.unshift(part);
       wanted.set(index, list);
       remaining -= 1;
     }
   }
   return history.map((row, index) => {
     const role = row.agentId ? "assistant" : "user";
-    const refs = wanted.get(index);
-    if (!refs || refs.length === 0) return { role, content: row.body };
+    const parts = wanted.get(index);
+    if (!parts || parts.length === 0) return { role, content: row.body };
     return {
       role,
-      content: [{ type: "text", text: row.body }, ...refs.map((image) => ({ type: "image", image }))],
+      content: [{ type: "text", text: row.body }, ...parts],
     } as { role: "user" | "assistant"; content: TurnMessageContent };
   });
+}
+
+/**
+ * Converts one image reference to a model content part.
+ * Why: single choke point for the image-vs-file-part decision, unit-tested
+ * without a provider. data: URIs split into exact {data, mediaType} file
+ * parts; remote URLs stay legacy image parts.
+ * Input: data: URI or https URL. Output: the part, or null when unusable.
+ */
+export function toImagePart(ref: string): TurnImagePart | null {
+  if (ref.startsWith("data:")) {
+    const parsed = parseDataUri(ref);
+    if (!parsed) return null;
+    return { type: "file", data: parsed.base64, mediaType: parsed.mime };
+  }
+  try {
+    const parsed = new URL(ref);
+    if (parsed.protocol !== "https:") return null;
+    return { type: "image", image: ref };
+  } catch {
+    return null;
+  }
 }
 
 function unwrap(result: GenerateResult): {
@@ -479,6 +550,49 @@ export function toModelPrompt(input: Pick<TurnInput, "provider" | "prefix" | "ta
 }
 
 /**
+ * Builds the send_message tool bound to one speaker's emission buffer.
+ * Why: shared by the ack-first phase and the full agentic loop so both speak
+ * through the identical durable path (insert + buffer + immediate fanout).
+ * Input: tx plus speaker ids, timestamp fn, buffer, optional fanout.
+ * Output: the AI SDK send_message tool.
+ */
+function makeSendMessageTool(
+  tx: Tx,
+  input: {
+    accountId: string;
+    conversationId: string;
+    agentId: string;
+    nextTime: () => Date;
+    emittedMessages: (typeof messages.$inferSelect)[];
+    onEvent?: (event: TurnEvent) => void;
+  },
+) {
+  return tool({
+    description:
+      "FIRST ACTION ON EVERY USER TURN: call send_message before any other tool — a one-line acknowledgement naming your concrete first step. Then do the work with other tools, posting progress, and close with a final send_message. Plain assistant text is invisible: nothing reaches the user until it is inside send_message.",
+    inputSchema: jsonSchema<{ blocks: unknown; replyTo?: string | null }>({
+      type: "object",
+      properties: { blocks: { type: "array" }, replyTo: { type: ["string", "null"] } },
+      required: ["blocks"],
+    }),
+    execute: async ({ blocks, replyTo }) => {
+      const parsed = sendMessageInputSchema.parse({ blocks, replyTo: replyTo ?? null });
+      const saved = await saveSendMessage(tx, {
+        accountId: input.accountId,
+        conversationId: input.conversationId,
+        agentId: input.agentId,
+        blocks: parsed.blocks,
+        replyTo: parsed.replyTo,
+        createdAt: input.nextTime(),
+      });
+      input.emittedMessages.push(saved);
+      input.onEvent?.({ type: "message", message: saved });
+      return { messageId: saved.id };
+    },
+  });
+}
+
+/**
  * Calls the selected provider with the full voice + team toolset.
  * Why: this is the only place model I/O happens, so all durable side effects
  * (send_message inserts, reactions, subagent hires, delegations) funnel through
@@ -496,6 +610,10 @@ async function replyWithModelTx(
     nextTime: () => Date;
     emittedMessages: (typeof messages.$inferSelect)[];
     pendingEvents: TurnEvent[];
+    // Immediate fanout for perceived latency: called per tool execution so
+    // bubbles paint mid-turn. The post-commit flush in runTurn re-delivers
+    // the same rows; the client dedups by id.
+    onEvent?: (event: TurnEvent) => void;
   },
 ): Promise<GenerateResult> {
   const credential = await keyFor(db, input.accountId, input.provider);
@@ -506,27 +624,13 @@ async function replyWithModelTx(
   const agentId = input.agentId;
 
   const voice = {
-    send_message: tool({
-      description:
-        "Your only voice. Send one rich message now (text/image/widget/file/code blocks, optional replyTo). Call multiple times for multi-bubble replies. Plain assistant text is invisible.",
-      inputSchema: jsonSchema<{ blocks: unknown; replyTo?: string | null }>({
-        type: "object",
-        properties: { blocks: { type: "array" }, replyTo: { type: ["string", "null"] } },
-        required: ["blocks"],
-      }),
-      execute: async ({ blocks, replyTo }) => {
-        const parsed = sendMessageInputSchema.parse({ blocks, replyTo: replyTo ?? null });
-        const saved = await saveSendMessage(tx, {
-          accountId,
-          conversationId,
-          agentId,
-          blocks: parsed.blocks,
-          replyTo: parsed.replyTo,
-          createdAt: input.nextTime(),
-        });
-        input.emittedMessages.push(saved);
-        return { messageId: saved.id };
-      },
+    send_message: makeSendMessageTool(tx, {
+      accountId,
+      conversationId,
+      agentId,
+      nextTime: input.nextTime,
+      emittedMessages: input.emittedMessages,
+      onEvent: input.onEvent,
     }),
     react_to_message: tool({
       description: "Single emoji tapback when a reaction is the whole response. Rare; mirrors the user.",
@@ -539,6 +643,7 @@ async function replyWithModelTx(
         const parsed = reactionSchema.parse({ messageId, emoji });
         const saved = await saveReaction(tx, { accountId, conversationId, agentId, messageId: parsed.messageId, emoji: parsed.emoji });
         input.pendingEvents.push({ type: "reaction", reaction: saved });
+        input.onEvent?.({ type: "reaction", reaction: saved });
         return { ok: true };
       },
     }),
@@ -598,6 +703,7 @@ async function replyWithModelTx(
           createdAt: input.nextTime(),
         });
         input.emittedMessages.push(card);
+        input.onEvent?.({ type: "message", message: card });
         return { agentId: child.id, name: child.name };
       },
     }),

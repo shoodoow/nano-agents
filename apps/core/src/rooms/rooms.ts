@@ -135,6 +135,26 @@ export async function listConversations(db: Database, accountId: string) {
 }
 
 /**
+ * Lists one room's member agent ids.
+ * Why: the phone shows group titles with member names instead of a single
+ * owner's name — opening a group previously looked like the wrong 1:1 chat.
+ * Input: db, account id, conversation id. Output: member rows, or null outside account.
+ */
+export async function listMembers(db: Database, accountId: string, conversationId: string) {
+  const [room] = await db
+    .select({ id: conversations.id })
+    .from(conversations)
+    .where(and(eq(conversations.id, conversationId), eq(conversations.accountId, accountId)));
+  if (!room) {
+    return null;
+  }
+  return db
+    .select({ agentId: members.agentId })
+    .from(members)
+    .where(and(eq(members.conversationId, conversationId), eq(members.accountId, accountId)));
+}
+
+/**
  * Saves one user message synchronously (outside the turn transaction).
  * Why: POST /messages used to insert the user text inside the background
  * runTurn, so the phone's safety refresh could run before the insert and wipe
@@ -210,6 +230,60 @@ export async function saveUserMessage(
   return saved;
 }
 /**
+ * Maximum inline data: chars per block in list responses.
+ * Why: a 5MB phone photo as base64 balloons every thread refresh (the whole
+ * list re-downloads on each poll). Blocks above this budget keep metadata +
+ * blobRef; the client fetches bytes lazily once and caches them.
+ */
+export const INLINE_BLOB_BUDGET = 200_000;
+
+/**
+ * Strips oversized data: URLs from blocks for list responses.
+ * Why: pure function so the budget rule is unit-tested without Docker. The
+ * stored row is untouched — only the wire copy shrinks. Small data URIs and
+ * https URLs pass through; oversized ones become {url:"", blobRef}.
+ * Input: message id + validated blocks. Output: wire-safe blocks.
+ */
+export function stripBloatedBlocks(messageId: string, blocks: unknown): unknown {
+  if (!Array.isArray(blocks)) return blocks;
+  return blocks.map((block, index) => {
+    if (typeof block !== "object" || block === null) return block;
+    const kind = (block as { kind?: string }).kind;
+    if (kind !== "image" && kind !== "file") return block;
+    const record = block as Record<string, unknown>;
+    const url = typeof record.url === "string" ? record.url : "";
+    const preview = typeof record.previewUrl === "string" ? record.previewUrl : "";
+    const heavy = (value: string) => value.startsWith("data:") && value.length > INLINE_BLOB_BUDGET;
+    if (!heavy(url) && !heavy(preview)) return block;
+    return {
+      ...record,
+      url: heavy(url) ? "" : url,
+      ...(preview !== undefined ? { previewUrl: heavy(preview) ? "" : preview } : {}),
+      blobRef: { messageId, index },
+    };
+  });
+}
+
+/**
+ * Reads one message row this account owns in this room.
+ * Why: the blob endpoint serves a single message's bytes; ownership must be
+ * re-checked per request, never trusted from the client.
+ * Input: db, account/conversation/message ids. Output: the row or null.
+ */
+export async function getMessage(db: Database, accountId: string, conversationId: string, messageId: string) {
+  const [row] = await db
+    .select()
+    .from(messages)
+    .where(
+      and(
+        eq(messages.id, messageId),
+        eq(messages.conversationId, conversationId),
+        eq(messages.accountId, accountId),
+      ),
+    );
+  return row ?? null;
+}
+/**
  * Lists the saved messages in one room with rich payloads.
  * Why: the phone renders blocks/images/widgets inline; body stays as text
  * fallback for search and legacy clients. Reactions are fetched separately to
@@ -225,7 +299,7 @@ export async function listMessages(db: Database, accountId: string, conversation
   if (!room) {
     return null;
   }
-  return db
+  const rows = await db
     .select({
       id: messages.id,
       agentId: messages.agentId,
@@ -239,6 +313,9 @@ export async function listMessages(db: Database, accountId: string, conversation
     .from(messages)
     .where(and(eq(messages.conversationId, conversationId), eq(messages.accountId, accountId)))
     .orderBy(asc(messages.createdAt));
+  // Shrink the wire: oversized data: URLs become lazy blobRefs. The stored
+  // rows are untouched; the phone fetches bytes per image on demand.
+  return rows.map((row) => ({ ...row, payload: stripBloatedBlocks(row.id, row.payload) }));
 }
 
 /**

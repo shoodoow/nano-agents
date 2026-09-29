@@ -25,6 +25,7 @@ describe("listTools", () => {
       "read_history",
       "read_skill",
       "send_message",
+      "web_fetch",
       "write",
     ]);
     expect(listTools(plugins).map((tool) => tool.name)).toEqual(names);

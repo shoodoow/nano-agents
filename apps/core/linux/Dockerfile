@@ -5,6 +5,8 @@ RUN apt-get update \
     adduser \
     sudo \
     procps \
+    curl \
+    ca-certificates \
     xvfb \
     x11vnc \
     novnc \

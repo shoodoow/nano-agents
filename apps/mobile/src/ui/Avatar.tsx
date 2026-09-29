@@ -3,10 +3,11 @@ import { palette } from "../theme/tokens";
 
 /**
  * Picks a stable face color for one agent.
+ * Why: exported so chat name labels match avatar faces per author.
  * Input: the agent id.
  * Output: a hex color from the roster palette.
  */
-function colorFor(id: string): string {
+export function colorFor(id: string): string {
   let hash = 0;
   for (const char of id) {
     hash = (hash + char.charCodeAt(0)) % palette.length;

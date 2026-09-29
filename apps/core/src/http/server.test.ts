@@ -152,6 +152,70 @@ describe("server", () => {
     expect(accepted.message.id).toBeDefined();
   });
 
+  it("accepts uploads scoped under the account", async () => {
+    const account = await postJson<{ id: string }>(`${baseUrl}/accounts`, { name: "Uploads" });
+    const accepted = await fetch(`${baseUrl}/accounts/${account.id}/uploads`, {
+      method: "POST",
+      body: JSON.stringify({ url: "https://cdn.example/pic.png", name: "pic.png" }),
+    });
+    expect(accepted.status).toBe(201);
+    const rejected = await fetch(`${baseUrl}/accounts/${account.id}/uploads`, {
+      method: "POST",
+      body: JSON.stringify({ url: "data:application/x-sh;base64,AAAA" }),
+    });
+    expect(rejected.status).toBe(400);
+  });
+
+  it("serves stripped attachment bytes per block", async () => {
+    const account = await postJson<{ id: string }>(`${baseUrl}/accounts`, { name: "Blob" });
+    const ada = await postJson<{ id: string }>(`${baseUrl}/accounts/${account.id}/agents`, agent("Ada"));
+    const room = await postJson<{ id: string }>(`${baseUrl}/accounts/${account.id}/conversations`, {
+      kind: "direct",
+      title: "desk",
+      ownerAgentId: ada.id,
+      memberAgentIds: [ada.id],
+    });
+    const big = `data:image/png;base64,${"B".repeat(300_000)}`;
+    const sent = await fetch(`${baseUrl}/conversations/${room.id}/messages?accountId=${account.id}&sync=1`, {
+      method: "POST",
+      body: JSON.stringify({ blocks: [{ kind: "image", url: big, alt: "photo" }] }),
+    });
+    expect(sent.status).toBe(201);
+    const thread = (await (
+      await fetch(`${baseUrl}/conversations/${room.id}/messages?accountId=${account.id}`)
+    ).json()) as { id: string; payload: { url?: string; blobRef?: { messageId: string; index: number } }[] }[];
+    const userRow = thread.find((row) => row.payload?.[0]?.blobRef);
+    expect(userRow?.payload[0]?.url).toBe("");
+    const blob = (await (
+      await fetch(
+        `${baseUrl}/conversations/${room.id}/blob/${userRow!.id}/0?accountId=${account.id}`,
+      )
+    ).json()) as { url?: string };
+    expect(blob.url).toBe(big);
+    const missing = await fetch(`${baseUrl}/conversations/${room.id}/blob/${userRow!.id}/7?accountId=${account.id}`);
+    expect(missing.status).toBe(404);
+  });
+
+  it("lists group members for the room header", async () => {
+    const account = await postJson<{ id: string }>(`${baseUrl}/accounts`, { name: "Members" });
+    const ada = await postJson<{ id: string }>(`${baseUrl}/accounts/${account.id}/agents`, agent("Ada"));
+    const bea = await postJson<{ id: string }>(`${baseUrl}/accounts/${account.id}/agents`, agent("Bea"));
+    const room = await postJson<{ id: string; title: string }>(`${baseUrl}/accounts/${account.id}/conversations`, {
+      kind: "group",
+      title: "Launch",
+      ownerAgentId: ada.id,
+      memberAgentIds: [ada.id, bea.id],
+    });
+    expect(room.title).toBe("Launch");
+    const members = (await (
+      await fetch(`${baseUrl}/conversations/${room.id}/members?accountId=${account.id}`)
+    ).json()) as { agentId: string }[];
+    expect(members.map((member) => member.agentId).sort()).toEqual([ada.id, bea.id].sort());
+    const outsider = await postJson<{ id: string }>(`${baseUrl}/accounts`, { name: "Stranger" });
+    const blocked = await fetch(`${baseUrl}/conversations/${room.id}/members?accountId=${outsider.id}`);
+    expect(blocked.status).toBe(404);
+  });
+
   it("rejects a 21st member", async () => {
     const account = await postJson<{ id: string }>(`${baseUrl}/accounts`, { name: "Full" });
     const hired = [];

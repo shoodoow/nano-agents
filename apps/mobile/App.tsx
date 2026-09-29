@@ -44,6 +44,8 @@ function toBubble(
   return {
     id: row.id,
     author: row.agentId ? (roster.find((agent) => agent.id === row.agentId)?.name ?? "Agent") : "You",
+    agentId: row.agentId,
+    mine: row.agentId === null,
     body: row.body,
     time: new Date(row.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }),
     blocks,
@@ -85,7 +87,15 @@ export type Attachment = {
 
 type Screen =
   | { name: "inbox" }
-  | { name: "chat"; agent: RosterAgent; conversationId: string }
+  | {
+      name: "chat";
+      agent: RosterAgent;
+      conversationId: string;
+      kind: "direct" | "group";
+      title: string;
+      subtitle: string;
+      memberIds: string[];
+    }
   | { name: "desktop"; agent: RosterAgent }
   | { name: "profile"; agent: RosterAgent }
   | { name: "approvals" };
@@ -115,6 +125,16 @@ export default function App() {
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [profile, setProfile] = useState<RosterAgent | null>(null);
   const [conversationId, setConversationId] = useState("");
+  const [groups, setGroups] = useState<{ id: string; title: string; memberCount: number }[]>([]);
+  // Last opened chat, so the desktop back-button returns to the right title.
+  const [lastChat, setLastChat] = useState<{
+    agent: RosterAgent;
+    conversationId: string;
+    kind: "direct" | "group";
+    title: string;
+    subtitle: string;
+    memberIds: string[];
+  } | null>(null);
   const [notifications, setNotifications] = useState(true);
   const [autoReview, setAutoReview] = useState(true);
   const [autoTimeZone, setAutoTimeZone] = useState(true);
@@ -154,6 +174,7 @@ export default function App() {
     setScreen({ name: "inbox" });
     setMenu(null);
     setNote("");
+    await loadGroups(accountIdFromSession);
   }
 
   /**
@@ -190,6 +211,7 @@ export default function App() {
     setScreen({ name: "inbox" });
     setMenu("menu");
     setNote("");
+    await loadGroups(id);
   }
 
   /**
@@ -208,12 +230,9 @@ export default function App() {
     const rows = await core.listAgents(accountId);
     const fresh = rows.find((row) => row.id === hired.id) ?? hired;
     setAgents(rows);
-    setConversationId(room.id);
-    setScreen({ name: "chat", agent: fresh, conversationId: room.id });
-    setMessages([]);
-    setDraft("");
+    await enterRoom({ id: room.id, kind: "direct", title: fresh.name, ownerAgentId: fresh.id }, rows);
     setCreating(false);
-    setNote("");
+    await loadGroups(accountId);
   }
 
   /**
@@ -224,31 +243,111 @@ export default function App() {
   async function createGroup(title: string, agentIds: string[]): Promise<void> {
     const room = await core.createGroup(accountId, title, agentIds);
     const rows = await core.listAgents(accountId);
-    const owner = rows.find((row) => row.id === agentIds[0]);
     setAgents(rows);
-    if (!owner) {
-      setCreating(false);
-      return;
-    }
-    setConversationId(room.id);
-    setScreen({ name: "chat", agent: owner, conversationId: room.id });
-    setMessages([]);
-    setDraft("");
+    await enterRoom({ id: room.id, kind: "group", title, ownerAgentId: agentIds[0]! }, rows);
     setCreating(false);
-    setNote("");
+    await loadGroups(accountId);
   }
 
   /**
-   * Reloads one thread with messages + reactions.
-   * Why: single refresh keeps bubbles, quotes, and tapbacks consistent after
-   * sends, streams, and reaction picks.
+   * Loads one thread as bubbles without touching state.
+   * Why: shared by full refreshes and the native poll loop so both merge the
+   * same way. Input: room id + roster. Output: fresh bubbles.
    */
-  async function refreshThread(roomId: string, roster: RosterAgent[]): Promise<void> {
+  async function loadThread(roomId: string, roster: RosterAgent[]): Promise<Bubble[]> {
     const [history, taps] = await Promise.all([
       core.listMessages(accountId.trim(), roomId),
       core.listReactions(accountId.trim(), roomId),
     ]);
+    return toBubbles(history, taps, roster);
+  }
+
+  /**
+   * Merges server bubbles over the current thread.
+   * Why: MERGE, never replace — streamed/polled bubbles arrive before later
+   * refreshes, and replacing would wipe them (the old vanishing glitch).
+   * Server rows win on id conflicts; local-only rows (pending, fresh agent
+   * bubbles) are kept. Input: fresh server bubbles. Output: nothing.
+   */
+  function mergeThread(fresh: Bubble[]): void {
+    setMessages((current) => {
+      const byId = new Map(fresh.map((bubble) => [bubble.id, bubble]));
+      const merged = [...fresh];
+      for (const bubble of current) {
+        if (!byId.has(bubble.id)) {
+          merged.push(bubble);
+        }
+      }
+      return merged;
+    });
+  }
+
+  /**
+   * Reloads one thread with messages + reactions, merging into current state.
+   * Input: room id + roster. Output: nothing.
+   */
+  async function refreshThread(roomId: string, roster: RosterAgent[]): Promise<void> {
+    mergeThread(await loadThread(roomId, roster));
+  }
+
+  /**
+   * Enters any room — direct or group — with the right header.
+   * Why: one shared path so created, reopened, and direct rooms all show the
+   * correct title (group title, never a disguised 1:1) plus member names.
+   * Input: room record + roster. Output: nothing. Chat screen opens on it.
+   */
+  async function enterRoom(
+    room: { id: string; kind: string; title: string; ownerAgentId: string },
+    roster: RosterAgent[],
+  ): Promise<void> {
+    const id = accountId.trim();
+    const owner = roster.find((row) => row.id === room.ownerAgentId);
+    if (!owner) {
+      return;
+    }
+    const [memberRows, history, taps] = await Promise.all([
+      core.listMembers(id, room.id).catch(() => [{ agentId: owner.id }]),
+      core.listMessages(id, room.id),
+      core.listReactions(id, room.id),
+    ]);
+    const kind = room.kind === "group" ? ("group" as const) : ("direct" as const);
+    const names = memberRows.map((member) => roster.find((row) => row.id === member.agentId)?.name ?? "Agent");
+    const opened = {
+      agent: owner,
+      conversationId: room.id,
+      kind,
+      title: kind === "group" ? room.title : owner.name,
+      subtitle: kind === "group" ? names.join(", ").slice(0, 60) : "",
+      memberIds: memberRows.map((member) => member.agentId),
+    };
+    setAgents(roster);
+    setConversationId(room.id);
+    setLastChat(opened);
+    setScreen({ name: "chat", ...opened });
     setMessages(toBubbles(history, taps, roster));
+    setDraft("");
+    setReplyTo(null);
+    setAttachments([]);
+    setAttachOpen(false);
+    setNote("");
+  }
+
+  /**
+   * Loads group rooms for the inbox section.
+   * Why: groups previously vanished after creation — the inbox listed agents
+   * only. Counts come from one members call per group (few groups per user).
+   * Input: account id + roster (unused, kept for symmetry). Output: nothing.
+   */
+  async function loadGroups(id: string): Promise<void> {
+    const rooms = await core.listConversations(id).catch(() => []);
+    const groups = rooms.filter((room) => room.kind === "group");
+    const withCounts = await Promise.all(
+      groups.map(async (group) => {
+        const members = await core.listMembers(id, group.id).catch(() => []);
+        return { id: group.id, title: group.title, memberCount: members.length };
+      }),
+    );
+    setGroups(withCounts);
   }
 
   /**
@@ -260,20 +359,30 @@ export default function App() {
     const id = accountId.trim();
     const rooms = await core.listConversations(id);
     const existing = rooms.find((room) => room.kind === "direct" && room.ownerAgentId === agent.id);
-    const room = existing ?? (await core.openChat(id, agent));
     const rows = await core.listAgents(id);
     const fresh = rows.find((row) => row.id === agent.id) ?? agent;
-    const history = await core.listMessages(id, room.id);
-    const taps = await core.listReactions(id, room.id);
     setAgents(rows);
-    setConversationId(room.id);
-    setScreen({ name: "chat", agent: fresh, conversationId: room.id });
-    setMessages(toBubbles(history, taps, rows));
-    setDraft("");
-    setReplyTo(null);
-    setAttachments([]);
-    setAttachOpen(false);
-    setNote("");
+    if (existing) {
+      await enterRoom(existing, rows);
+      return;
+    }
+    const room = await core.openChat(id, agent);
+    await enterRoom({ id: room.id, kind: "direct", title: fresh.name, ownerAgentId: fresh.id }, rows);
+  }
+
+  /**
+   * Reopens a group from the inbox list.
+   * Input: the group conversation id. Output: nothing. Chat opens on it.
+   */
+  async function openGroup(roomId: string): Promise<void> {
+    const id = accountId.trim();
+    const [rooms, rows] = await Promise.all([core.listConversations(id), core.listAgents(id)]);
+    const room = rooms.find((row) => row.id === roomId);
+    if (!room) {
+      return;
+    }
+    setAgents(rows);
+    await enterRoom(room, rows);
   }
 
   /**
@@ -305,6 +414,8 @@ export default function App() {
     const pending: Bubble = {
       id: pendingId,
       author: "You",
+      agentId: null,
+      mine: true,
       body: fallback,
       time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }),
       blocks,
@@ -322,14 +433,18 @@ export default function App() {
     setNote("");
     setMessages((current) => [...current, pending]);
     // A failed POST must restore the composer so nothing the user wrote is lost.
+    // Defensive id: an outdated core returns no message row — keep the pending
+    // bubble instead of crashing it away (the old vanishing glitch).
     let confirmedId = pendingId;
     try {
       const saved = await core.sendMessage(accountId.trim(), conversationId, fallback, {
         blocks,
         replyTo: target?.id ?? null,
       });
-      confirmedId = saved.message.id;
-      setMessages((current) => current.map((bubble) => (bubble.id === pendingId ? { ...bubble, id: confirmedId } : bubble)));
+      if (saved.message?.id) {
+        confirmedId = saved.message.id;
+        setMessages((current) => current.map((bubble) => (bubble.id === pendingId ? { ...bubble, id: confirmedId } : bubble)));
+      }
     } catch (error) {
       setMessages((current) => current.filter((bubble) => bubble.id !== pendingId));
       setDraft(body);
@@ -338,6 +453,26 @@ export default function App() {
       throw error;
     }
     const roster = agents;
+    const knownIds = new Set(messages.map((bubble) => bubble.id).concat([confirmedId]));
+    if (Platform.OS === "web") {
+      watchTurnSse(conversationId, roster);
+    } else {
+      // React Native fetch has no streaming body (response.body is null), so
+      // SSE can never deliver there — poll merged threads instead. Stops on
+      // the first unseen agent bubble or after 60s, whichever comes first.
+      watchTurnPoll(conversationId, roster, knownIds);
+    }
+    setSending(false);
+  }
+
+  /**
+   * Follows one turn over SSE (web only).
+   * Why: extracted so send() picks SSE where streaming bodies exist and the
+   * poll loop where they do not (native). Done/error ends typing with a final
+   * reconciling refresh; agent bubbles append live, deduped by id.
+   * Input: room id + roster snapshot. Output: nothing.
+   */
+  function watchTurnSse(conversationId: string, roster: RosterAgent[]): void {
     const unsubscribe = core.subscribeMessages(accountId.trim(), conversationId, (event) => {
       if (event.type === "done" || event.type === "error") {
         setTyping(false);
@@ -365,7 +500,37 @@ export default function App() {
       unsubscribe();
       void refreshThread(conversationId, roster).catch(show);
     }, 12000);
-    setSending(false);
+  }
+
+  /**
+   * Follows one turn by polling merged threads (native only).
+   * Why: same contract as SSE watching, without streaming bodies. Each poll
+   * merges server truth over local state, so nothing ever vanishes; the loop
+   * ends on the first agent bubble that was not known at send time.
+   * Input: room id, roster snapshot, ids known at send time. Output: nothing.
+   */
+  function watchTurnPoll(conversationId: string, roster: RosterAgent[], knownIds: Set<string>): void {
+    let tries = 0;
+    const tick = async (): Promise<void> => {
+      if (tries++ >= 24) {
+        setTyping(false);
+        void refreshThread(conversationId, roster).catch(show);
+        return;
+      }
+      try {
+        const fresh = await loadThread(conversationId, roster);
+        mergeThread(fresh);
+        if (fresh.some((bubble) => !bubble.mine && !knownIds.has(bubble.id))) {
+          setTyping(false);
+          void refreshThread(conversationId, roster).catch(show);
+          return;
+        }
+      } catch {
+        // Transient network: keep polling until the cap.
+      }
+      setTimeout(() => void tick(), 2500);
+    };
+    void tick();
   }
 
   const MAX_IMAGE_BYTES = 5_000_000;
@@ -519,6 +684,8 @@ export default function App() {
       {screen.name === "inbox" ? (
         <InboxScreen
           agents={agents}
+          groups={groups}
+          onOpenGroup={(id) => void openGroup(id).catch(show)}
           onAccount={() => {
             if (!account) {
               setMenu("signup");
@@ -592,6 +759,11 @@ export default function App() {
       {screen.name === "chat" ? (
         <ChatScreen
           agent={screen.agent}
+          title={screen.title}
+          subtitle={screen.subtitle}
+          members={
+            screen.kind === "group" ? agents.filter((row) => screen.memberIds.includes(row.id)) : []
+          }
           messages={messages}
           draft={draft}
           sending={sending}
@@ -613,6 +785,9 @@ export default function App() {
           onReact={(bubble, emoji) => void toggleReaction(screen.conversationId, bubble, emoji).catch(show)}
           onApprove={() => void refreshProposals().catch(show)}
           onDeny={() => void refreshProposals().catch(show)}
+          onFetchBlob={(messageId, index) =>
+            core.blob(accountId.trim(), screen.conversationId, messageId, index)
+          }
           onBack={() => setScreen({ name: "inbox" })}
           onDesktop={() => setScreen({ name: "desktop", agent: screen.agent })}
         />
@@ -622,8 +797,8 @@ export default function App() {
           accountId={accountId.trim()}
           agent={screen.agent}
           onBack={() =>
-            conversationId
-              ? setScreen({ name: "chat", agent: screen.agent, conversationId })
+            lastChat && conversationId
+              ? setScreen({ name: "chat", ...lastChat })
               : setScreen({ name: "inbox" })
           }
           onProfile={() => {

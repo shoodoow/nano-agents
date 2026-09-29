@@ -82,6 +82,49 @@ describe("runTurn", () => {
     expect(calls).toEqual([ada.id, bea.id]);
   });
 
+  it("wakes the mentioned agent from anywhere in a user message, nobody else", async () => {
+    const account = await createAccount(db, { name: "Strict" });
+    const ada = await createAgent(db, account.id, agent("Ada"));
+    const bea = await createAgent(db, account.id, agent("Bea"));
+    const cy = await createAgent(db, account.id, agent("Cy"));
+    const [room] = await db
+      .insert(conversations)
+      .values({ accountId: account.id, kind: "group", ownerAgentId: cy.id, title: "strict" })
+      .returning();
+    await db.insert(members).values([ada, bea, cy].map((member) => ({
+      conversationId: room!.id,
+      accountId: account.id,
+      agentId: member.id,
+    })));
+    const calls: string[] = [];
+    await runTurn(db, account.id, room!.id, "can someone loop in @Bea here?", async ({ agentId }) => {
+      calls.push(agentId);
+      return "on it";
+    });
+    expect(calls).toEqual([bea.id]);
+  });
+
+  it("ignores inline mentions inside an agent reply (leading @ is a handoff)", async () => {
+    const account = await createAccount(db, { name: "NoChain" });
+    const ada = await createAgent(db, account.id, agent("Ada"));
+    const bea = await createAgent(db, account.id, agent("Bea"));
+    const [room] = await db
+      .insert(conversations)
+      .values({ accountId: account.id, kind: "group", ownerAgentId: ada.id, title: "nochian" })
+      .returning();
+    await db.insert(members).values([ada, bea].map((member) => ({
+      conversationId: room!.id,
+      accountId: account.id,
+      agentId: member.id,
+    })));
+    const calls: string[] = [];
+    await runTurn(db, account.id, room!.id, "@Ada go", async ({ agentId }) => {
+      calls.push(agentId);
+      return "thanks @Bea for the earlier help, done here";
+    });
+    expect(calls).toEqual([ada.id]);
+  });
+
   it("saves a reply when the model calls tools and returns no text", async () => {
     const account = await createAccount(db, { name: "Tools" });
     const owner = await createAgent(db, account.id, agent("Tools"));

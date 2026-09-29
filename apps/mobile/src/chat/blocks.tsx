@@ -1,29 +1,49 @@
+import { useEffect, useState } from "react";
 import { Image, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import type { MessageBlock } from "../api";
 import { colors } from "../theme/tokens";
+
+// Client-side bytes cache: one fetch per attachment no matter how often the
+// thread re-renders or refreshes. Keyed messageId:index, process-lifetime.
+const blobCache = new Map<string, string>();
 
 /**
  * Renders one rich MessageBlock inside a bubble.
  * Why: send_message turns carry text/image/code/file/widget payloads; the
  * thread must show them inline like Grok instead of raw JSON or bare URLs.
- * Input: block + optional approve/deny handlers for approval widgets.
+ * Oversized images arrive as blobRefs (bytes stripped from lists) and resolve
+ * lazily through fetchBlob; everything else renders inline.
+ * Input: block + optional approve/deny handlers + blob fetcher.
  * Output: the block view. Unknown widgets fall back to a summary line.
  */
 export function BlockView({
   block,
   onApprove,
   onDeny,
+  fetchBlob,
 }: {
   block: MessageBlock;
   onApprove?: () => void;
   onDeny?: () => void;
+  fetchBlob?: (messageId: string, index: number) => Promise<{ url?: string; previewUrl?: string }>;
 }) {
   if (block.kind === "text") return <RichText text={block.markdown} />;
   if (block.kind === "image") {
+    const inline = block.previewUrl || block.url;
+    if (inline) {
+      return (
+        <View style={styles.mediaWrap}>
+          <Image source={{ uri: inline }} style={styles.image} accessibilityLabel={block.alt ?? "Shared image"} />
+          {block.alt ? <Text style={styles.caption}>{block.alt}</Text> : null}
+        </View>
+      );
+    }
+    if (block.blobRef && fetchBlob) {
+      return <LazyBlobImage blobRef={block.blobRef} alt={block.alt} fetchBlob={fetchBlob} />;
+    }
     return (
       <View style={styles.mediaWrap}>
-        <Image source={{ uri: block.url }} style={styles.image} accessibilityLabel={block.alt ?? "Shared image"} />
-        {block.alt ? <Text style={styles.caption}>{block.alt}</Text> : null}
+        <Text style={styles.caption}>{block.alt ?? "Shared image"}</Text>
       </View>
     );
   }
@@ -44,6 +64,61 @@ export function BlockView({
     );
   }
   return <WidgetView widget={block.widget} props={block.props} onApprove={onApprove} onDeny={onDeny} />;
+}
+
+/**
+ * Resolves and renders one stripped image on demand.
+ * Why: keeps thread refreshes at kilobytes; the photo loads once per process
+ * lifetime and pops in when ready. A grey box holds layout meanwhile.
+ * Input: blobRef + alt + fetcher. Output: image or placeholder.
+ */
+function LazyBlobImage({
+  blobRef,
+  alt,
+  fetchBlob,
+}: {
+  blobRef: { messageId: string; index: number };
+  alt?: string;
+  fetchBlob: (messageId: string, index: number) => Promise<{ url?: string; previewUrl?: string }>;
+}) {
+  const cacheKey = `${blobRef.messageId}:${blobRef.index}`;
+  const [uri, setUri] = useState<string | null>(blobCache.get(cacheKey) ?? null);
+  useEffect(() => {
+    let live = true;
+    if (blobCache.has(cacheKey)) {
+      return;
+    }
+    void fetchBlob(blobRef.messageId, blobRef.index)
+      .then((blob) => {
+        const resolved = blob.previewUrl || blob.url;
+        if (resolved) {
+          blobCache.set(cacheKey, resolved);
+          if (live) {
+            setUri(resolved);
+          }
+        }
+      })
+      .catch(() => {
+        // Offline or gone: placeholder stays, refresh retries via remount.
+      });
+    return () => {
+      live = false;
+    };
+  }, [cacheKey, blobRef.messageId, blobRef.index, fetchBlob]);
+  if (!uri) {
+    return (
+      <View style={styles.mediaWrap}>
+        <View style={styles.imageLoading} />
+        {alt ? <Text style={styles.caption}>{alt}</Text> : null}
+      </View>
+    );
+  }
+  return (
+    <View style={styles.mediaWrap}>
+      <Image source={{ uri }} style={styles.image} accessibilityLabel={alt ?? "Shared image"} />
+      {alt ? <Text style={styles.caption}>{alt}</Text> : null}
+    </View>
+  );
 }
 
 /**
@@ -146,6 +221,7 @@ const styles = StyleSheet.create({
   mediaWrap: { gap: 6 },
   image: { width: 240, height: 180, borderRadius: 12, backgroundColor: colors.control },
   caption: { color: colors.muted, fontSize: 13 },
+  imageLoading: { width: 240, height: 180, borderRadius: 12, backgroundColor: colors.control, opacity: 0.6 },
   codeWrap: { backgroundColor: colors.control, borderRadius: 10, padding: 10, gap: 4 },
   codeLang: { color: colors.muted, fontSize: 12 },
   code: { color: colors.text, fontFamily: "monospace", fontSize: 13 },

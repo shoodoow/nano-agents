@@ -7,21 +7,28 @@ import { CircleButton } from "../ui/CircleButton";
 import { IconPlus, IconReply, IconSearch } from "../ui/icons";
 
 /**
- * Shows the account roster in the same layout as the Grok chat list.
- * Input: the agents, and handlers for account, search, a new chat, and opening one agent.
+ * Shows the account roster plus group rooms, in the Grok chat-list layout.
+ * Why: groups previously vanished after creation — agents alone cannot
+ * reopen them. The groups section lists every group room with member counts.
+ * Input: agents, groups, and handlers for account, search, new chat,
+ * opening one agent, and opening one group.
  * Output: the inbox screen.
  */
 export function InboxScreen({
   agents,
+  groups,
   onAccount,
   onNew,
   onOpen,
+  onOpenGroup,
   menu,
 }: {
   agents: RosterAgent[];
+  groups: { id: string; title: string; memberCount: number }[];
   onAccount: () => void;
   onNew: () => void;
   onOpen: (agent: RosterAgent) => void;
+  onOpenGroup: (conversationId: string) => void;
   menu?: ReactNode;
 }) {
   const [query, setQuery] = useState("");
@@ -80,6 +87,31 @@ export function InboxScreen({
             <Text style={styles.empty}>{agents.length === 0 ? "Sign up, then create a chat or a group." : "No matching agents."}</Text>
           )
         }
+        ListFooterComponent={
+          groups.length > 0 ? (
+            <View style={styles.groups}>
+              <Text style={styles.groupsTitle}>Groups</Text>
+              {groups.map((group) => (
+                <Pressable
+                  key={group.id}
+                  accessibilityRole="button"
+                  onPress={() => onOpenGroup(group.id)}
+                  style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+                >
+                  <Avatar id={group.id} size={46} />
+                  <View style={styles.rowBody}>
+                    <Text style={styles.name} numberOfLines={1}>
+                      {group.title}
+                    </Text>
+                    <Text style={styles.preview} numberOfLines={1}>
+                      {group.memberCount} {group.memberCount === 1 ? "member" : "members"}
+                    </Text>
+                  </View>
+                </Pressable>
+              ))}
+            </View>
+          ) : null
+        }
         renderItem={({ item }) => (
           <Pressable accessibilityRole="button" onPress={() => onOpen(item)} style={({ pressed }) => [styles.row, pressed && styles.pressed]}>
             <Avatar id={item.id} size={46} round={item.name.length % 2 === 0} />
@@ -126,6 +158,8 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   list: { paddingBottom: 32 },
+  groups: { marginTop: 8 },
+  groupsTitle: { color: colors.muted, fontSize: 13, fontWeight: "700", textTransform: "uppercase", paddingHorizontal: 16, marginBottom: 4 },
   featured: { alignItems: "center", paddingTop: 36, paddingBottom: 28 },
   featuredName: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 14 },
   featuredLabel: { color: colors.text, fontSize: 16, fontWeight: "600" },

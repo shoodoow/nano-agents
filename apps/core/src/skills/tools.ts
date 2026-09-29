@@ -22,6 +22,7 @@ const defaults: ToolOffer[] = [
   { name: "read_history", description: "Read a cited message or search slice." },
   { name: "read_skill", description: "Read one skill body by name." },
   { name: "send_message", description: "Send rich blocks (text/image/widget) to the user. Your only voice." },
+  { name: "web_fetch", description: "Read one public web page as text." },
   { name: "write", description: "Write a file." },
 ];
 
