@@ -24,6 +24,11 @@ export async function createRoom(db: Database, accountId: string, input: unknown
   if (agentIds.length > 20) {
     throw new RoomCapacityError();
   }
+  // Room integrity: a private chat stays 1:1 — exactly the owner, no team.
+  // Teams form in groups the agent creates with createGroupRoom.
+  if (data.kind === "direct" && agentIds.length > 1) {
+    throw new Error("Private chats stay 1:1 — create a group first with create_group, then hire there.");
+  }
   const owned = await db
     .select({ id: agents.id })
     .from(agents)
@@ -95,11 +100,16 @@ export async function createGroupRoom(
 export async function addMember(db: Database, accountId: string, conversationId: string, input: unknown) {
   const data = memberAddSchema.parse(input);
   const [room] = await db
-    .select({ id: conversations.id })
+    .select({ id: conversations.id, kind: conversations.kind })
     .from(conversations)
     .where(and(eq(conversations.id, conversationId), eq(conversations.accountId, accountId)));
   if (!room) {
     return null;
+  }
+  // Room integrity: nobody is ever added to a 1:1 — by tool or HTTP.
+  // Teams form in groups the agent creates with create_group.
+  if (room.kind === "direct") {
+    throw new Error("Private chats stay 1:1 — create a group first with create_group, then hire there.");
   }
   const [agent] = await db
     .select({ id: agents.id })

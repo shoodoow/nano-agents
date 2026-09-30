@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import type { getDb } from "./client.js";
+import type { getDb } from "../db/client.js";
 import { open, seal } from "./keys.js";
 import { toolKeys } from "../db/schema.js";
 

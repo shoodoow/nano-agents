@@ -37,9 +37,9 @@ import { createOwnRoutine, deleteOwnRoutine, listOwnRoutines, updateOwnRoutine }
 import { saveSendMessage, saveReaction, blocksToText, type TurnEvent } from "./send-message.js";
 import { appendEvent } from "./events.js";
 import { acquireRun, failRun, finishRun, heartbeatRun } from "./runs.js";
-import type { StreamEvent } from "./stream.js";
+import { publish, type StreamEvent } from "./stream.js";
 import { parseDataUri } from "./uploads.js";
-import { checkWorker, hireSubagent, listTeam, recordDelegation, runWorker, spawnWorker, stopWorker } from "./subagents.js";
+import { checkWorker, failuresSinceLastUser, hireSubagent, listTeam, recordDelegation, runWorker, spawnWorker, stopWorker, workerFollowupCue } from "./subagents.js";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -86,6 +86,10 @@ export type TurnOptions = {
   // kind=routine the same way. Absent = runTurn claims its own turn run.
   existingRunId?: string;
   kind?: "turn" | "routine";
+  // Why: a worker failure is not a person speaking. The cue is shown only to
+  // the model, and speakerId forces the parent who spawned the worker.
+  cue?: string;
+  speakerId?: string;
   // Why: a second turn on a busy room waits for the running run to land
   // (preserves old lock-queue behavior). POST passes 0 for fail-fast queueing.
   acquireTimeoutMs?: number;
@@ -158,19 +162,21 @@ export async function runTurn(
   let stamp = Date.now();
   const nextTime = () => new Date(stamp++);
   const incoming = typeof body === "string" ? { text: body, blocks: null as null, replyTo: null as null } : body;
-  if (options?.alreadySavedUserMessage) {
-    // Durable-first path: tag the pre-saved row with this run for traceability.
-    await db
-      .update(messages)
-      .set({ runId })
-      .where(and(eq(messages.id, options.alreadySavedUserMessage.id), eq(messages.accountId, accountId)));
-  } else {
-    await saveUserMessage(db, accountId, conversationId, {
-      text: incoming.text,
-      blocks: incoming.blocks,
-      replyTo: incoming.replyTo,
-      runId,
-    });
+  if (!options?.cue) {
+    if (options?.alreadySavedUserMessage) {
+      // Durable-first path: tag the pre-saved row with this run for traceability.
+      await db
+        .update(messages)
+        .set({ runId })
+        .where(and(eq(messages.id, options.alreadySavedUserMessage.id), eq(messages.accountId, accountId)));
+    } else {
+      await saveUserMessage(db, accountId, conversationId, {
+        text: incoming.text,
+        blocks: incoming.blocks,
+        replyTo: incoming.replyTo,
+        runId,
+      });
+    }
   }
 
   // Heartbeat while the model works so the scheduler never mistakes a live
@@ -183,7 +189,7 @@ export async function runTurn(
   const saved: (typeof messages.$inferSelect)[] = [];
   try {
     const spoken = new Set<string>();
-    const queue = speakers(incoming.text, memberRows, room.ownerAgentId);
+    const queue = options?.speakerId ? [options.speakerId] : speakers(incoming.text, memberRows, room.ownerAgentId);
     while (queue.length > 0) {
       const agentId = queue.shift();
       if (!agentId || spoken.has(agentId)) {
@@ -204,6 +210,7 @@ export async function runTurn(
         saved,
         queue,
         spoken,
+        cue: options?.cue,
       });
       await heartbeatRun(db, runId).catch(() => {});
     }
@@ -219,6 +226,39 @@ export async function runTurn(
   } finally {
     clearInterval(beat);
   }
+}
+
+/**
+ * Wakes the parent after a worker fails or returns nothing.
+ * Why: the parent turn has already ended, so nobody is watching the
+ * delegation. This hidden cue tells that same agent to rewrite the task
+ * once, or to tell the person if the retry also failed. Not saved as a
+ * user message.
+ * Input: db, room/parent ids, the failed settlement. Output: nothing.
+ */
+async function resumeParentAfterWorker(
+  db: Db,
+  input: {
+    accountId: string;
+    conversationId: string;
+    parentAgentId: string;
+    skillsRoot?: string;
+    settled: { workerId: string; task: string; result: string };
+  },
+): Promise<void> {
+  const failures = await failuresSinceLastUser(db, input.accountId, input.conversationId, input.parentAgentId);
+  const cue = workerFollowupCue({
+    workerId: input.settled.workerId,
+    task: input.settled.task,
+    result: input.settled.result,
+    retry: failures <= 1,
+  });
+  await runTurn(db, input.accountId, input.conversationId, cue, undefined, input.skillsRoot, {
+    cue,
+    speakerId: input.parentAgentId,
+    acquireTimeoutMs: 120_000,
+    onEvent: (event) => publish(input.accountId, input.conversationId, event),
+  });
 }
 
 /**
@@ -245,9 +285,10 @@ async function speakOnce(
     saved: (typeof messages.$inferSelect)[];
     queue: (string | undefined)[];
     spoken: Set<string>;
+    cue?: string;
   },
 ): Promise<void> {
-  const { accountId, conversationId, agentId, memberRows, room, skillsRoot, generate, nextTime, runId, emit, saved, queue, spoken } = input;
+  const { accountId, conversationId, agentId, memberRows, room, skillsRoot, generate, nextTime, runId, emit, saved, queue, spoken, cue } = input;
   let [agent] = await db.select().from(agents).where(and(eq(agents.id, agentId), eq(agents.accountId, accountId)));
   if (!agent) {
     throw new Error("Agent not found");
@@ -306,6 +347,7 @@ async function speakOnce(
   // plus text fallback in the tail, so the agent sees attachments.
   const emittedMessages: (typeof messages.$inferSelect)[] = [];
   const modelMessages = toModelMessages(history);
+  if (cue) modelMessages.push({ role: "user", content: cue });
   const useStub = typeof generate === "function";
   const generateWithStore = useStub
     ? () =>
@@ -366,7 +408,13 @@ async function speakOnce(
         messageIds: result.proposal.messageIds,
       });
     }
-    const chainSource = emittedMessages.map((m) => m.body).join("\n");
+    // Delegated bubbles (viaAgentId set) never chain-wake: the child speaks
+    // via the parent by design, and its prose "@Name ..." is not a handoff.
+    // Only the speaker's own voice can hand off with a leading @Name.
+    const chainSource = emittedMessages
+      .filter((m) => !m.viaAgentId)
+      .map((m) => m.body)
+      .join("\n");
     for (const next of mentioned(chainSource, memberRows, true)) {
       if (!spoken.has(next)) queue.push(next);
     }
@@ -448,7 +496,7 @@ function linuxTools(db: Db, accountId: string, profile: string) {
   const shared = accountShared(accountId);
   return {
     read: tool({
-      description: `Read a file in ${home} or ${shared}.`,
+      description: `Read one file in ${home} or ${shared}. Use for a single known path. If you are the agent in the chat, hand a reading job to spawn_worker instead.`,
       inputSchema: jsonSchema<{ path: string }>({
         type: "object",
         properties: { path: { type: "string" } },
@@ -457,7 +505,7 @@ function linuxTools(db: Db, accountId: string, profile: string) {
       execute: async ({ path }) => readFile(accountId, profile, path),
     }),
     write: tool({
-      description: `Write a file in ${home} or ${shared}.`,
+      description: `Write one file in ${home} or ${shared}. Use when you already know the path and the body. Project edits belong on a worker via spawn_worker.`,
       inputSchema: jsonSchema<{ path: string; body: string }>({
         type: "object",
         properties: { path: { type: "string" }, body: { type: "string" } },
@@ -469,7 +517,7 @@ function linuxTools(db: Db, accountId: string, profile: string) {
       },
     }),
     bash: tool({
-      description: "Run a shell command on your Linux computer. DISPLAY is already set to your assigned desktop (1280x800), so chromium and xterm open on the screen the person watches. Never start Xvfb/x11vnc or override DISPLAY.",
+      description: "Run one shell command on your Linux computer. DISPLAY is already your 1280x800 desktop, so chromium and xterm open on the screen the person watches. Never start Xvfb/x11vnc or override DISPLAY. If you are the agent in the chat, hand real work to spawn_worker; use bash only for one quick command, or when you are the worker doing the task.",
       inputSchema: jsonSchema<{ command: string }>({
         type: "object",
         properties: { command: { type: "string" } },
@@ -478,12 +526,12 @@ function linuxTools(db: Db, accountId: string, profile: string) {
       execute: async ({ command }) => bash(accountId, profile, command),
     }),
     computer_screenshot: tool({
-      description: "Take a PNG screenshot of YOUR assigned desktop (1280x800) for grounding. Always call before clicking. Returns display, size, and pngBase64.",
+      description: "PNG of your assigned 1280x800 desktop. Call before any click or type so coordinates match the screen. A desktop task belongs on a worker via spawn_worker so the chat stays free.",
       inputSchema: jsonSchema<Record<string, never>>({ type: "object", properties: {} }),
       execute: async () => screenshotImage(accountId, profile),
     }),
     computer_mouse: tool({
-      description: "Move the pointer to x/y (0-1279, 0-799) on your desktop. Ground from the latest screenshot first.",
+      description: "Move the pointer to x/y (0-1279, 0-799) without clicking. Screenshot first. Prefer computer_click when you mean to click.",
       inputSchema: jsonSchema<{ x: number; y: number }>({
         type: "object",
         properties: { x: { type: "number" }, y: { type: "number" } },
@@ -492,7 +540,7 @@ function linuxTools(db: Db, accountId: string, profile: string) {
       execute: async ({ x, y }) => moveMouse(accountId, profile, x, y),
     }),
     computer_click: tool({
-      description: "Atomically move and left-click at x/y on your desktop. Prefer over mouse+separate click so grounding cannot race.",
+      description: "Move and left-click at x/y on your desktop in one step. Screenshot first. Prefer this over mouse plus a separate click.",
       inputSchema: jsonSchema<{ x: number; y: number }>({
         type: "object",
         properties: { x: { type: "number" }, y: { type: "number" } },
@@ -501,7 +549,7 @@ function linuxTools(db: Db, accountId: string, profile: string) {
       execute: async ({ x, y }) => clickAt(accountId, profile, x, y),
     }),
     computer_type: tool({
-      description: "Type 1-4000 chars on your desktop. Focus the field with a click first.",
+      description: "Type 1-4000 characters into the focused desktop field. Click that field first. Driving a whole desktop session belongs on a worker.",
       inputSchema: jsonSchema<{ text: string }>({
         type: "object",
         properties: { text: { type: "string" } },
@@ -510,7 +558,7 @@ function linuxTools(db: Db, accountId: string, profile: string) {
       execute: async ({ text }) => typeText(accountId, profile, text),
     }),
     computer_key: tool({
-      description: "Press one key combo: Return, Escape, Tab, arrows, F-keys, or ctrl/alt/shift+x.",
+      description: "Press one key combo: Return, Escape, Tab, arrows, F-keys, or ctrl/alt/shift+x. Use after the right control is focused.",
       inputSchema: jsonSchema<{ key: string }>({
         type: "object",
         properties: { key: { type: "string" } },
@@ -520,7 +568,7 @@ function linuxTools(db: Db, accountId: string, profile: string) {
     }),
     web_fetch: tool({
       description:
-        "Read one public web page as text (docs, skill directories, articles). JS-heavy pages render automatically. Returns title, text, and outlinks to follow. Never send the user to their own browser for something you can read yourself.",
+        "Read one public page as text when you already have the URL. JS-heavy pages render automatically. Returns title, text, and outlinks. Never send the person to their browser for a page you can open. A research job belongs on a worker via spawn_worker.",
       inputSchema: jsonSchema<{ url: string }>({
         type: "object",
         properties: { url: { type: "string", description: "Full https:// address." } },
@@ -539,7 +587,7 @@ function linuxTools(db: Db, accountId: string, profile: string) {
     }),
     web_search: tool({
       description:
-        "Search the web first, then web_fetch the promising hits. Keyed providers (Brave, Exa) when configured, keyless DuckDuckGo otherwise. Returns title/url/snippet triples, not page text.",
+        "Search the public web. Returns title, URL, and snippet, not page text. Use to pick links, then web_fetch the ones worth reading. Broad research belongs on a worker via spawn_worker.",
       inputSchema: jsonSchema<{ query: string; numResults?: number }>({
         type: "object",
         properties: { query: { type: "string" }, numResults: { type: "number" } },
@@ -559,7 +607,7 @@ function linuxTools(db: Db, accountId: string, profile: string) {
       },
     }),
     glob: tool({
-      description: "List files matching a glob (e.g. **/*.ts) under your home or /shared. Capped at 100 paths.",
+      description: "List files by name pattern (for example **/*.ts) under your home or /shared, up to 100 paths. Use to find a file before read. A wide search belongs on a worker.",
       inputSchema: jsonSchema<{ pattern: string; path?: string }>({
         type: "object",
         properties: { pattern: { type: "string" }, path: { type: "string" } },
@@ -568,7 +616,7 @@ function linuxTools(db: Db, accountId: string, profile: string) {
       execute: async ({ pattern, path }) => globFiles(accountId, profile, pattern, path),
     }),
     grep: tool({
-      description: "Search file contents for a regex under your home or /shared. Returns file:line hits, capped at 100.",
+      description: "Search file contents for a pattern under your home or /shared. Returns file:line hits, up to 100. Use when you know the text but not the file. A broad hunt belongs on a worker.",
       inputSchema: jsonSchema<{ pattern: string; path?: string; include?: string }>({
         type: "object",
         properties: { pattern: { type: "string" }, path: { type: "string" }, include: { type: "string" } },
@@ -868,7 +916,7 @@ function makeSendMessageTool(
 ) {
   return tool({
     description:
-      "FIRST ACTION ON EVERY USER TURN: call send_message before any other tool — a one-line acknowledgement naming your concrete first step. Then do the work with other tools, posting progress, and close with a final send_message. Plain assistant text is invisible: nothing reaches the user until it is inside send_message.",
+      "The only text the person sees. Call this first on every user turn: a direct answer, or a one-line ack that names the worker you are about to start. Call it again with the process id, and again when check_worker has a result to deliver. Plain assistant text is invisible.",
     inputSchema: jsonSchema<{ blocks: unknown; replyTo?: string | null }>({
       type: "object",
       properties: { blocks: { type: "array" }, replyTo: { type: ["string", "null"] } },
@@ -938,7 +986,7 @@ async function replyWithModelTx(
       emit,
     }),
     react_to_message: tool({
-      description: "Single emoji tapback when a reaction is the whole response. Rare; mirrors the user.",
+      description: "One emoji tapback when a reaction is the whole reply and a message would be too much. Use instead of send_message only in that case. Rare, and mirror the person.",
       inputSchema: jsonSchema<{ messageId: string; emoji: string }>({
         type: "object",
         properties: { messageId: { type: "string" }, emoji: { type: "string" } },
@@ -953,7 +1001,7 @@ async function replyWithModelTx(
     }),
     notify_user: tool({
       description:
-        "Ping the person NOW mid-turn — approval needed, blocked on them (CAPTCHA, login, decision), or an urgent find. Room open gives an in-app banner; closed gives a push per their notify setting. One active ping per run: repeat calls update it instead of stacking. Use action-needed when the run cannot proceed without them.",
+        "Ping the person when you are blocked on them (approval, login, a decision) or something is urgent. Not for ordinary progress — that is send_message. An open room shows a banner; a closed app may push. One active ping per run: calling again updates it. Use action-needed only when you cannot continue without them.",
       inputSchema: jsonSchema<{ title: string; body: string; urgency?: string }>({
         type: "object",
         properties: { title: { type: "string" }, body: { type: "string" }, urgency: { type: "string" } },
@@ -975,7 +1023,7 @@ async function replyWithModelTx(
       },
     }),
     read_history: tool({
-      description: "Read one cited message by id, or search a slice (max 5). Never dumps the transcript.",
+      description: "Read one cited message by id, or search a short slice (max 5). Use when a fact points at a specific message. Does not dump the transcript.",
       inputSchema: jsonSchema<{ messageId?: string; search?: string }>({
         type: "object",
         properties: { messageId: { type: "string" }, search: { type: "string" } },
@@ -988,7 +1036,7 @@ async function replyWithModelTx(
       },
     }),
     read_skill: tool({
-      description: "Load one skill body by name. Catalog names alone are in the prefix.",
+      description: "Load one skill's full instructions by name. Use only when this turn needs that procedure. Names in the prompt are the catalog, not the steps.",
       inputSchema: jsonSchema<{ name: string }>({ type: "object", properties: { name: { type: "string" } }, required: ["name"] }),
       execute: async ({ name }) => {
         if (!input.skillsRoot) return "No skills directory configured.";
@@ -1000,7 +1048,7 @@ async function replyWithModelTx(
       },
     }),
     hire_subagent: tool({
-      description: "Create a child specialist on your team in this room (max 10, depth 2). Announces via agent-card.",
+      description: "Create a lasting specialist on your team in this group (max 10, depth 2) and announce them with an agent card. Use when you need a named teammate who will stay. For one task while you stay in the chat, use spawn_worker. Refuses a private 1:1.",
       inputSchema: jsonSchema<{ label: string; description: string; provider?: string; modelId?: string }>({
         type: "object",
         properties: {
@@ -1037,7 +1085,7 @@ async function replyWithModelTx(
     }),
     delegate: tool({
       description:
-        "Hand a scoped task to a team agent IN THIS ROOM and wait for their answer. They run now — their bubbles stream attributed via you — and you get back what they did. Use for visible handoffs, not background work (that is spawn_worker).",
+        "Hand a task to a teammate already in this room and wait until they answer. Their bubbles show as them, via you. Use only when that reply should appear in the room and you can wait. To stay available, use spawn_worker instead.",
       inputSchema: jsonSchema<{ agentId: string; task: string }>({
         type: "object",
         properties: { agentId: { type: "string" }, task: { type: "string" } },
@@ -1081,28 +1129,36 @@ async function replyWithModelTx(
       },
     }),
     list_team: tool({
-      description: "List your team agents to pick a delegate.",
+      description: "List your team agents (id, name, label). Use before delegate so you choose someone already on the team.",
       inputSchema: jsonSchema<Record<string, never>>({ type: "object", properties: {} }),
       execute: async () => listTeam(store, accountId, agentId),
     }),
     todo_write: tool({
       description:
-        "Replace your worklist for this job (opencode-style): break multi-step work into small todos with pending/in_progress/completed states, and keep them current as you go. Survives restarts and compaction — read it back with todo_list after any interruption.",
+        "Replace your worklist for this job with small items in pending, in_progress, or completed. Use on multi-step work so a later turn, a routine wake, or a new worker can resume it. Read it back with todo_list.",
       inputSchema: jsonSchema<{ todos: { content: string; status: string }[] }>({
         type: "object",
         properties: { todos: { type: "array" } },
         required: ["todos"],
       }),
-      execute: async ({ todos }) => todoWrite(store, accountId, agentId, todos),
+      execute: async ({ todos }) =>
+        todoWrite(
+          store,
+          accountId,
+          agentId,
+          // Validated + narrowed by todoWrite's Zod schema; the loose tool
+          // schema keeps the model from over-constraining status strings.
+          todos as { content: string; status: "pending" | "in_progress" | "completed" }[],
+        ),
     }),
     todo_list: tool({
-      description: "Read your current worklist. Use after interruptions, routine wakes, or worker revival to re-orient.",
+      description: "Read your current worklist. Use after a restart, a routine wake, or when continuing a job a worker started.",
       inputSchema: jsonSchema<Record<string, never>>({ type: "object", properties: {} }),
       execute: async () => todoList(store, accountId, agentId),
     }),
     create_group: tool({
       description:
-        "Start a NEW group room with you as owner plus the listed agents — the only way to build a team thread. Private 1:1 chats can never gain members, so this is where teamwork happens. Announce the group with send_message after.",
+        "Open a new group room you own, with the listed agents. Use when teamwork must be visible to the person. Private 1:1 chats cannot gain members. Tell the person about the group with send_message after.",
       inputSchema: jsonSchema<{ title: string; memberIds: string[] }>({
         type: "object",
         properties: { title: { type: "string" }, memberIds: { type: "array" } },
@@ -1121,14 +1177,27 @@ async function replyWithModelTx(
     }),
     spawn_worker: tool({
       description:
-        "Start private background help and keep chatting: a hidden worker (never a room member, never visible) does the long task while you stay responsive. Returns a process id — hand it to the user, then check_worker for the result and summarize it. Use for anything slow instead of blocking the chat.",
-      inputSchema: jsonSchema<{ label: string; description: string; task: string }>({
+        "Default for any real task: files, shell, desktop, web, research, or more than one quick step. Returns a process id immediately so you stay in the chat. The task must name the method and the exact text the worker returns. A page or a search uses web_search and web_fetch, never Chromium, screenshots, or clicks. Desktop tools only when the person asked to see or drive the screen. Tell the person the id in send_message. If check_worker is failed or empty, spawn exactly one corrected task. A second failure: tell the person and stop.",
+      inputSchema: jsonSchema<{ label: string; description: string; task: string; provider?: string; modelId?: string }>({
         type: "object",
-        properties: { label: { type: "string" }, description: { type: "string" }, task: { type: "string" } },
+        properties: {
+          label: { type: "string" },
+          description: { type: "string" },
+          task: { type: "string" },
+          provider: { type: "string" },
+          modelId: { type: "string" },
+        },
         required: ["label", "description", "task"],
       }),
-      execute: async ({ label, description, task }) => {
-        const parsed = spawnWorkerInputSchema.parse({ label, description, task });
+      execute: async ({ label, description, task, provider, modelId }) => {
+        const failed = await failuresSinceLastUser(store, accountId, conversationId, agentId);
+        if (failed >= 2) {
+          return {
+            error:
+              "Two workers already failed since the person's last message. Do not start another. send_message what failed, in plain words, then stop.",
+          };
+        }
+        const parsed = spawnWorkerInputSchema.parse({ label, description, task, provider, modelId });
         const spawned = await spawnWorker(store, {
           accountId,
           conversationId,
@@ -1136,6 +1205,8 @@ async function replyWithModelTx(
           label: parsed.label,
           description: parsed.description,
           task: parsed.task,
+          provider: parsed.provider,
+          modelId: parsed.modelId,
         });
         void runWorker(db, {
           accountId,
@@ -1145,12 +1216,23 @@ async function replyWithModelTx(
           delegationId: spawned.delegationId,
           task: parsed.task,
           skillsRoot: input.skillsRoot,
+          onSettled: (settled) => {
+            if (settled.status !== "failed") return;
+            void resumeParentAfterWorker(db, {
+              accountId,
+              conversationId,
+              parentAgentId: agentId,
+              skillsRoot: input.skillsRoot,
+              settled,
+            }).catch(() => {});
+          },
         });
         return spawned;
       },
     }),
     check_worker: tool({
-      description: "Check a background worker by its process id: running (keep chatting), done (summarize its result), or failed (explain and take over or retry).",
+      description:
+        "Read a worker by the process id from spawn_worker. running: keep chatting. done: summarize the result in send_message, and do not invent anything it did not return. failed or empty: send one short line and spawn_worker once with a corrected task. If a retry already failed, tell the person and stop.",
       inputSchema: jsonSchema<{ workerId: string }>({
         type: "object",
         properties: { workerId: { type: "string" } },
@@ -1159,7 +1241,7 @@ async function replyWithModelTx(
       execute: async ({ workerId }) => checkWorker(store, accountId, workerId),
     }),
     stop_worker: tool({
-      description: "Abort a background worker that is wedged or obsolete. Stopped work reads as failed with the reason.",
+      description: "Stop a worker that is wedged, wrong, or no longer needed. Pass the process id from spawn_worker. Stopped work reads as failed with the reason.",
       inputSchema: jsonSchema<{ workerId: string }>({
         type: "object",
         properties: { workerId: { type: "string" } },
@@ -1169,7 +1251,7 @@ async function replyWithModelTx(
     }),
     create_routine: tool({
       description:
-        "Schedule your OWN recurring job ('remind me every day at 09:00 Europe/Berlin'). Cron shapes: '*/N * * * *', 'M H * * *' daily, 'M H * * D' weekly. Runs in this room through the normal turn path. Only ever creates for yourself.",
+        "Schedule your own recurring job in this room, such as every day at 09:00 Europe/Berlin. Shapes: */N * * * * for an interval, M H * * * daily, M H * * D weekly, with an IANA timezone. It does not run the task now. Only creates a routine for yourself.",
       inputSchema: jsonSchema<{ body: string; cron: string; timezone?: string }>({
         type: "object",
         properties: { body: { type: "string" }, cron: { type: "string" }, timezone: { type: "string" } },
@@ -1188,7 +1270,7 @@ async function replyWithModelTx(
       },
     }),
     update_routine: tool({
-      description: "Change your own routine: new instructions, schedule, timezone, or paused true/false. Only your routines.",
+      description: "Change one of your own routines: instructions, schedule, timezone, or paused true/false. Use list_routines if you need the id. Pausing stops future runs. Cannot change anyone else's routine.",
       inputSchema: jsonSchema<{ routineId: string; body?: string; cron?: string; timezone?: string; paused?: boolean }>({
         type: "object",
         properties: {
@@ -1207,7 +1289,7 @@ async function replyWithModelTx(
       },
     }),
     delete_routine: tool({
-      description: "Delete your own routine and its pending jobs. Only your routines.",
+      description: "Delete one of your own routines and its pending runs. Use list_routines if you need the id. Cannot delete anyone else's routine.",
       inputSchema: jsonSchema<{ routineId: string }>({
         type: "object",
         properties: { routineId: { type: "string" } },
@@ -1221,7 +1303,7 @@ async function replyWithModelTx(
       },
     }),
     list_routines: tool({
-      description: "List your own routines with ids, schedules, pause state, and next run.",
+      description: "List your own routines with ids, schedules, pause state, and next run. Use before update_routine or delete_routine.",
       inputSchema: jsonSchema<Record<string, never>>({ type: "object", properties: {} }),
       execute: async () => listOwnRoutines(store, accountId, agentId),
     }),

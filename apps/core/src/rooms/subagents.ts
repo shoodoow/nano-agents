@@ -188,9 +188,9 @@ export const WORKER_STALE_MS = 4 * 60 * 60 * 1000;
 // chatter — no user contact, final text is the deliverable the parent
 // summarizes. Kept short so it costs little prompt budget per spawn.
 const WORKER_PREAMBLE = [
-  "You are a background worker: investigate and produce, never converse.",
-  "You have no user contact — no send_message, no reactions, no pings.",
-  "Do the scoped task with your tools, then end with the result as plain final text.",
+  "You are a background worker: you do the task, the chatting agent stays with the person.",
+  "You have no user contact — no send_message, no reactions, no pings, no further workers.",
+  "Use your tools to finish the scoped task, then end with the result as plain final text.",
   "Keep it tight: findings and files first, method in one line if it matters.",
 ].join(" ");
 
@@ -333,6 +333,59 @@ export async function reclaimStaleDelegations(store: Store, staleMs = WORKER_STA
 
 export type WorkerGenerate = () => Promise<string>;
 
+export type WorkerSettled = { workerId: string; task: string; result: string; status: "done" | "failed" };
+
+/**
+ * Counts this parent's failed workers since the person's last message.
+ * Why: spawn_worker retries must stop after 2 failures — otherwise the model
+ * loops workers forever on a wedged task. Scoped to parent+room so one
+ * agent's failures never block another.
+ * Input: store, account/room/parent ids. Output: failed delegation count.
+ */
+export async function failuresSinceLastUser(
+  store: Store,
+  accountId: string,
+  conversationId: string,
+  parentAgentId: string,
+): Promise<number> {
+  // Find the newest human message among the recent slice (agentId null = human).
+  // Full-table scan avoided: 50 latest rows is enough — a failure older than
+  // that predates any recent human turn and should not block new work.
+  const full = await store
+    .select({ agentId: messages.agentId, createdAt: messages.createdAt })
+    .from(messages)
+    .where(and(eq(messages.conversationId, conversationId), eq(messages.accountId, accountId)))
+    .orderBy(desc(messages.createdAt))
+    .limit(50);
+  const lastHuman = full.find((row) => row.agentId === null)?.createdAt ?? null;
+  const failed = await store
+    .select({ createdAt: delegations.createdAt })
+    .from(delegations)
+    .where(
+      and(
+        eq(delegations.accountId, accountId),
+        eq(delegations.conversationId, conversationId),
+        eq(delegations.parentAgentId, parentAgentId),
+        eq(delegations.status, "failed"),
+      ),
+    );
+  if (!lastHuman) return failed.length;
+  return failed.filter((row) => row.createdAt && row.createdAt.getTime() > lastHuman.getTime()).length;
+}
+
+/**
+ * Builds the hidden cue that rewakes the parent after a worker settles failed.
+ * Why: the parent turn already ended, so nobody watches the delegation. Retry
+ * once with a rewritten task; after 2 failures tell the person and stop.
+ * Input: worker/task/result + retry flag. Output: cue string (model-only, never saved as user text).
+ */
+export function workerFollowupCue(input: { workerId: string; task: string; result: string; retry: boolean }): string {
+  if (input.retry) {
+    return `Worker ${input.workerId} failed its task "${input.task.slice(0, 500)}" with: ${input.result.slice(0, 1000)}. Rewrite the task once with narrower scope and spawn_worker again. If that retry also fails, tell the person in plain words and stop.`;
+  }
+  return `Worker ${input.workerId} failed again for "${input.task.slice(0, 500)}" with: ${input.result.slice(0, 1000)}. Tell the person in plain words what failed and stop. Do not spawn another worker.`;
+}
+
 /**
  * Runs one worker to completion in the background (never throws).
  * Why: detached from any HTTP request or turn — the parent got its process
@@ -355,6 +408,7 @@ export async function runWorker(
     task: string;
     skillsRoot?: string;
     generate?: WorkerGenerate;
+    onSettled?: (settled: WorkerSettled) => void;
   },
 ): Promise<void> {
   const finish = async (status: "done" | "failed", result: string): Promise<void> => {
@@ -363,6 +417,11 @@ export async function runWorker(
       .set({ status, result: result.slice(0, WORKER_RESULT_MAX) })
       .where(eq(delegations.id, input.delegationId))
       .catch(() => {});
+    try {
+      input.onSettled?.({ workerId: input.childId, task: input.task, result, status });
+    } catch {
+      // Listener is best-effort (scheduler re-wake); never fail the worker on it.
+    }
   };
   try {
     const [child] = await db
@@ -423,9 +482,10 @@ export async function runWorker(
  * Output: AI SDK tool map.
  */
 function workerTools(db: ReturnType<typeof getDb>, accountId: string, conversationId: string, profile: string | null, skillsRoot?: string) {
-  const base: Record<string, ReturnType<typeof tool>> = {
+  // Loose record: AI SDK tool generics vary per inputSchema; callers only need a tool map.
+  const base: Record<string, any> = {
     read_history: tool({
-      description: "Read one cited message by id, or search a slice (max 5).",
+      description: "Read one cited message by id, or search a short slice (max 5), when the task depends on something said in the room.",
       inputSchema: jsonSchema<{ messageId?: string; search?: string }>({
         type: "object",
         properties: { messageId: { type: "string" }, search: { type: "string" } },
@@ -438,7 +498,7 @@ function workerTools(db: ReturnType<typeof getDb>, accountId: string, conversati
       },
     }),
     read_skill: tool({
-      description: "Load one skill body by name.",
+      description: "Load one skill's steps by name when the task needs that procedure. Skip it when the task is already clear.",
       inputSchema: jsonSchema<{ name: string }>({ type: "object", properties: { name: { type: "string" } }, required: ["name"] }),
       execute: async ({ name }) => {
         if (!skillsRoot) return "No skills directory configured.";
@@ -454,7 +514,7 @@ function workerTools(db: ReturnType<typeof getDb>, accountId: string, conversati
   return {
     ...base,
     web_fetch: tool({
-      description: "Read one public web page as text.",
+      description: "Read one public page as text when the task gives you a URL or you already chose a link. This is how you open docs instead of guessing.",
       inputSchema: jsonSchema<{ url: string }>({
         type: "object",
         properties: { url: { type: "string" } },
@@ -468,12 +528,12 @@ function workerTools(db: ReturnType<typeof getDb>, accountId: string, conversati
       },
     }),
     read: tool({
-      description: "Read a file on your computer.",
+      description: "Read one file on your computer. Use when the task names a path or you found it with the shell.",
       inputSchema: jsonSchema<{ path: string }>({ type: "object", properties: { path: { type: "string" } }, required: ["path"] }),
       execute: async ({ path }) => readFile(accountId, profile, path),
     }),
     write: tool({
-      description: "Write a file on your computer.",
+      description: "Write one file on your computer. Use when the task asks for a file or an edit you have already decided.",
       inputSchema: jsonSchema<{ path: string; body: string }>({
         type: "object",
         properties: { path: { type: "string" }, body: { type: "string" } },
@@ -485,17 +545,17 @@ function workerTools(db: ReturnType<typeof getDb>, accountId: string, conversati
       },
     }),
     bash: tool({
-      description: "Run a shell command on your computer.",
+      description: "Run a shell command on your computer to carry out the task. DISPLAY is already set. Do not start Xvfb, x11vnc, or override DISPLAY.",
       inputSchema: jsonSchema<{ command: string }>({ type: "object", properties: { command: { type: "string" } }, required: ["command"] }),
       execute: async ({ command }) => bash(accountId, profile, command),
     }),
     computer_screenshot: tool({
-      description: "Take a PNG screenshot of your desktop.",
+      description: "PNG of your desktop. Take one before any click or typing so you know what is on screen.",
       inputSchema: jsonSchema<Record<string, never>>({ type: "object", properties: {} }),
       execute: async () => screenshotImage(accountId, profile),
     }),
     computer_mouse: tool({
-      description: "Move the pointer to x/y on your desktop.",
+      description: "Move the pointer to x/y without clicking. Screenshot first. Prefer computer_click when you mean to click.",
       inputSchema: jsonSchema<{ x: number; y: number }>({
         type: "object",
         properties: { x: { type: "number" }, y: { type: "number" } },
@@ -504,7 +564,7 @@ function workerTools(db: ReturnType<typeof getDb>, accountId: string, conversati
       execute: async ({ x, y }) => moveMouse(accountId, profile, x, y),
     }),
     computer_click: tool({
-      description: "Move and left-click at x/y on your desktop.",
+      description: "Move and left-click at x/y in one step. Screenshot first so the point matches the screen.",
       inputSchema: jsonSchema<{ x: number; y: number }>({
         type: "object",
         properties: { x: { type: "number" }, y: { type: "number" } },
@@ -513,12 +573,12 @@ function workerTools(db: ReturnType<typeof getDb>, accountId: string, conversati
       execute: async ({ x, y }) => clickAt(accountId, profile, x, y),
     }),
     computer_type: tool({
-      description: "Type text on your desktop.",
+      description: "Type text into the focused desktop field. Click that field first.",
       inputSchema: jsonSchema<{ text: string }>({ type: "object", properties: { text: { type: "string" } }, required: ["text"] }),
       execute: async ({ text }) => typeText(accountId, profile, text),
     }),
     computer_key: tool({
-      description: "Press one key combo.",
+      description: "Press one key combo (Return, Escape, Tab, arrows, or ctrl/alt/shift+x) after the right control is focused.",
       inputSchema: jsonSchema<{ key: string }>({ type: "object", properties: { key: { type: "string" } }, required: ["key"] }),
       execute: async ({ key }) => pressKeys(accountId, profile, key),
     }),
