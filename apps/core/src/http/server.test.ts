@@ -56,7 +56,8 @@ describe("server", () => {
       body: JSON.stringify({
         name: "Ada",
         label: "Books",
-        description: "Keep the ledger.",
+        role: "Teammate",
+        jobDescription: "Keep the ledger.",
         provider: "openai",
         modelId: "gpt-5",
       }),
@@ -312,7 +313,8 @@ function agent(name: string) {
   return {
     name,
     label: name,
-    description: `${name} works here.`,
+    role: "Teammate",
+    jobDescription: `${name} works here.`,
     provider: "openai",
     modelId: "gpt-5",
   };

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { buildInstructions } from "../prompt/build-instructions.js";
+import { buildAgentIdentity, buildInstructions, type AgentIdentity } from "../prompt/build-instructions.js";
 
 const keyOrder = ["decisions", "actions", "open", "entities", "corrections", "topics"];
 
@@ -18,15 +18,18 @@ export type BuiltContext = {
 
 /**
  * Splits one turn into a cacheable prefix and an append-only tail.
- * Input: the account, agent, prompt version, description, summary items,
- * recent messages, and the optional room situation (group name, members, self).
- * Output: the standing prompt, the sorted tool names, and the skill catalog as the prefix. The room line, summary, and messages are the tail. Anthropic cache control is on the prefix only. The OpenAI cache key is the account, the agent, and the prompt version.
+ * Why: the prefix (system + identity + tools + catalog) is byte-stable for
+ * provider caching; the tail (room line, summary, messages) changes every
+ * turn and lives after the breakpoint. Identity composes in fixed order.
+ * Input: account/agent ids, prompt version, identity, summary items, recent
+ * messages, optional tools/catalog/room.
+ * Output: prefix + tail plus provider cache hints.
  */
 export function buildContext(input: {
   accountId: string;
   agentId: string;
   promptVersion: number;
-  description: string;
+  identity: AgentIdentity;
   summary: { key: string; body: string }[];
   messages: { body: string }[];
   tools?: string[];
@@ -37,7 +40,7 @@ export function buildContext(input: {
     ...(input.tools && input.tools.length > 0 ? [[...input.tools].sort().join("\n")] : []),
     ...(input.catalog ? [input.catalog] : []),
   ];
-  const prefix = [buildInstructions(input.description), ...extras].join("\n\n");
+  const prefix = [buildInstructions(input.identity), ...extras].join("\n\n");
   const summaryLines = [...input.summary].sort(
     (left, right) => keyOrder.indexOf(left.key) - keyOrder.indexOf(right.key) || left.body.localeCompare(right.body),
   );
@@ -58,6 +61,26 @@ export function buildContext(input: {
       promptCacheRetention: "24h",
     },
   };
+}
+
+/**
+ * Renders the composed identity block for non-turn paths (workers, delegates).
+ * Why: single choke point so background prompts match chat prompts exactly.
+ * Input: an agent row with role/personality/jobDescription.
+ * Output: the identity block text.
+ */
+export function identityBlock(agent: {
+  name: string;
+  role: string;
+  personality: string;
+  jobDescription: string;
+}): string {
+  return buildAgentIdentity({
+    name: agent.name,
+    role: agent.role,
+    personality: agent.personality ?? "",
+    job: agent.jobDescription,
+  });
 }
 
 /**

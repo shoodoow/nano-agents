@@ -16,7 +16,11 @@ export const agents = pgTable(
       .references(() => accounts.id),
     name: text("name").notNull(),
     label: text("label").notNull(),
-    description: text("description").notNull(),
+    // Agent identity (Phase 17): role + personality + job_description.
+    // The old freeform `description` blob is gone — no backward compatibility.
+    role: text("role").notNull(),
+    personality: text("personality").notNull().default(""),
+    jobDescription: text("job_description").notNull(),
     provider: text("provider").notNull(),
     modelId: text("model_id").notNull(),
     linuxProfile: text("linux_profile"),
@@ -145,6 +149,10 @@ export const delegations = pgTable(
     // Worker result (Phase 15): final text the background worker produced
     // (truncated), or the failure reason. check_worker reads this.
     result: text("result"),
+    // Delivery guard (Phase 19): auto-delivery flips this false->true exactly
+    // once, so a worker success is posted to the room one time even if the
+    // scheduler and the spawn call both race to deliver it.
+    delivered: boolean("delivered").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [check("delegations_status_check", sql`${table.status} in ('running', 'done', 'failed')`)],

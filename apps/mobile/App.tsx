@@ -250,16 +250,18 @@ export default function App() {
 
   /**
    * Hires an agent and opens a direct chat on the signed-in account.
-   * Input: the agent name and description from the new-room sheet.
+   * Why: role + job ship with the hire so the agent starts with identity, not a blob.
+   * Input: the agent name, role, and job from the new-room sheet.
    * Output: nothing. The chat screen opens for that agent.
    */
   async function createChat(
     name: string,
-    description: string,
+    role: string,
+    jobDescription: string,
     provider: ProviderSetting["provider"],
     modelId: string,
   ): Promise<void> {
-    const hired = await core.hireAgent(accountId, { name, description, provider, modelId });
+    const hired = await core.hireAgent(accountId, { name, role, jobDescription, provider, modelId });
     const room = await core.openChat(accountId, hired);
     const rows = await core.listAgents(accountId);
     const fresh = rows.find((row) => row.id === hired.id) ?? hired;
@@ -887,8 +889,8 @@ export default function App() {
         agents={agents}
         providers={providers}
         onClose={() => setCreating(false)}
-        onCreateChat={(name, description, provider, modelId) =>
-          void createChat(name, description, provider, modelId).catch(show)
+        onCreateChat={(name, role, jobDescription, provider, modelId) =>
+          void createChat(name, role, jobDescription, provider, modelId).catch(show)
         }
         onCreateGroup={(title, agentIds) => void createGroup(title, agentIds).catch(show)}
       />

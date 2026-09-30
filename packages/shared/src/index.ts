@@ -23,10 +23,27 @@ export const providerKeySchema = z
 
 export type ProviderKey = z.infer<typeof providerKeySchema>;
 
+/**
+ * Agent identity (Phase 17): role + personality + job.
+ * Why: users jammed tone + duties + constraints into one blob and the model
+ * deprioritized unpredictably. Three labeled fields compose in fixed order.
+ * No backward compatibility — the old `description` field is deleted.
+ * Input: raw hire fields. Output: validated identity fragment.
+ */
+export const agentIdentityInputSchema = z.object({
+  role: z.string().trim().min(1).max(100),
+  personality: z.string().trim().max(500).optional().default(""),
+  jobDescription: z.string().trim().min(1).max(10_000),
+});
+
+export type AgentIdentityInput = z.infer<typeof agentIdentityInputSchema>;
+
 export const agentCreateSchema = z.object({
   name: z.string().trim().min(1).max(100),
   label: z.string().trim().min(1).max(100),
-  description: z.string().trim().min(1).max(10_000),
+  role: z.string().trim().min(1).max(100),
+  personality: z.string().trim().max(500).optional().default(""),
+  jobDescription: z.string().trim().min(1).max(10_000),
   provider: z.enum(providerNames),
   modelId: z.string().trim().min(1).max(200),
 });
@@ -40,7 +57,9 @@ export const agentFlagsSchema = z.object({
 export const agentProfileSchema = agentFlagsSchema.extend({
   name: z.string().trim().min(1).max(100).optional(),
   label: z.string().trim().min(1).max(100).optional(),
-  description: z.string().trim().min(1).max(10_000).optional(),
+  role: z.string().trim().min(1).max(100).optional(),
+  personality: z.string().trim().max(500).optional(),
+  jobDescription: z.string().trim().min(1).max(10_000).optional(),
 });
 
 export type Account = z.infer<typeof accountSchema>;
@@ -152,7 +171,9 @@ export type ReactionInput = z.infer<typeof reactionSchema>;
 
 export const subagentCreateSchema = z.object({
   label: z.string().trim().min(1).max(100),
-  description: z.string().trim().min(1).max(10_000),
+  role: z.string().trim().min(1).max(100),
+  personality: z.string().trim().max(500).optional().default(""),
+  jobDescription: z.string().trim().min(1).max(10_000),
   provider: z.enum(providerNames).optional(),
   modelId: z.string().trim().min(1).max(200).optional(),
 });
@@ -282,7 +303,9 @@ export type GroupCreateInput = z.infer<typeof groupCreateInputSchema>;
 
 export const spawnWorkerInputSchema = z.object({
   label: z.string().trim().min(1).max(100),
-  description: z.string().trim().min(1).max(10_000),
+  role: z.string().trim().min(1).max(100),
+  personality: z.string().trim().max(500).optional().default(""),
+  jobDescription: z.string().trim().min(1).max(10_000),
   task: z.string().trim().min(1).max(20_000),
   provider: z.enum(providerNames).optional(),
   modelId: z.string().trim().min(1).max(200).optional(),

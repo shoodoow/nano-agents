@@ -22,7 +22,8 @@ describe("event log", () => {
     const agent = await createAgent(db, account.id, {
       name: "Ada",
       label: "Ada",
-      description: "Logs.",
+      role: "Teammate",
+      jobDescription: "Logs.",
       provider: "openai",
       modelId: "gpt-5",
     });

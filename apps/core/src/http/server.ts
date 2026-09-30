@@ -450,7 +450,14 @@ function mountRoutes(app: Express, ctx: AppContext): void {
       res.status(404).json({ error: "Agent not found." });
       return;
     }
-    res.json({ prompt: buildInstructions(agent.description) });
+    res.json({
+      prompt: buildInstructions({
+        name: agent.name,
+        role: agent.role,
+        personality: agent.personality,
+        job: agent.jobDescription,
+      }),
+    });
   });
   agents.get("/:agentId", guard, async (req, res) => {
     const agent = await getAgent(ctx.db, queryAccountId(req), pathParam(req, "agentId"));
@@ -480,7 +487,9 @@ function mountRoutes(app: Express, ctx: AppContext): void {
         conversationId,
         parentAgentId,
         label: data.label,
-        description: data.description,
+        role: data.role,
+        personality: data.personality,
+        jobDescription: data.jobDescription,
         provider: data.provider,
         modelId: data.modelId,
       });

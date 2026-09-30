@@ -41,7 +41,7 @@ export function InboxScreen({
     if (!needle) {
       return visible;
     }
-    return visible.filter((agent) => `${agent.name} ${agent.label} ${agent.description}`.toLowerCase().includes(needle));
+    return visible.filter((agent) => `${agent.name} ${agent.label} ${agent.role} ${agent.jobDescription}`.toLowerCase().includes(needle));
   }, [query, visible]);
   const featured = query.trim() ? undefined : (filtered.find((agent) => agent.pinned) ?? filtered[0]);
   const rows = featured ? filtered.filter((agent) => agent.id !== featured.id) : filtered;
@@ -136,7 +136,7 @@ export function InboxScreen({
               <View style={styles.previewRow}>
                 <IconReply />
                 <Text style={styles.preview} numberOfLines={1}>
-                  {item.description || `Message ${item.name}`}
+                  {item.role || `Message ${item.name}`}
                 </Text>
               </View>
             </View>

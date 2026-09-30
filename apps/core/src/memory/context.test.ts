@@ -7,11 +7,13 @@ import { conversations, messages } from "../db/schema.js";
 import { createAccount, createAgent } from "../roster/roster.js";
 import { runTurn } from "../rooms/turn.js";
 
+const identity = { name: "Ada", role: "Ledger keeper", personality: "", job: "Keep the ledger." };
+
 const agent = {
   accountId: "account-1",
   agentId: "agent-1",
   promptVersion: 3,
-  description: "Keep the ledger.",
+  identity,
 };
 
 describe("buildContext", () => {
@@ -27,7 +29,7 @@ describe("buildContext", () => {
       messages: [{ body: "second note" }],
     });
 
-    expect(first.prefix).toBe(buildInstructions(agent.description));
+    expect(first.prefix).toBe(buildInstructions(identity));
     expect(first.prefix).toBe(second.prefix);
     expect(first.prefix.includes("Ship on Friday.")).toBe(false);
     expect(first.prefix.includes("first note")).toBe(false);
@@ -85,7 +87,8 @@ describe("runTurn prefix", () => {
     const owner = await createAgent(db, account.id, {
       name: "Ada",
       label: "Ada",
-      description: "Keep the ledger.",
+      role: "Ledger keeper",
+      jobDescription: "Keep the ledger.",
       provider: "openai",
       modelId: "gpt-5",
     });

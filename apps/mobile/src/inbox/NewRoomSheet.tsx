@@ -6,6 +6,8 @@ import { IconCheck } from "../ui/icons";
 
 /**
  * Creates a direct chat or a group on the signed-in account.
+ * Why: hiring needs role + job up front (personality optional) so the agent
+ * starts sharp instead of a vague blob.
  * Input: whether the sheet is open, the account's agents, and the create handlers.
  * Output: the new-room sheet. The account id stays outside this form.
  */
@@ -23,7 +25,8 @@ export function NewRoomSheet({
   onClose: () => void;
   onCreateChat: (
     name: string,
-    description: string,
+    role: string,
+    jobDescription: string,
     provider: ProviderSetting["provider"],
     modelId: string,
   ) => void;
@@ -31,7 +34,8 @@ export function NewRoomSheet({
 }) {
   const [kind, setKind] = useState<"chat" | "group">("chat");
   const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
+  const [role, setRole] = useState("");
+  const [job, setJob] = useState("");
   const [provider, setProvider] = useState<ProviderSetting["provider"]>("openai");
   const [modelId, setModelId] = useState("gpt-5");
   const [title, setTitle] = useState("");
@@ -39,7 +43,8 @@ export function NewRoomSheet({
   const configured = providers.filter((row) => row.configured);
   const chatReady =
     name.trim().length > 0 &&
-    description.trim().length > 0 &&
+    role.trim().length > 0 &&
+    job.trim().length > 0 &&
     modelId.trim().length > 0 &&
     configured.some((row) => row.provider === provider);
   const groupReady = title.trim().length > 0 && picked.length >= 2;
@@ -70,8 +75,16 @@ export function NewRoomSheet({
             <>
               <TextInput value={name} onChangeText={setName} placeholder="Agent name" placeholderTextColor={colors.muted} keyboardAppearance="dark" style={styles.input} />
               <TextInput
-                value={description}
-                onChangeText={setDescription}
+                value={role}
+                onChangeText={setRole}
+                placeholder="Role (e.g. Social manager)"
+                placeholderTextColor={colors.muted}
+                keyboardAppearance="dark"
+                style={styles.input}
+              />
+              <TextInput
+                value={job}
+                onChangeText={setJob}
                 placeholder="What they do"
                 placeholderTextColor={colors.muted}
                 keyboardAppearance="dark"
@@ -104,7 +117,7 @@ export function NewRoomSheet({
               <Pressable
                 accessibilityRole="button"
                 disabled={!chatReady}
-                onPress={() => onCreateChat(name.trim(), description.trim(), provider, modelId.trim())}
+                onPress={() => onCreateChat(name.trim(), role.trim(), job.trim(), provider, modelId.trim())}
                 style={[styles.primary, !chatReady && styles.disabled]}
               >
                 <Text style={styles.primaryText}>Create chat</Text>

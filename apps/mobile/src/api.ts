@@ -31,7 +31,9 @@ export type RosterAgent = {
   id: string;
   name: string;
   label: string;
-  description: string;
+  role: string;
+  personality: string;
+  jobDescription: string;
   linuxProfile: string | null;
   notify: boolean;
   pinned: boolean;
@@ -77,13 +79,13 @@ export type CoreClient = {
   listAgents: (accountId: string) => Promise<RosterAgent[]>;
   hireAgent: (
     accountId: string,
-    input: { name: string; description: string; provider: ProviderSetting["provider"]; modelId: string },
+    input: { name: string; role: string; personality?: string; jobDescription: string; provider: ProviderSetting["provider"]; modelId: string },
   ) => Promise<RosterAgent>;
   hireSubagent: (
     accountId: string,
     parentAgentId: string,
     conversationId: string,
-    input: { label: string; description: string },
+    input: { label: string; role: string; personality?: string; jobDescription: string },
   ) => Promise<RosterAgent>;
   listTeam: (accountId: string, agentId: string) => Promise<RosterAgent[]>;
   listProviders: (accountId: string) => Promise<ProviderSetting[]>;
@@ -221,19 +223,22 @@ async function listAgents(baseUrl: string, accountId: string, fetchImpl: typeof 
 
 /**
  * Hires one agent on the signed-in account.
- * Input: the core base URL, the account id from signup, the name and description, and fetch.
+ * Why: three identity fields (role/personality/job) replace the old blob.
+ * Input: the core base URL, the account id, name/role/personality/job, provider/model, fetch.
  * Output: the saved agent. The chat creates its Linux profile later.
  */
 async function hireAgent(
   baseUrl: string,
   accountId: string,
-  input: { name: string; description: string; provider: ProviderSetting["provider"]; modelId: string },
+  input: { name: string; role: string; personality?: string; jobDescription: string; provider: ProviderSetting["provider"]; modelId: string },
   fetchImpl: typeof fetch,
 ): Promise<RosterAgent> {
   const body = agentCreateSchema.parse({
     name: input.name,
     label: input.name,
-    description: input.description,
+    role: input.role,
+    personality: input.personality ?? "",
+    jobDescription: input.jobDescription,
     provider: input.provider,
     modelId: input.modelId,
   });
@@ -381,7 +386,7 @@ async function hireSubagent(
   accountId: string,
   parentAgentId: string,
   conversationId: string,
-  input: { label: string; description: string },
+  input: { label: string; role: string; personality?: string; jobDescription: string },
   fetchImpl: typeof fetch,
 ): Promise<RosterAgent> {
   return readJson(fetchImpl, `${baseUrl}/agents/${parentAgentId}/subagents?accountId=${accountId}`, {

@@ -24,7 +24,8 @@ describe("notify relay", () => {
     const agent = await createAgent(db, account.id, {
       name: "Ada",
       label: "Ada",
-      description: "Relays.",
+      role: "Teammate",
+      jobDescription: "Relays.",
       provider: "openai",
       modelId: "gpt-5",
     });

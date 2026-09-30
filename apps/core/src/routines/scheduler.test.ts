@@ -25,7 +25,8 @@ describe("scheduler", () => {
     const owner = await createAgent(db, account.id, {
       name: "Ada",
       label: "Ada",
-      description: "Ticks.",
+      role: "Teammate",
+      jobDescription: "Ticks.",
       provider: "openai",
       modelId: "gpt-5",
     });

@@ -44,7 +44,8 @@ async function openRoom(name: string) {
   const owner = await createAgent(db, account.id, {
     name: "Ada",
     label: "Ada",
-    description: "Ada works here.",
+    role: "Teammate",
+    jobDescription: "Ada works here.",
     provider: "openai",
     modelId: "gpt-5",
   });

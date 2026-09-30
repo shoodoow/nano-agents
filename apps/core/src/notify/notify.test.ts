@@ -30,7 +30,8 @@ describe("notify policy", () => {
     const agent = await createAgent(db, account.id, {
       name: "Ada",
       label: "Ada",
-      description: "Pings.",
+      role: "Teammate",
+      jobDescription: "Pings.",
       provider: "openai",
       modelId: "gpt-5",
     });

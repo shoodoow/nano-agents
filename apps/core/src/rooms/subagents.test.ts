@@ -7,7 +7,10 @@ import { createAccount, createAgent } from "../roster/roster.js";
 import { createGroupRoom } from "./rooms.js";
 import { runDelegatedTurn } from "./turn.js";
 import {
+  addGroupMember,
+  alreadyDelivered,
   checkWorker,
+  claimDelivery,
   hireSubagent,
   listTeam,
   reclaimStaleDelegations,
@@ -15,6 +18,7 @@ import {
   runWorker,
   spawnWorker,
   stopWorker,
+  workerSuccessCue,
 } from "./subagents.js";
 
 const databaseUrl = process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/nano_agents";
@@ -35,7 +39,8 @@ describe("subagents and teams", () => {
     const chief = await createAgent(db, account.id, {
       name: "Chief",
       label: "Chief",
-      description: "Coordinates.",
+      role: "Teammate",
+      jobDescription: "Coordinates.",
       provider: "openai",
       modelId: "gpt-5",
     });
@@ -51,7 +56,8 @@ describe("subagents and teams", () => {
         conversationId: room!.id,
         parentAgentId: chief.id,
         label: "Researcher",
-        description: "Researches accounts.",
+        role: "Teammate",
+        jobDescription: "Researches accounts.",
       }),
     );
     expect(child.parentId).toBe(chief.id);
@@ -99,7 +105,8 @@ describe("subagents and teams", () => {
         conversationId: room!.id,
         parentAgentId: chief.id,
         label: "Researcher",
-        description: "Researches accounts.",
+        role: "Teammate",
+        jobDescription: "Researches accounts.",
       }),
     ).rejects.toThrow(/1:1/);
 
@@ -145,7 +152,8 @@ describe("subagents and teams", () => {
       conversationId: group.id,
       parentAgentId: chief.id,
       label: "Researcher",
-      description: "Researches accounts.",
+      role: "Teammate",
+      jobDescription: "Researches accounts.",
     });
     const delegation = await recordDelegation(db, {
       accountId: account.id,
@@ -191,7 +199,8 @@ describe("subagents and teams", () => {
       conversationId: room!.id,
       parentAgentId: chief.id,
       label: "Dig",
-      description: "Digs through files.",
+      role: "Teammate",
+      jobDescription: "Digs through files.",
       task: "Find the ledger.",
     });
     const membership = await db
@@ -220,7 +229,8 @@ describe("subagents and teams", () => {
       conversationId: room!.id,
       parentAgentId: chief.id,
       label: "Wait",
-      description: "Waits.",
+      role: "Teammate",
+      jobDescription: "Waits.",
       task: "Hold.",
     });
     expect(await stopWorker(db, account.id, running.workerId)).toEqual({ stopped: true });
@@ -231,7 +241,8 @@ describe("subagents and teams", () => {
       conversationId: room!.id,
       parentAgentId: chief.id,
       label: "Lost",
-      description: "Lost.",
+      role: "Teammate",
+      jobDescription: "Lost.",
       task: "Hang.",
     });
     await db
@@ -242,13 +253,105 @@ describe("subagents and teams", () => {
     expect(reclaimed.map((row) => row.id)).toContain(stale.delegationId);
     expect((await checkWorker(db, account.id, stale.workerId)).status).toBe("failed");
   });
+
+  it("claims delivery exactly once and spots an already-posted result", async () => {
+    const account = await createAccount(db, { name: "Delivery" });
+    const chief = await createAgent(db, account.id, agent("Chief"));
+    const [room] = await db
+      .insert(conversations)
+      .values({ accountId: account.id, kind: "direct", ownerAgentId: chief.id, title: "dm" })
+      .returning();
+    const spawned = await spawnWorker(db, {
+      accountId: account.id,
+      conversationId: room!.id,
+      parentAgentId: chief.id,
+      label: "Dig",
+      role: "Researcher",
+      jobDescription: "Dig through files.",
+      task: "Find the ledger.",
+    });
+    await runWorker(db, {
+      accountId: account.id,
+      conversationId: room!.id,
+      parentAgentId: chief.id,
+      childId: spawned.workerId,
+      delegationId: spawned.delegationId,
+      task: "Find the ledger.",
+      generate: async () => "Found three rows in the ledger for March.",
+    });
+    expect(await claimDelivery(db, spawned.delegationId)).toBe(true);
+    expect(await claimDelivery(db, spawned.delegationId)).toBe(false);
+    expect(await alreadyDelivered(db, { accountId: account.id, conversationId: room!.id, parentAgentId: chief.id, result: "short" })).toBe(
+      false,
+    );
+    await db.insert(messages).values({
+      accountId: account.id,
+      conversationId: room!.id,
+      agentId: chief.id,
+      body: "Quick note: Found three rows in the ledger for March. Details above.",
+    });
+    expect(
+      await alreadyDelivered(db, {
+        accountId: account.id,
+        conversationId: room!.id,
+        parentAgentId: chief.id,
+        result: "Found three rows in the ledger for March.",
+      }),
+    ).toBe(true);
+    expect(workerSuccessCue({ workerId: "w", task: "t", result: "r" })).toContain("Summarize this for the person");
+  });
+
+  it("hires a social manager with identity, grows the group, and keeps 1:1 shut", async () => {
+    const account = await createAccount(db, { name: "CMO" });
+    const cmo = await createAgent(db, account.id, {
+      name: "CMO",
+      label: "CMO",
+      role: "Chief marketing officer",
+      personality: "direct, warm",
+      jobDescription: "Run marketing and build the team.",
+      provider: "openai",
+      modelId: "gpt-5",
+    });
+    const group = await createGroupRoom(db, {
+      accountId: account.id,
+      ownerAgentId: cmo.id,
+      title: "Marketing",
+      memberIds: [],
+    });
+    const social = await hireSubagent(db, {
+      accountId: account.id,
+      conversationId: group.id,
+      parentAgentId: cmo.id,
+      label: "Social",
+      role: "Social manager",
+      personality: "playful, terse",
+      jobDescription: "Post daily and report numbers.",
+    });
+    expect(social.role).toBe("Social manager");
+    expect(social.jobDescription).toBe("Post daily and report numbers.");
+    const team = await listTeam(db, account.id, cmo.id);
+    expect(team.find((m) => m.id === social.id)?.role).toBe("Social manager");
+
+    const designer = await createAgent(db, account.id, agent("Designer"));
+    const added = await addGroupMember(db, { accountId: account.id, conversationId: group.id, agentId: designer.id });
+    expect(added.agentId).toBe(designer.id);
+
+    const [direct] = await db
+      .insert(conversations)
+      .values({ accountId: account.id, kind: "direct", ownerAgentId: cmo.id, title: "dm" })
+      .returning();
+    await expect(addGroupMember(db, { accountId: account.id, conversationId: direct!.id, agentId: designer.id })).rejects.toThrow(
+      /1:1/,
+    );
+  });
 });
 
 function agent(name: string) {
   return {
     name,
     label: name,
-    description: `${name} works here.`,
+    role: "Teammate",
+    jobDescription: `${name} works here.`,
     provider: "openai",
     modelId: "gpt-5",
   };

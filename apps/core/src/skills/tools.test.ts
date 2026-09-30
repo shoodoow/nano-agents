@@ -9,6 +9,7 @@ describe("listTools", () => {
     ];
     const names = listTools(plugins).map((tool) => tool.name);
     expect(names).toEqual([
+      "add_to_group",
       "bash",
       "check_worker",
       "computer_click",

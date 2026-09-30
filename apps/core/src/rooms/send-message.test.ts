@@ -33,7 +33,8 @@ describe("send_message protocol", () => {
     const agent = await createAgent(db, account.id, {
       name: "Ada",
       label: "Ada",
-      description: "Speaks in bubbles.",
+      role: "Teammate",
+      jobDescription: "Speaks in bubbles.",
       provider: "openai",
       modelId: "gpt-5",
     });

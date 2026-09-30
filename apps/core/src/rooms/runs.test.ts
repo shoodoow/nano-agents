@@ -22,7 +22,8 @@ describe("run ledger", () => {
     const agent = await createAgent(db, account.id, {
       name: "Ada",
       label: "Ada",
-      description: "Holds turns.",
+      role: "Teammate",
+      jobDescription: "Holds turns.",
       provider: "openai",
       modelId: "gpt-5",
     });
@@ -52,7 +53,8 @@ describe("run ledger", () => {
     const agent = await createAgent(db, account.id, {
       name: "Bea",
       label: "Bea",
-      description: "Crashes.",
+      role: "Teammate",
+      jobDescription: "Crashes.",
       provider: "openai",
       modelId: "gpt-5",
     });

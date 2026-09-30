@@ -5,7 +5,8 @@ import { CircleButton } from "../ui/CircleButton";
 import { IconBack } from "../ui/icons";
 
 /**
- * Edits one agent's name, label, description, and roster flags.
+ * Edits one agent's name, label, role, personality, job, and roster flags.
+ * Why: three identity fields replace the old blob — the phone manages them directly.
  * Input: the profile draft and the save and back handlers.
  * Output: the profile form.
  */
@@ -31,7 +32,9 @@ export function ProfileScreen({
       </View>
       <Field label="Name" value={profile.name} onChangeText={(name) => onChange({ ...profile, name })} />
       <Field label="Label" value={profile.label} onChangeText={(label) => onChange({ ...profile, label })} />
-      <Field label="Description" value={profile.description} onChangeText={(description) => onChange({ ...profile, description })} />
+      <Field label="Role" value={profile.role} onChangeText={(role) => onChange({ ...profile, role })} />
+      <Field label="Personality" value={profile.personality} onChangeText={(personality) => onChange({ ...profile, personality })} />
+      <Field label="Job" value={profile.jobDescription} onChangeText={(jobDescription) => onChange({ ...profile, jobDescription })} />
       <Flag label="Pin" value={profile.pinned} onChange={(pinned) => onChange({ ...profile, pinned })} />
       <Flag label="Hide" value={profile.hidden} onChange={(hidden) => onChange({ ...profile, hidden })} />
       <Flag label="Notify" value={profile.notify} onChange={(notify) => onChange({ ...profile, notify })} />

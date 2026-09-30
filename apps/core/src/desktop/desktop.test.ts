@@ -138,7 +138,8 @@ function hired(name: string) {
   return {
     name,
     label: name,
-    description: `${name} uses the desktop.`,
+    role: "Teammate",
+    jobDescription: `${name} uses the desktop.`,
     provider: "openai",
     modelId: "gpt-5",
   };

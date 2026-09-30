@@ -1,5 +1,5 @@
 import { accountSchema, agentCreateSchema, agentProfileSchema } from "@nano-agents/shared";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
 import { accounts, agents } from "../db/schema.js";
 import { createLinux } from "../linux/linux.js";
@@ -15,6 +15,8 @@ export class AgentNameError extends Error {
 
 /**
  * Creates an account row and that account's Linux.
+ * Why: the account is the tenant — one Linux per account, every later row
+ * carries this id so nothing crosses accounts.
  * Input: a database client and an object with a name.
  * Output: the saved account, including its id. A container exists for that id.
  */
@@ -38,7 +40,8 @@ export async function createAccount(db: Database, input: unknown) {
  * Why: names are unique per account (case-insensitive) because @Name routing
  * and the room header resolve by exact name — duplicates silently steal each
  * other's mentions. Same name on another account is fine.
- * Input: a database client, the account id, and the agent's name, label, description, provider, and model id.
+ * Input: a database client, the account id, and name/label/role/personality/
+ * jobDescription/provider/modelId.
  * Output: the saved agent. linuxProfile is null because the chat creates the profile later.
  */
 export async function createAgent(db: Database, accountId: string, input: unknown) {
@@ -56,7 +59,9 @@ export async function createAgent(db: Database, accountId: string, input: unknow
       accountId,
       name: data.name,
       label: data.label,
-      description: data.description,
+      role: data.role,
+      personality: data.personality ?? "",
+      jobDescription: data.jobDescription,
       provider: data.provider,
       modelId: data.modelId,
       linuxProfile: null,
@@ -69,12 +74,15 @@ export async function createAgent(db: Database, accountId: string, input: unknow
 }
 
 /**
- * Changes an agent's name, label, description, pin, hide, and notify.
- * Input: a database client, the owning account id, the agent id, and the profile fields.
+ * Changes an agent's name, label, identity, pin, hide, and notify.
+ * Why: identity edits bump promptVersion so the OpenAI promptCacheKey rotates
+ * — otherwise the provider keeps serving the stale cached prefix.
+ * Input: a database client, the owning account id, the agent id, and profile fields.
  * Output: the updated agent, or null when that account does not own the agent.
  */
 export async function updateAgentFlags(db: Database, accountId: string, agentId: string, input: unknown) {
   const data = agentProfileSchema.parse(input);
+  const identityTouched = data.role !== undefined || data.personality !== undefined || data.jobDescription !== undefined;
   const [row] = await db
     .update(agents)
     .set({
@@ -83,7 +91,10 @@ export async function updateAgentFlags(db: Database, accountId: string, agentId:
       hidden: data.hidden,
       ...(data.name !== undefined ? { name: data.name } : {}),
       ...(data.label !== undefined ? { label: data.label } : {}),
-      ...(data.description !== undefined ? { description: data.description } : {}),
+      ...(data.role !== undefined ? { role: data.role } : {}),
+      ...(data.personality !== undefined ? { personality: data.personality } : {}),
+      ...(data.jobDescription !== undefined ? { jobDescription: data.jobDescription } : {}),
+      ...(identityTouched ? { promptVersion: sql`${agents.promptVersion} + 1` } : {}),
     })
     .where(and(eq(agents.id, agentId), eq(agents.accountId, accountId)))
     .returning();
@@ -92,6 +103,7 @@ export async function updateAgentFlags(db: Database, accountId: string, agentId:
 
 /**
  * Lists the agents on one account.
+ * Why: roster and team pickers scope to the tenant — cross-account rows never leave the query.
  * Input: a database client and the account id.
  * Output: that account's agents. Another account's agents are not included.
  */
@@ -101,6 +113,7 @@ export async function listAgents(db: Database, accountId: string) {
 
 /**
  * Reads one agent that belongs to an account.
+ * Why: per-request ownership re-check — ids are never trusted from the client.
  * Input: a database client, the account id, and the agent id.
  * Output: the agent row, or null when the account does not own it.
  */

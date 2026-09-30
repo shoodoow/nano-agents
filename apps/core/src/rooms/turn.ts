@@ -13,7 +13,8 @@ import {
   workerRefSchema,
 } from "@nano-agents/shared";
 import { and, asc, desc, eq } from "drizzle-orm";
-import { buildContext } from "../memory/context.js";
+import { buildContext, identityBlock } from "../memory/context.js";
+import { traceError, tracePreview, tracePrompt, traceStep } from "../log/trace.js";
 import { readHistory } from "../memory/memory.js";
 import type { getDb, Store } from "../db/client.js";
 import { agents, conversations, delegations, members, messages, summaryItems } from "../db/schema.js";
@@ -39,7 +40,7 @@ import { appendEvent } from "./events.js";
 import { acquireRun, failRun, finishRun, heartbeatRun } from "./runs.js";
 import { publish, type StreamEvent } from "./stream.js";
 import { parseDataUri } from "./uploads.js";
-import { checkWorker, failuresSinceLastUser, hireSubagent, listTeam, recordDelegation, runWorker, spawnWorker, stopWorker, workerFollowupCue } from "./subagents.js";
+import { addGroupMember, alreadyDelivered, checkWorker, claimDelivery, failuresSinceLastUser, hireSubagent, listTeam, recordDelegation, runWorker, spawnWorker, stopWorker, workerFollowupCue, workerSuccessCue } from "./subagents.js";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -261,6 +262,54 @@ async function resumeParentAfterWorker(
   });
 }
 
+// Grace before auto-delivery (Phase 19): the parent turn just ended, and the
+// person is often mid-conversation ("Ok", follow-ups). Waiting lets a live
+// turn absorb the result via check_worker first; alreadyDelivered + claim
+// then cut the double-post either way.
+const DELIVERY_GRACE_MS = 60_000;
+
+/**
+ * Posts one finished worker's result to the room in the parent's voice.
+ * Why: check_worker is poll-only, so without this the parent's "I'll let you
+ * know" promise is unkeepable — good results rot in the delegation row. Mirrors
+ * the failure re-wake: skip when the result already reached the room, claim
+ * exactly-once delivery, then run a cue turn as the parent that summarizes it.
+ * Input: db, room/parent ids, delegation id, settled worker, optional generate
+ * stub (tests) and skills root. Output: "delivered" or "skipped".
+ */
+export async function deliverWorkerResult(
+  db: Db,
+  input: {
+    accountId: string;
+    conversationId: string;
+    parentAgentId: string;
+    delegationId: string;
+    skillsRoot?: string;
+    settled: { workerId: string; task: string; result: string };
+    generate?: (input: TurnInput) => Promise<GenerateResult>;
+  },
+): Promise<"delivered" | "skipped"> {
+  if (await alreadyDelivered(db, {
+    accountId: input.accountId,
+    conversationId: input.conversationId,
+    parentAgentId: input.parentAgentId,
+    result: input.settled.result,
+  })) {
+    return "skipped";
+  }
+  if (!(await claimDelivery(db, input.delegationId))) {
+    return "skipped";
+  }
+  const cue = workerSuccessCue(input.settled);
+  await runTurn(db, input.accountId, input.conversationId, cue, input.generate, input.skillsRoot, {
+    cue,
+    speakerId: input.parentAgentId,
+    acquireTimeoutMs: 120_000,
+    onEvent: (event) => publish(input.accountId, input.conversationId, event),
+  });
+  return "delivered";
+}
+
 /**
  * Runs one speaker's step: load, think, emit, summarize, chain.
  * Why: extracted from runTurn so the loop stays readable — each step is
@@ -329,7 +378,12 @@ async function speakOnce(
     accountId,
     agentId: agent.id,
     promptVersion: agent.promptVersion,
-    description: agent.description,
+    identity: {
+      name: agent.name,
+      role: agent.role,
+      personality: agent.personality,
+      job: agent.jobDescription,
+    },
     summary: summary.map((item) => ({ key: item.key, body: item.body })),
     messages: history.map((message) => ({ body: message.body })),
     tools: listTools([]).map((t) => t.name),
@@ -387,6 +441,17 @@ async function speakOnce(
     result = unwrap(await generateWithStore());
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
+    // Trace the real exception: the bubble below is deliberately generic for
+    // the phone, so without this line key/model/network failures are
+    // indistinguishable. Truncated, never secrets (provider errors carry none).
+    void traceError({
+      accountId,
+      conversationId,
+      agentId,
+      runId,
+      kind: "generate-error",
+      message: message.slice(0, 500),
+    });
     result = {
       text: message.startsWith("Add an API key")
         ? message
@@ -568,7 +633,7 @@ function linuxTools(db: Db, accountId: string, profile: string) {
     }),
     web_fetch: tool({
       description:
-        "Read one public page as text when you already have the URL. JS-heavy pages render automatically. Returns title, text, and outlinks. Never send the person to their browser for a page you can open. A research job belongs on a worker via spawn_worker.",
+        "Read one public page as text when you already have the URL — and when the person names a site (like skills.sh), fetch it FIRST before searching. JS-heavy pages render automatically. Returns title, text, and outlinks. Never send the person to their browser for a page you can open. Never end the turn asking for details when a fetch is untried.",
       inputSchema: jsonSchema<{ url: string }>({
         type: "object",
         properties: { url: { type: "string", description: "Full https:// address." } },
@@ -587,7 +652,7 @@ function linuxTools(db: Db, accountId: string, profile: string) {
     }),
     web_search: tool({
       description:
-        "Search the public web. Returns title, URL, and snippet, not page text. Use to pick links, then web_fetch the ones worth reading. Broad research belongs on a worker via spawn_worker.",
+        "Search the public web. Returns title, URL, and snippet, not page text. Use to pick links, then web_fetch the ones worth reading. Quick lookups run inline — no worker needed. One empty result never ends the task: retry with different words, fetch the named site directly, or spawn_worker once. Never ask the person for keywords while a search or fetch is untried.",
       inputSchema: jsonSchema<{ query: string; numResults?: number }>({
         type: "object",
         properties: { query: { type: "string" }, numResults: { type: "number" } },
@@ -800,13 +865,14 @@ export async function runDelegatedTurn(
   ).reverse();
 
   if (input.generate) {
+    const identity = identityBlock(child);
     const result = unwrap(
       await input.generate({
         agentId: child.id,
         provider: child.provider,
         modelId: child.modelId,
-        system: child.description,
-        prefix: child.description,
+        system: identity,
+        prefix: identity,
         tail: input.task,
         promptCacheKey: `${input.accountId}:${child.id}`,
         accountId: input.accountId,
@@ -857,7 +923,12 @@ export async function runDelegatedTurn(
     accountId: input.accountId,
     agentId: child.id,
     promptVersion: child.promptVersion,
-    description: child.description,
+    identity: {
+      name: child.name,
+      role: child.role,
+      personality: child.personality,
+      job: child.jobDescription,
+    },
     summary: [],
     messages: recent.map((row) => ({ body: row.body })),
     tools: listTools([]).map((item) => item.name),
@@ -1048,25 +1119,44 @@ async function replyWithModelTx(
       },
     }),
     hire_subagent: tool({
-      description: "Create a lasting specialist on your team in this group (max 10, depth 2) and announce them with an agent card. Use when you need a named teammate who will stay. For one task while you stay in the chat, use spawn_worker. Refuses a private 1:1.",
-      inputSchema: jsonSchema<{ label: string; description: string; provider?: string; modelId?: string }>({
+      description:
+        "Create a lasting specialist on your team in this group (max 10, depth 2) and announce them with an agent card. Give role (job title), personality (tone), and job (standing duties) — e.g. social manager with its posting cadence. For one task while you stay in the chat, use spawn_worker. Refuses a private 1:1.",
+      inputSchema: jsonSchema<{
+        label: string;
+        role: string;
+        personality?: string;
+        jobDescription: string;
+        provider?: string;
+        modelId?: string;
+      }>({
         type: "object",
         properties: {
           label: { type: "string" },
-          description: { type: "string" },
+          role: { type: "string" },
+          personality: { type: "string" },
+          jobDescription: { type: "string" },
           provider: { type: "string" },
           modelId: { type: "string" },
         },
-        required: ["label", "description"],
+        required: ["label", "role", "jobDescription"],
       }),
-      execute: async ({ label, description, provider, modelId }) => {
-        const parsed = subagentCreateSchema.parse({ label, description, provider, modelId });
+      execute: async ({ label, role, personality, jobDescription, provider, modelId }) => {
+        const parsed = subagentCreateSchema.parse({
+          label,
+          role,
+          personality,
+          jobDescription,
+          provider,
+          modelId,
+        });
         const child = await hireSubagent(store, {
           accountId,
           conversationId,
           parentAgentId: agentId,
           label: parsed.label,
-          description: parsed.description,
+          role: parsed.role,
+          personality: parsed.personality,
+          jobDescription: parsed.jobDescription,
           provider: parsed.provider,
           modelId: parsed.modelId,
         });
@@ -1129,9 +1219,22 @@ async function replyWithModelTx(
       },
     }),
     list_team: tool({
-      description: "List your team agents (id, name, label). Use before delegate so you choose someone already on the team.",
+      description: "List your team agents (id, name, label, role). Use before delegate so you choose someone already on the team.",
       inputSchema: jsonSchema<Record<string, never>>({ type: "object", properties: {} }),
       execute: async () => listTeam(store, accountId, agentId),
+    }),
+    add_to_group: tool({
+      description:
+        "Add an existing account agent to this group room. Use when the team grows after creation. Never works on a private 1:1 — those stay 1:1, create a group instead.",
+      inputSchema: jsonSchema<{ agentId: string }>({
+        type: "object",
+        properties: { agentId: { type: "string" } },
+        required: ["agentId"],
+      }),
+      execute: async ({ agentId: inviteId }) => {
+        const row = await addGroupMember(store, { accountId, conversationId, agentId: inviteId });
+        return { agentId: row.agentId };
+      },
     }),
     todo_write: tool({
       description:
@@ -1178,18 +1281,28 @@ async function replyWithModelTx(
     spawn_worker: tool({
       description:
         "Default for any real task: files, shell, desktop, web, research, or more than one quick step. Returns a process id immediately so you stay in the chat. The task must name the method and the exact text the worker returns. A page or a search uses web_search and web_fetch, never Chromium, screenshots, or clicks. Desktop tools only when the person asked to see or drive the screen. Tell the person the id in send_message. If check_worker is failed or empty, spawn exactly one corrected task. A second failure: tell the person and stop.",
-      inputSchema: jsonSchema<{ label: string; description: string; task: string; provider?: string; modelId?: string }>({
+      inputSchema: jsonSchema<{
+        label: string;
+        role: string;
+        personality?: string;
+        jobDescription: string;
+        task: string;
+        provider?: string;
+        modelId?: string;
+      }>({
         type: "object",
         properties: {
           label: { type: "string" },
-          description: { type: "string" },
+          role: { type: "string" },
+          personality: { type: "string" },
+          jobDescription: { type: "string" },
           task: { type: "string" },
           provider: { type: "string" },
           modelId: { type: "string" },
         },
-        required: ["label", "description", "task"],
+        required: ["label", "role", "jobDescription", "task"],
       }),
-      execute: async ({ label, description, task, provider, modelId }) => {
+      execute: async ({ label, role, personality, jobDescription, task, provider, modelId }) => {
         const failed = await failuresSinceLastUser(store, accountId, conversationId, agentId);
         if (failed >= 2) {
           return {
@@ -1197,13 +1310,23 @@ async function replyWithModelTx(
               "Two workers already failed since the person's last message. Do not start another. send_message what failed, in plain words, then stop.",
           };
         }
-        const parsed = spawnWorkerInputSchema.parse({ label, description, task, provider, modelId });
+        const parsed = spawnWorkerInputSchema.parse({
+          label,
+          role,
+          personality,
+          jobDescription,
+          task,
+          provider,
+          modelId,
+        });
         const spawned = await spawnWorker(store, {
           accountId,
           conversationId,
           parentAgentId: agentId,
           label: parsed.label,
-          description: parsed.description,
+          role: parsed.role,
+          personality: parsed.personality,
+          jobDescription: parsed.jobDescription,
           task: parsed.task,
           provider: parsed.provider,
           modelId: parsed.modelId,
@@ -1217,7 +1340,23 @@ async function replyWithModelTx(
           task: parsed.task,
           skillsRoot: input.skillsRoot,
           onSettled: (settled) => {
-            if (settled.status !== "failed") return;
+            if (settled.status !== "failed") {
+              // Success auto-delivery (Phase 19): after a grace window the
+              // parent posts the summary itself, so "I'll let you know" holds
+              // without the person having to ask. Guarded exactly-once.
+              const timer = setTimeout(() => {
+                void deliverWorkerResult(db, {
+                  accountId,
+                  conversationId,
+                  parentAgentId: agentId,
+                  delegationId: spawned.delegationId,
+                  skillsRoot: input.skillsRoot,
+                  settled,
+                }).catch(() => {});
+              }, DELIVERY_GRACE_MS);
+              (timer as unknown as { unref?: () => void }).unref?.();
+              return;
+            }
             void resumeParentAfterWorker(db, {
               accountId,
               conversationId,
@@ -1309,6 +1448,23 @@ async function replyWithModelTx(
     }),
   };
 
+  // Prompt tracing (Phase 17 fix): one JSONL line per speaker with the exact
+  // prefix + tail the model sees. Answers "why didn't it know X" definitively.
+  void tracePrompt({
+    accountId,
+    conversationId,
+    agentId,
+    runId,
+    kind: "prompt",
+    prefix: input.prefix,
+    tail: input.tail,
+    promptCacheKey: input.promptCacheKey,
+  });
+  // Step tracing (Phase 17 fix): every model step appends one JSONL line with
+  // each tool call + truncated input/output. Turns previously logged nothing
+  // about tool use, so a silent model and a failing tool looked identical.
+  // Best-effort: tracing never fails the turn. Counter closes over steps.
+  let stepIndex = 0;
   const result = await generateText({
     model: getModel(input.provider, input.modelId, credential.apiKey, credential.baseUrl),
     instructions: prompt.instructions,
@@ -1319,6 +1475,34 @@ async function replyWithModelTx(
       input.provider === "openai"
         ? { openai: { promptCacheKey: input.promptCacheKey, promptCacheRetention: "24h" } }
         : undefined,
+    onStepFinish: async (step) => {
+      stepIndex += 1;
+      const calls = (step.toolCalls ?? []).map((call) => {
+        const name = (call as { toolName?: string }).toolName ?? "unknown";
+        const matching = (step.toolResults ?? []).find(
+          (r) => (r as { toolCallId?: string }).toolCallId === (call as { toolCallId?: string }).toolCallId,
+        );
+        const raw = matching ? (matching as { output?: unknown }).output ?? (matching as { result?: unknown }).result : null;
+        const output =
+          raw && typeof raw === "object" && "value" in (raw as Record<string, unknown>)
+            ? (raw as { value: unknown }).value
+            : raw;
+        return {
+          name,
+          input: (call as { input?: unknown }).input ?? (call as { args?: unknown }).args ?? null,
+          output: tracePreview(output ?? "(no result yet)"),
+        };
+      });
+      await traceStep({
+        accountId,
+        conversationId,
+        agentId,
+        runId,
+        step: stepIndex,
+        text: (step.text ?? "").slice(0, 300),
+        tools: calls,
+      });
+    },
   });
 
   return { text: result.text, cacheReadTokens: result.usage.inputTokenDetails.cacheReadTokens ?? null };

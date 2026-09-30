@@ -98,7 +98,7 @@ describe("proposals", () => {
     expect(approved.status).toBe(200);
     expect(await promptVersion(room.agentId)).toBe(2);
     const [agent] = await db.select().from(agents).where(eq(agents.id, room.agentId));
-    expect(agent?.description.endsWith("Sign every letter.")).toBe(true);
+    expect(agent?.jobDescription.endsWith("Sign every letter.")).toBe(true);
     await new Promise<void>((resolve, rejectClose) => {
       server.close((error) => (error ? rejectClose(error) : resolve()));
     });
@@ -114,7 +114,7 @@ describe("proposals", () => {
     }));
     const [afterTurn] = await db.select().from(agents).where(eq(agents.id, room.agentId));
     expect(afterTurn?.promptVersion).toBe(before);
-    expect(afterTurn?.description.includes("Do not apply this yet.")).toBe(false);
+    expect(afterTurn?.jobDescription.includes("Do not apply this yet.")).toBe(false);
     const pending = await db.select().from(proposals).where(eq(proposals.agentId, room.agentId));
     expect(pending.some((row) => row.body === "Do not apply this yet." && row.status === "pending")).toBe(true);
   });
@@ -125,7 +125,8 @@ async function openRoom(name: string) {
   const owner = await createAgent(db, account.id, {
     name: "Ada",
     label: "Ada",
-    description: "Keep the ledger.",
+    role: "Ledger keeper",
+    jobDescription: "Keep the ledger.",
     provider: "openai",
     modelId: "gpt-5",
   });

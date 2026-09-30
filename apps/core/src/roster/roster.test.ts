@@ -22,14 +22,16 @@ describe("roster", () => {
     const created = await createAgent(db, first.id, {
       name: "Ada",
       label: "Books",
-      description: "Keep the ledger.",
+      role: "Teammate",
+      jobDescription: "Keep the ledger.",
       provider: "openai",
       modelId: "gpt-5",
     });
     const other = await createAgent(db, first.id, {
       name: "Bea",
       label: "Mail",
-      description: "Read the inbox.",
+      role: "Teammate",
+      jobDescription: "Read the inbox.",
       provider: "openai",
       modelId: "gpt-5",
     });
@@ -38,7 +40,8 @@ describe("roster", () => {
     expect(read).toMatchObject({
       name: "Ada",
       label: "Books",
-      description: "Keep the ledger.",
+      role: "Teammate",
+      jobDescription: "Keep the ledger.",
       provider: "openai",
       modelId: "gpt-5",
       linuxProfile: null,
@@ -66,7 +69,8 @@ describe("roster", () => {
     await createAgent(db, first.id, {
       name: "Max",
       label: "Max",
-      description: "First.",
+      role: "Teammate",
+      jobDescription: "First.",
       provider: "openai",
       modelId: "gpt-5",
     });
@@ -74,7 +78,8 @@ describe("roster", () => {
       createAgent(db, first.id, {
         name: "max",
         label: "Max",
-        description: "Second.",
+        role: "Teammate",
+        jobDescription: "Second.",
         provider: "openai",
         modelId: "gpt-5",
       }),
@@ -83,7 +88,8 @@ describe("roster", () => {
       createAgent(db, second.id, {
         name: "Max",
         label: "Max",
-        description: "Elsewhere.",
+        role: "Teammate",
+        jobDescription: "Elsewhere.",
         provider: "openai",
         modelId: "gpt-5",
       }),

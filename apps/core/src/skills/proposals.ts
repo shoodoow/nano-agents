@@ -77,7 +77,7 @@ export async function approve(db: Database, accountId: string, proposalId: strin
   if (proposal.kind === "prompt") {
     await db
       .update(agents)
-      .set({ description: `${agent.description}\n\n${proposal.body}` })
+      .set({ jobDescription: `${agent.jobDescription}\n\n${proposal.body}` })
       .where(and(eq(agents.id, agent.id), eq(agents.accountId, accountId)));
   }
   if (proposal.kind === "memory") {
