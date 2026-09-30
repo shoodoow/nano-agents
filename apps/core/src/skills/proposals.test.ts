@@ -72,7 +72,7 @@ describe("proposals", () => {
       messageIds: [message.id],
     });
     await approve(db, room.accountId, saved.id, skillsRoot);
-    expect(await readFile(join(skillsRoot, "letters", "SKILL.md"), "utf8")).toBe(body);
+    expect(await readFile(join(skillsRoot, "accounts", room.accountId, "letters", "SKILL.md"), "utf8")).toBe(body);
     expect(await promptVersion(room.agentId)).toBe(2);
     await rm(skillsRoot, { recursive: true, force: true });
   });

@@ -357,7 +357,8 @@ function mountRoutes(app: Express, ctx: AppContext): void {
     }
     // Default is fail-fast claim + 202: free room -> run now in background
     // (closing the phone never kills the turn); busy room -> message saved
-    // queued and the scheduler drains it. HTTP never waits on model work.
+    // queued, and the running turn starts it the moment that turn ends.
+    // HTTP never waits on model work.
     try {
       const run = await acquireRun(ctx.db, accountId, conversationId, "turn", 0);
       const userMessage = await saveUserMessage(ctx.db, accountId, conversationId, {

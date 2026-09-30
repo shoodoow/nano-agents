@@ -289,25 +289,24 @@ export async function saveUserMessage(
  * blobRef; the client fetches bytes lazily once and caches them.
  */
 /**
- * Atomically claims the oldest queued user messages for the scheduler drain.
- * Why: POST marks busy-room arrivals queued=true and returns; one UPDATE..
- * RETURNING flips them to false so two scheduler ticks (or two future cores)
- * can never start the same room twice. Callers group by conversation and run
- * one turn per room speaking for the latest text.
- * Input: db, batch limit. Output: claimed rows oldest-first.
+ * Claims every queued user message in one room.
+ * Why: a message that arrived while the room was busy must start as soon as
+ * the running turn ends. One UPDATE..RETURNING flips them so the ending turn
+ * and a crash reclaim cannot both start the same text.
+ * Input: db, account id, conversation id. Output: claimed rows oldest-first.
  */
-export async function claimQueuedBatch(db: Database, limit = 10) {
+export async function claimQueuedForRoom(db: Database, accountId: string, conversationId: string) {
   const pending = db
     .select({ id: messages.id })
     .from(messages)
-    .where(eq(messages.queued, true))
-    .orderBy(asc(messages.createdAt))
-    .limit(Math.min(Math.max(limit, 1), 100));
-  return db
+    .where(and(eq(messages.queued, true), eq(messages.accountId, accountId), eq(messages.conversationId, conversationId)))
+    .orderBy(asc(messages.createdAt));
+  const claimed = await db
     .update(messages)
     .set({ queued: false })
     .where(inArray(messages.id, pending))
     .returning();
+  return claimed.sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
 }
 export const INLINE_BLOB_BUDGET = 200_000;
 

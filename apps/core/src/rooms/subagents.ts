@@ -7,9 +7,8 @@ import { keyFor } from "../keys/keys.js";
 import { getModel } from "../model/get-model.js";
 import { readHistory } from "../memory/memory.js";
 import { identityBlock } from "../memory/context.js";
-import { readSkill } from "../skills/skills.js";
-import { bash, clickAt, moveMouse, pressKeys, readFile, screenshotImage, typeText, writeFile } from "../computer/computer.js";
-import { webFetch } from "../computer/web.js";
+import { readSkillForAccount } from "../skills/skills.js";
+import { profileToolNames, profileTools } from "../computer/profile-tools.js";
 import { createProfile } from "../linux/linux.js";
 import { agents, conversations, delegations, members, messages } from "../db/schema.js";
 import { RoomCapacityError } from "./rooms.js";
@@ -244,9 +243,13 @@ export const WORKER_STALE_MS = 4 * 60 * 60 * 1000;
 const WORKER_PREAMBLE = [
   "You are a background worker: you do the task, the chatting agent stays with the person.",
   "You have no user contact — no send_message, no reactions, no pings, no further workers.",
+  "Stay inside the task. Do that step, then stop. If it is bigger than scoped, report what you found and what is still needed.",
   "One dead tool path is not failure: fall back to web_search and web_fetch and keep going. Surrender only after search AND fetch are both tried.",
-  "Use your tools to finish the scoped task, then end with the result as plain final text.",
-  "Keep it tight: findings and files first, method in one line if it matters.",
+  "Open Chrome in the background so bash returns: chromium --no-sandbox --disable-dev-shm-usage --disable-gpu --no-first-run 'URL' >/dev/null 2>&1 &",
+  "Then take one computer_screenshot to confirm the window. Never wait for chromium to exit, and never start Xvfb or override DISPLAY.",
+  "Do the task. A login is not a reason to stop before the page is open. Never type a password, 2FA code, or payment.",
+  "If the screen needs the person (password, 2FA, captcha, or payment), stop and end with one line: NEEDS_PERSON: <what they should do on the computer>.",
+  "A long command that should keep running is started with & so you can finish. End with plain final text: what you did, what you saw, and whether the goal was met.",
 ].join(" ");
 
 /**
@@ -556,10 +559,16 @@ export async function runWorker(
       await finish("done", await input.generate());
       return;
     }
-    let profile: string | null = child.linuxProfile;
+    // The person's computer is the chatting agent's screen. A hidden worker
+    // must drive that same desktop, or Chrome opens on a screen they cannot see.
+    const [parent] = await db
+      .select({ linuxProfile: agents.linuxProfile })
+      .from(agents)
+      .where(and(eq(agents.id, input.parentAgentId), eq(agents.accountId, input.accountId)));
+    let profile: string | null = parent?.linuxProfile ?? null;
     if (!profile) {
       try {
-        profile = await createProfile(db, input.accountId, child.id);
+        profile = await createProfile(db, input.accountId, input.parentAgentId);
       } catch {
         profile = null;
       }
@@ -594,10 +603,22 @@ export async function runWorker(
 }
 
 /**
+ * Names a worker can call.
+ * Why: tests lock the worker to the same computer tools as the chat, plus
+ * the two recall tools a worker is allowed. Voice and team tools stay off.
+ * Input: whether this worker has a Linux profile. Output: sorted names.
+ */
+export function workerToolNames(hasComputer: boolean): string[] {
+  const names = ["read_history", "read_skill"];
+  if (hasComputer) names.push(...profileToolNames());
+  return names.sort();
+}
+
+/**
  * Builds the restricted worker toolset (no voice, team, or notify).
  * Why: workers investigate and produce — they must be structurally unable to
- * message the user, spawn further workers, or delegate. Same computer tools
- * as agents so real work (files/shell/desktop/web) still happens.
+ * message the user, spawn further workers, or delegate. Computer tools come
+ * from profileTools. The chat turn does not get this map, so a search cannot hold the room.
  * Input: db, account/room ids, nullable profile, skills root.
  * Output: AI SDK tool map.
  */
@@ -623,7 +644,7 @@ function workerTools(db: ReturnType<typeof getDb>, accountId: string, conversati
       execute: async ({ name }) => {
         if (!skillsRoot) return "No skills directory configured.";
         try {
-          return readSkill(skillsRoot, name);
+          return readSkillForAccount(skillsRoot, accountId, name);
         } catch {
           return "Skill not found.";
         }
@@ -631,76 +652,5 @@ function workerTools(db: ReturnType<typeof getDb>, accountId: string, conversati
     }),
   };
   if (!profile) return base;
-  return {
-    ...base,
-    web_fetch: tool({
-      description: "Read one public page as text when the task gives you a URL or you already chose a link. This is how you open docs instead of guessing.",
-      inputSchema: jsonSchema<{ url: string }>({
-        type: "object",
-        properties: { url: { type: "string" } },
-        required: ["url"],
-      }),
-      // Gated on profile: fetching execs as the Unix user inside the account
-      // container, and a worker without a computer has no user to run as.
-      execute: async ({ url }) => {
-        const page = await webFetch(accountId, profile, url);
-        return `# ${page.title}\nSource: ${page.url}\n\n${page.markdown}`;
-      },
-    }),
-    read: tool({
-      description: "Read one file on your computer. Use when the task names a path or you found it with the shell.",
-      inputSchema: jsonSchema<{ path: string }>({ type: "object", properties: { path: { type: "string" } }, required: ["path"] }),
-      execute: async ({ path }) => readFile(accountId, profile, path),
-    }),
-    write: tool({
-      description: "Write one file on your computer. Use when the task asks for a file or an edit you have already decided.",
-      inputSchema: jsonSchema<{ path: string; body: string }>({
-        type: "object",
-        properties: { path: { type: "string" }, body: { type: "string" } },
-        required: ["path", "body"],
-      }),
-      execute: async ({ path, body }) => {
-        await writeFile(accountId, profile, path, body);
-        return "Wrote the file.";
-      },
-    }),
-    bash: tool({
-      description: "Run a shell command on your computer to carry out the task. DISPLAY is already set. Do not start Xvfb, x11vnc, or override DISPLAY.",
-      inputSchema: jsonSchema<{ command: string }>({ type: "object", properties: { command: { type: "string" } }, required: ["command"] }),
-      execute: async ({ command }) => bash(accountId, profile, command),
-    }),
-    computer_screenshot: tool({
-      description: "PNG of your desktop. Take one before any click or typing so you know what is on screen.",
-      inputSchema: jsonSchema<Record<string, never>>({ type: "object", properties: {} }),
-      execute: async () => screenshotImage(accountId, profile),
-    }),
-    computer_mouse: tool({
-      description: "Move the pointer to x/y without clicking. Screenshot first. Prefer computer_click when you mean to click.",
-      inputSchema: jsonSchema<{ x: number; y: number }>({
-        type: "object",
-        properties: { x: { type: "number" }, y: { type: "number" } },
-        required: ["x", "y"],
-      }),
-      execute: async ({ x, y }) => moveMouse(accountId, profile, x, y),
-    }),
-    computer_click: tool({
-      description: "Move and left-click at x/y in one step. Screenshot first so the point matches the screen.",
-      inputSchema: jsonSchema<{ x: number; y: number }>({
-        type: "object",
-        properties: { x: { type: "number" }, y: { type: "number" } },
-        required: ["x", "y"],
-      }),
-      execute: async ({ x, y }) => clickAt(accountId, profile, x, y),
-    }),
-    computer_type: tool({
-      description: "Type text into the focused desktop field. Click that field first.",
-      inputSchema: jsonSchema<{ text: string }>({ type: "object", properties: { text: { type: "string" } }, required: ["text"] }),
-      execute: async ({ text }) => typeText(accountId, profile, text),
-    }),
-    computer_key: tool({
-      description: "Press one key combo (Return, Escape, Tab, arrows, or ctrl/alt/shift+x) after the right control is focused.",
-      inputSchema: jsonSchema<{ key: string }>({ type: "object", properties: { key: { type: "string" } }, required: ["key"] }),
-      execute: async ({ key }) => pressKeys(accountId, profile, key),
-    }),
-  };
+  return { ...base, ...profileTools(db, accountId, profile) };
 }

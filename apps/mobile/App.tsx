@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Platform, SafeAreaView, StatusBar, StyleSheet, Text } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system";
@@ -12,7 +12,6 @@ import {
   type Reaction,
   type RichMessage,
   type RosterAgent,
-  type StreamEvent,
 } from "./src/api";
 import { configureForegroundBanners, getPushToken, onPushTap } from "./src/push";
 import { authClient } from "./src/auth";
@@ -27,12 +26,6 @@ import { colors } from "./src/theme/tokens";
 
 configureAuthCookie(authClient.getCookie);
 const core = createCore();
-
-// Resume cursors per room (module-level so re-renders never reset them).
-// Why: SSE reconnects resubmit the last-seen event id; the server replays
-// exactly the missed tail. Survives component churn, not app restarts —
-// cold start reconciles via listMessages + pending notifications instead.
-const cursorByRoom = new Map<string, number>();
 
 /**
  * Turns one saved row into a bubble, resolving reply quotes and names.
@@ -126,6 +119,13 @@ export default function App() {
   const [messages, setMessages] = useState<Bubble[]>([]);
   const [sending, setSending] = useState(false);
   const [typing, setTyping] = useState(false);
+  // Why: the open chat must keep merging server rows after send() returns.
+  // A one-shot watcher stopped before a late reply, so it only appeared on reopen.
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  const agentsRef = useRef(agents);
+  agentsRef.current = agents;
+  const expectReply = useRef(false);
   const [replyTo, setReplyTo] = useState<Bubble | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attachOpen, setAttachOpen] = useState(false);
@@ -326,6 +326,70 @@ export default function App() {
     mergeThread(await loadThread(roomId, roster));
   }
 
+  const liveRoomId = screen.name === "chat" ? screen.conversationId : "";
+
+  /**
+   * Keeps the open chat matched to the server while the room stays on screen.
+   * Why: a reply can land after the next user message, and its saved time is
+   * the turn start, so it belongs between those bubbles. Leaving was the only
+   * reload; this merge runs on that same order without leaving.
+   * Input: the open room id. Output: nothing. Stops on leave.
+   */
+  useEffect(() => {
+    if (!liveRoomId) return;
+    const account = accountId.trim();
+    if (!account) return;
+    let stopped = false;
+    const known = new Set(messagesRef.current.map((bubble) => bubble.id));
+    const pull = async (): Promise<void> => {
+      try {
+        const [history, taps] = await Promise.all([
+          core.listMessages(account, liveRoomId),
+          core.listReactions(account, liveRoomId),
+        ]);
+        if (stopped) return;
+        const fresh = toBubbles(history, taps, agentsRef.current);
+        if (expectReply.current && fresh.some((bubble) => !bubble.mine && !known.has(bubble.id))) {
+          expectReply.current = false;
+          setTyping(false);
+        }
+        for (const bubble of fresh) known.add(bubble.id);
+        mergeThread(fresh);
+      } catch {
+        // A missed tick retries. The thread on screen stays as it is.
+      }
+    };
+    void pull();
+    const timer = setInterval(() => void pull(), 2000);
+    // Web can also hear the live stream. Native fetch has no streaming body,
+    // so the interval above is what paints a reply there. Do not close this
+    // on the first bubble — a second message must still land in order.
+    const unsubscribe =
+      Platform.OS === "web"
+        ? core.subscribeMessages(account, liveRoomId, (event) => {
+            if (event.message || event.reaction || event.type === "done" || event.type === "run" || event.type === "error") {
+              void pull();
+            }
+            if (event.type === "error") {
+              expectReply.current = false;
+              setTyping(false);
+              show(new Error(event.error ?? "The turn failed."));
+            } else if (event.type === "notify" && event.notification) {
+              void core
+                .listNotifications(account)
+                .then((pending) => setPendingCount(pending.length))
+                .catch(() => {});
+              setNote(`${event.notification.title}: ${event.notification.body}`.slice(0, 160));
+            }
+          })
+        : () => {};
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+      unsubscribe();
+    };
+  }, [liveRoomId, accountId]);
+
   /**
    * Enters any room — direct or group — with the right header.
    * Why: one shared path so created, reopened, and direct rooms all show the
@@ -488,105 +552,8 @@ export default function App() {
       setSending(false);
       throw error;
     }
-    const roster = agents;
-    const knownIds = new Set(messages.map((bubble) => bubble.id).concat([confirmedId]));
-    if (Platform.OS === "web") {
-      watchTurnSse(conversationId, roster);
-    } else {
-      // React Native fetch has no streaming body (response.body is null), so
-      // SSE can never deliver there — poll merged threads instead. Stops on
-      // the first unseen agent bubble or after 60s, whichever comes first.
-      watchTurnPoll(conversationId, roster, knownIds);
-    }
+    expectReply.current = true;
     setSending(false);
-  }
-
-  /**
-   * Follows one turn over SSE with cursor resume (web only).
-   * Why: extracted so send() picks SSE where streaming bodies exist and the
-   * poll loop where they do not (native). Every event carrying a cursor
-   * advances the room's resume point, so a dropped connection resubscribes
-   * after exactly the missed tail. Run events end typing; notify events bump
-   * the badge and surface a banner when this room is open.
-   * Input: room id + roster snapshot. Output: nothing.
-   */
-  function watchTurnSse(conversationId: string, roster: RosterAgent[]): void {
-    const track = (event: StreamEvent): void => {
-      if (typeof event.cursor === "number") {
-        cursorByRoom.set(conversationId, Math.max(cursorByRoom.get(conversationId) ?? 0, event.cursor));
-      }
-    };
-    const unsubscribe = core.subscribeMessages(
-      accountId.trim(),
-      conversationId,
-      (event) => {
-        track(event);
-        if (event.type === "done" || event.type === "error" || event.type === "run") {
-          setTyping(false);
-          unsubscribe();
-          if (event.type === "error") {
-            show(new Error(event.error ?? "The turn failed."));
-          }
-          void refreshThread(conversationId, roster).catch(show);
-        } else if (event.message) {
-          setTyping(false);
-          setMessages((current) => {
-            if (current.some((bubble) => bubble.id === event.message!.id)) {
-              return current;
-            }
-            const byId = new Map<string, RichMessage>();
-            return [...current, toBubble(event.message!, byId, new Map(), roster)];
-          });
-        } else if (event.reaction) {
-          void refreshThread(conversationId, roster).catch(show);
-        } else if (event.type === "notify" && event.notification) {
-          void core
-            .listNotifications(accountId.trim())
-            .then((pending) => setPendingCount(pending.length))
-            .catch(() => {});
-          setNote(`${event.notification.title}: ${event.notification.body}`.slice(0, 160));
-        }
-      },
-      { cursor: cursorByRoom.get(conversationId) ?? 0 },
-    );
-    // Safety net: reconcile after 60s even if SSE drops (background turn).
-    // Resume cursor persists, so a later reopen still replays the tail.
-    setTimeout(() => {
-      setTyping(false);
-      unsubscribe();
-      void refreshThread(conversationId, roster).catch(show);
-    }, 60000);
-  }
-
-  /**
-   * Follows one turn by polling merged threads (native only).
-   * Why: same contract as SSE watching, without streaming bodies. Each poll
-   * merges server truth over local state, so nothing ever vanishes; the loop
-   * ends on the first agent bubble that was not known at send time.
-   * Input: room id, roster snapshot, ids known at send time. Output: nothing.
-   */
-  function watchTurnPoll(conversationId: string, roster: RosterAgent[], knownIds: Set<string>): void {
-    let tries = 0;
-    const tick = async (): Promise<void> => {
-      if (tries++ >= 24) {
-        setTyping(false);
-        void refreshThread(conversationId, roster).catch(show);
-        return;
-      }
-      try {
-        const fresh = await loadThread(conversationId, roster);
-        mergeThread(fresh);
-        if (fresh.some((bubble) => !bubble.mine && !knownIds.has(bubble.id))) {
-          setTyping(false);
-          void refreshThread(conversationId, roster).catch(show);
-          return;
-        }
-      } catch {
-        // Transient network: keep polling until the cap.
-      }
-      setTimeout(() => void tick(), 2500);
-    };
-    void tick();
   }
 
   const MAX_IMAGE_BYTES = 5_000_000;

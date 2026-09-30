@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { profileToolNames } from "../computer/profile-tools.js";
+import { workerToolNames } from "../rooms/subagents.js";
 import { listTools } from "./tools.js";
 
 describe("listTools", () => {
@@ -10,19 +12,11 @@ describe("listTools", () => {
     const names = listTools(plugins).map((tool) => tool.name);
     expect(names).toEqual([
       "add_to_group",
-      "bash",
       "check_worker",
-      "computer_click",
-      "computer_key",
-      "computer_mouse",
-      "computer_screenshot",
-      "computer_type",
       "create_group",
       "create_routine",
       "delegate",
       "delete_routine",
-      "glob",
-      "grep",
       "hire_subagent",
       "list_routines",
       "list_team",
@@ -30,7 +24,6 @@ describe("listTools", () => {
       "pluginA_search",
       "pluginB_search",
       "react_to_message",
-      "read",
       "read_history",
       "read_skill",
       "send_message",
@@ -39,10 +32,13 @@ describe("listTools", () => {
       "todo_list",
       "todo_write",
       "update_routine",
-      "web_fetch",
-      "web_search",
-      "write",
     ]);
     expect(listTools(plugins).map((tool) => tool.name)).toEqual(names);
+    for (const name of profileToolNames()) {
+      expect(names).not.toContain(name);
+    }
+    expect(workerToolNames(true)).toEqual([...profileToolNames(), "read_history", "read_skill"].sort());
+    expect(workerToolNames(true)).toContain("web_search");
+    expect(workerToolNames(false)).toEqual(["read_history", "read_skill"]);
   });
 });

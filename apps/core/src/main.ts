@@ -7,6 +7,6 @@ const port = Number(process.env.PORT ?? 3000);
 
 const db = getDb(databaseUrl);
 await startServer(db, port);
-// Unattended loop: due routines fire, crashed runs heal, queued rooms drain,
-// pings relay, old resume events prune. No manual step after restart.
+// Unattended loop: due routines fire, crashed runs heal, pings relay, old
+// resume events prune. Chat queued during a live turn starts when it ends.
 startScheduler(db, { skillsRoot: process.env.SKILLS_DIR });

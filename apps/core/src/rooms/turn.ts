@@ -21,18 +21,15 @@ import { agents, conversations, delegations, members, messages, summaryItems } f
 import { keyFor } from "../keys/keys.js";
 import { getModel } from "../model/get-model.js";
 import { speakers } from "./mentions.js";
-import { createGroupRoom, saveUserMessage } from "./rooms.js";
+import { claimQueuedForRoom, createGroupRoom, saveUserMessage } from "./rooms.js";
 import { propose } from "../skills/proposals.js";
-import { skillCatalog, readSkill } from "../skills/skills.js";
+import { readSkillForAccount, skillCatalogForAccount } from "../skills/skills.js";
 import { mergeSummary } from "../memory/summary.js";
 import { listTools } from "../skills/tools.js";
-import { bash, readFile, writeFile, screenshotImage, moveMouse, clickAt, typeText, pressKeys } from "../computer/computer.js";
-import { globFiles, grepFiles } from "../computer/find.js";
-import { webFetch } from "../computer/web.js";
-import { webSearch } from "../computer/search.js";
-import { toolKeyFor } from "../keys/tools.js";
-import { accountHome, accountShared, createProfile } from "../linux/linux.js";
+import { profileToolNames } from "../computer/profile-tools.js";
+import { createProfile } from "../linux/linux.js";
 import { saveNotification } from "../notify/notify.js";
+import { takeOver } from "../desktop/desktop.js";
 import { todoList, todoWrite } from "../memory/todos.js";
 import { createOwnRoutine, deleteOwnRoutine, listOwnRoutines, updateOwnRoutine } from "../routines/routines.js";
 import { saveSendMessage, saveReaction, blocksToText, type TurnEvent } from "./send-message.js";
@@ -40,7 +37,7 @@ import { appendEvent } from "./events.js";
 import { acquireRun, failRun, finishRun, heartbeatRun } from "./runs.js";
 import { publish, type StreamEvent } from "./stream.js";
 import { parseDataUri } from "./uploads.js";
-import { addGroupMember, alreadyDelivered, checkWorker, claimDelivery, failuresSinceLastUser, hireSubagent, listTeam, recordDelegation, runWorker, spawnWorker, stopWorker, workerFollowupCue, workerSuccessCue } from "./subagents.js";
+import { addGroupMember, alreadyDelivered, checkWorker, claimDelivery, failuresSinceLastUser, hireSubagent, listTeam, recordDelegation, runWorker, spawnWorker, stopWorker, workerFollowupCue } from "./subagents.js";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -226,7 +223,50 @@ export async function runTurn(
     throw error;
   } finally {
     clearInterval(beat);
+    // The run row is already done or failed, so the room slot is free.
+    // Start anything that queued during this turn before we return.
+    await continueQueuedTurn(db, accountId, conversationId, generate, skillsRoot, options?.onEvent).catch(() => {});
   }
+}
+
+/**
+ * Starts the next turn for text that arrived while this room was busy.
+ * Why: the person should not wait for the scheduler tick. The ending turn
+ * claims the queue and speaks for the newest row; earlier rows are already
+ * in the thread. A busy claim puts the newest row back so the turn that
+ * holds the room picks it up when it ends.
+ * Input: db, account/conversation ids, optional model stub, skills root, live event callback.
+ * Output: true when a follow-up turn started.
+ */
+export async function continueQueuedTurn(
+  db: Db,
+  accountId: string,
+  conversationId: string,
+  generate?: (input: TurnInput) => Promise<GenerateResult>,
+  skillsRoot?: string,
+  onEvent?: (event: StreamEvent) => void,
+): Promise<boolean> {
+  const claimed = await claimQueuedForRoom(db, accountId, conversationId);
+  const latest = claimed[claimed.length - 1];
+  if (!latest) return false;
+  let runId: string;
+  try {
+    runId = (await acquireRun(db, accountId, conversationId, "turn", 0)).id;
+  } catch (error) {
+    await db
+      .update(messages)
+      .set({ queued: true })
+      .where(and(eq(messages.id, latest.id), eq(messages.accountId, accountId)))
+      .catch(() => {});
+    if (error instanceof Error && /busy/.test(error.message)) return false;
+    throw error;
+  }
+  await runTurn(db, accountId, conversationId, latest.body, generate, skillsRoot, {
+    existingRunId: runId,
+    alreadySavedUserMessage: { id: latest.id, text: latest.body },
+    onEvent,
+  });
+  return true;
 }
 
 /**
@@ -262,20 +302,12 @@ async function resumeParentAfterWorker(
   });
 }
 
-// Grace before auto-delivery (Phase 19): the parent turn just ended, and the
-// person is often mid-conversation ("Ok", follow-ups). Waiting lets a live
-// turn absorb the result via check_worker first; alreadyDelivered + claim
-// then cut the double-post either way.
-const DELIVERY_GRACE_MS = 60_000;
-
 /**
  * Posts one finished worker's result to the room in the parent's voice.
- * Why: check_worker is poll-only, so without this the parent's "I'll let you
- * know" promise is unkeepable — good results rot in the delegation row. Mirrors
- * the failure re-wake: skip when the result already reached the room, claim
- * exactly-once delivery, then run a cue turn as the parent that summarizes it.
- * Input: db, room/parent ids, delegation id, settled worker, optional generate
- * stub (tests) and skills root. Output: "delivered" or "skipped".
+ * Why: the worker cannot message the person. Its final text is posted once.
+ * A NEEDS_PERSON line means the screen is waiting on them: their computer is
+ * handed over and they are pinged, instead of the agent typing a password.
+ * Input: db, room/parent ids, delegation id, settled worker. Output: "delivered" or "skipped".
  */
 export async function deliverWorkerResult(
   db: Db,
@@ -300,12 +332,45 @@ export async function deliverWorkerResult(
   if (!(await claimDelivery(db, input.delegationId))) {
     return "skipped";
   }
-  const cue = workerSuccessCue(input.settled);
-  await runTurn(db, input.accountId, input.conversationId, cue, input.generate, input.skillsRoot, {
-    cue,
-    speakerId: input.parentAgentId,
-    acquireTimeoutMs: 120_000,
-    onEvent: (event) => publish(input.accountId, input.conversationId, event),
+  const raw = input.settled.result.trim().slice(0, 4000) || "The worker finished with no output.";
+  const needs = raw.match(/NEEDS_PERSON:\s*(.+)/i);
+  const text = needs
+    ? `I need you on my computer. ${needs[1].trim()} Tell me when you're done and I'll continue.`
+    : raw;
+  if (needs) {
+    const [parent] = await db
+      .select({ linuxProfile: agents.linuxProfile })
+      .from(agents)
+      .where(and(eq(agents.id, input.parentAgentId), eq(agents.accountId, input.accountId)));
+    if (parent?.linuxProfile) takeOver(input.accountId, parent.linuxProfile);
+    const note = await saveNotification(db, {
+      accountId: input.accountId,
+      conversationId: input.conversationId,
+      agentId: input.parentAgentId,
+      title: "Your turn on my computer",
+      body: needs[1].trim().slice(0, 240),
+      urgency: "action-needed",
+    }).catch(() => null);
+    if (note) {
+      publish(input.accountId, input.conversationId, { type: "notify", notification: note });
+    }
+  }
+  const saved = await saveSendMessage(db, {
+    accountId: input.accountId,
+    conversationId: input.conversationId,
+    agentId: input.parentAgentId,
+    blocks: [{ kind: "text", markdown: text }],
+    createdAt: new Date(),
+  });
+  const logged = await appendEvent(db, {
+    accountId: input.accountId,
+    conversationId: input.conversationId,
+    event: { type: "message", message: saved },
+  }).catch(() => null);
+  publish(input.accountId, input.conversationId, {
+    type: "message",
+    message: saved,
+    ...(logged ? { cursor: logged.id } : {}),
   });
   return "delivered";
 }
@@ -370,7 +435,7 @@ async function speakOnce(
     .from(summaryItems)
     .where(and(eq(summaryItems.conversationId, conversationId), eq(summaryItems.accountId, accountId)));
   const catalog = skillsRoot
-    ? skillCatalog(skillsRoot)
+    ? skillCatalogForAccount(skillsRoot, accountId)
         .map((skill) => `${skill.name}: ${skill.description}`)
         .join("\n")
     : "";
@@ -523,173 +588,13 @@ async function speakOnce(
 }
 
 /**
- * Lists the Linux + desktop tool names offered to the model.
- * Why: exported pure helper so tests lock the catalog without pulling AI SDK
- * tool generics into the public type surface (which breaks declaration emit).
- * Must stay in sync with linuxTools() below — same names, sorted.
+ * Lists the Linux tool names a worker can call.
+ * Why: tests lock the worker set. The chatting agent does not receive these
+ * tools, so a search cannot hold the room. The names live in profile-tools.ts.
  * Input: none. Output: sorted tool names.
  */
 export function linuxToolNames(): string[] {
-  return [
-    "bash",
-    "computer_click",
-    "computer_key",
-    "computer_mouse",
-    "computer_screenshot",
-    "computer_type",
-    "glob",
-    "grep",
-    "read",
-    "web_fetch",
-    "web_search",
-    "write",
-  ].sort();
-}
-
-/**
- * Builds the Linux + grounded desktop toolset for one agent profile.
- * Why: single constructor for both model paths (agentic Tx path and legacy
- * single-shot) so the catalog, the prefix, and the callable tools can never
- * drift apart. Computer tools operate on the agent's assigned deterministic
- * display — the same :N the viewer proxies — and serialize per screen.
- * Search/files tools ride along because they exec inside the same container.
- * Input: database (for search keys), account id, Linux username.
- * Output: AI SDK tool map.
- */
-function linuxTools(db: Db, accountId: string, profile: string) {
-  const home = accountHome(accountId, profile);
-  const shared = accountShared(accountId);
-  return {
-    read: tool({
-      description: `Read one file in ${home} or ${shared}. Use for a single known path. If you are the agent in the chat, hand a reading job to spawn_worker instead.`,
-      inputSchema: jsonSchema<{ path: string }>({
-        type: "object",
-        properties: { path: { type: "string" } },
-        required: ["path"],
-      }),
-      execute: async ({ path }) => readFile(accountId, profile, path),
-    }),
-    write: tool({
-      description: `Write one file in ${home} or ${shared}. Use when you already know the path and the body. Project edits belong on a worker via spawn_worker.`,
-      inputSchema: jsonSchema<{ path: string; body: string }>({
-        type: "object",
-        properties: { path: { type: "string" }, body: { type: "string" } },
-        required: ["path"],
-      }),
-      execute: async ({ path, body }) => {
-        await writeFile(accountId, profile, path, body);
-        return "Wrote the file.";
-      },
-    }),
-    bash: tool({
-      description: "Run one shell command on your Linux computer. DISPLAY is already your 1280x800 desktop, so chromium and xterm open on the screen the person watches. Never start Xvfb/x11vnc or override DISPLAY. If you are the agent in the chat, hand real work to spawn_worker; use bash only for one quick command, or when you are the worker doing the task.",
-      inputSchema: jsonSchema<{ command: string }>({
-        type: "object",
-        properties: { command: { type: "string" } },
-        required: ["command"],
-      }),
-      execute: async ({ command }) => bash(accountId, profile, command),
-    }),
-    computer_screenshot: tool({
-      description: "PNG of your assigned 1280x800 desktop. Call before any click or type so coordinates match the screen. A desktop task belongs on a worker via spawn_worker so the chat stays free.",
-      inputSchema: jsonSchema<Record<string, never>>({ type: "object", properties: {} }),
-      execute: async () => screenshotImage(accountId, profile),
-    }),
-    computer_mouse: tool({
-      description: "Move the pointer to x/y (0-1279, 0-799) without clicking. Screenshot first. Prefer computer_click when you mean to click.",
-      inputSchema: jsonSchema<{ x: number; y: number }>({
-        type: "object",
-        properties: { x: { type: "number" }, y: { type: "number" } },
-        required: ["x", "y"],
-      }),
-      execute: async ({ x, y }) => moveMouse(accountId, profile, x, y),
-    }),
-    computer_click: tool({
-      description: "Move and left-click at x/y on your desktop in one step. Screenshot first. Prefer this over mouse plus a separate click.",
-      inputSchema: jsonSchema<{ x: number; y: number }>({
-        type: "object",
-        properties: { x: { type: "number" }, y: { type: "number" } },
-        required: ["x", "y"],
-      }),
-      execute: async ({ x, y }) => clickAt(accountId, profile, x, y),
-    }),
-    computer_type: tool({
-      description: "Type 1-4000 characters into the focused desktop field. Click that field first. Driving a whole desktop session belongs on a worker.",
-      inputSchema: jsonSchema<{ text: string }>({
-        type: "object",
-        properties: { text: { type: "string" } },
-        required: ["text"],
-      }),
-      execute: async ({ text }) => typeText(accountId, profile, text),
-    }),
-    computer_key: tool({
-      description: "Press one key combo: Return, Escape, Tab, arrows, F-keys, or ctrl/alt/shift+x. Use after the right control is focused.",
-      inputSchema: jsonSchema<{ key: string }>({
-        type: "object",
-        properties: { key: { type: "string" } },
-        required: ["key"],
-      }),
-      execute: async ({ key }) => pressKeys(accountId, profile, key),
-    }),
-    web_fetch: tool({
-      description:
-        "Read one public page as text when you already have the URL — and when the person names a site (like skills.sh), fetch it FIRST before searching. JS-heavy pages render automatically. Returns title, text, and outlinks. Never send the person to their browser for a page you can open. Never end the turn asking for details when a fetch is untried.",
-      inputSchema: jsonSchema<{ url: string }>({
-        type: "object",
-        properties: { url: { type: "string", description: "Full https:// address." } },
-        required: ["url"],
-      }),
-      execute: async ({ url }) => {
-        const page = await webFetch(accountId, profile, url);
-        const byline = [page.siteName, page.byline].filter((part) => part.length > 0).join(" · ");
-        return [
-          `# ${page.title || "(no title)"}${byline ? `\n${byline}` : ""}`,
-          `Source: ${page.url}${page.rendered ? " (JS-rendered)" : ""}${page.truncated ? " [truncated]" : ""}`,
-          "",
-          page.markdown,
-        ].join("\n");
-      },
-    }),
-    web_search: tool({
-      description:
-        "Search the public web. Returns title, URL, and snippet, not page text. Use to pick links, then web_fetch the ones worth reading. Quick lookups run inline — no worker needed. One empty result never ends the task: retry with different words, fetch the named site directly, or spawn_worker once. Never ask the person for keywords while a search or fetch is untried.",
-      inputSchema: jsonSchema<{ query: string; numResults?: number }>({
-        type: "object",
-        properties: { query: { type: "string" }, numResults: { type: "number" } },
-        required: ["query"],
-      }),
-      execute: async ({ query, numResults }) => {
-        const [braveKey, exaKey] = await Promise.all([
-          toolKeyFor(db, accountId, "brave").catch(() => null),
-          toolKeyFor(db, accountId, "exa").catch(() => null),
-        ]);
-        const searched = await webSearch(accountId, profile, query, { numResults, braveKey, exaKey });
-        if (searched.results.length === 0) return `No results (${searched.provider}). Try different words.`;
-        return [
-          `Search via ${searched.provider}:`,
-          ...searched.results.map((row, index) => `${index + 1}. ${row.title}\n   ${row.url}\n   ${row.snippet}`),
-        ].join("\n");
-      },
-    }),
-    glob: tool({
-      description: "List files by name pattern (for example **/*.ts) under your home or /shared, up to 100 paths. Use to find a file before read. A wide search belongs on a worker.",
-      inputSchema: jsonSchema<{ pattern: string; path?: string }>({
-        type: "object",
-        properties: { pattern: { type: "string" }, path: { type: "string" } },
-        required: ["pattern"],
-      }),
-      execute: async ({ pattern, path }) => globFiles(accountId, profile, pattern, path),
-    }),
-    grep: tool({
-      description: "Search file contents for a pattern under your home or /shared. Returns file:line hits, up to 100. Use when you know the text but not the file. A broad hunt belongs on a worker.",
-      inputSchema: jsonSchema<{ pattern: string; path?: string; include?: string }>({
-        type: "object",
-        properties: { pattern: { type: "string" }, path: { type: "string" }, include: { type: "string" } },
-        required: ["pattern"],
-      }),
-      execute: async ({ pattern, path, include }) => grepFiles(accountId, profile, pattern, { path, include }),
-    }),
-  };
+  return profileToolNames();
 }
 
 function mentioned(body: string, memberRows: { id: string; name: string }[], onlyLeading = false): string[] {
@@ -987,7 +892,7 @@ function makeSendMessageTool(
 ) {
   return tool({
     description:
-      "The only text the person sees. Call this first on every user turn: a direct answer, or a one-line ack that names the worker you are about to start. Call it again with the process id, and again when check_worker has a result to deliver. Plain assistant text is invisible.",
+      "The only text the person sees. Call this first on every user turn: a direct answer, or a one-line ack that you started the work. Never include a process id. Call it again when check_worker has a result to deliver. Plain assistant text is invisible.",
     inputSchema: jsonSchema<{ blocks: unknown; replyTo?: string | null }>({
       type: "object",
       properties: { blocks: { type: "array" }, replyTo: { type: ["string", "null"] } },
@@ -1112,7 +1017,7 @@ async function replyWithModelTx(
       execute: async ({ name }) => {
         if (!input.skillsRoot) return "No skills directory configured.";
         try {
-          return readSkill(input.skillsRoot, name);
+          return readSkillForAccount(input.skillsRoot, accountId, name);
         } catch {
           return "Skill not found.";
         }
@@ -1280,7 +1185,7 @@ async function replyWithModelTx(
     }),
     spawn_worker: tool({
       description:
-        "Default for any real task: files, shell, desktop, web, research, or more than one quick step. Returns a process id immediately so you stay in the chat. The task must name the method and the exact text the worker returns. A page or a search uses web_search and web_fetch, never Chromium, screenshots, or clicks. Desktop tools only when the person asked to see or drive the screen. Tell the person the id in send_message. If check_worker is failed or empty, spawn exactly one corrected task. A second failure: tell the person and stop.",
+        "The only way to search, fetch a page, read or write a file, run a command, or use the desktop, including opening Chrome. You do not have those tools. A login is not a refusal: the task opens the page and, if a password, 2FA, captcha, or payment appears, the worker stops with NEEDS_PERSON and one instruction. Never type their password. Returns immediately. Tell the person you started, with no process id, then stop. A lookup uses web_search then web_fetch. Chrome only when they asked to open or use the browser.",
       inputSchema: jsonSchema<{
         label: string;
         role: string;
@@ -1341,20 +1246,17 @@ async function replyWithModelTx(
           skillsRoot: input.skillsRoot,
           onSettled: (settled) => {
             if (settled.status !== "failed") {
-              // Success auto-delivery (Phase 19): after a grace window the
-              // parent posts the summary itself, so "I'll let you know" holds
-              // without the person having to ask. Guarded exactly-once.
-              const timer = setTimeout(() => {
-                void deliverWorkerResult(db, {
-                  accountId,
-                  conversationId,
-                  parentAgentId: agentId,
-                  delegationId: spawned.delegationId,
-                  skillsRoot: input.skillsRoot,
-                  settled,
-                }).catch(() => {});
-              }, DELIVERY_GRACE_MS);
-              (timer as unknown as { unref?: () => void }).unref?.();
+              // The worker's final text is the answer. Post it now, in the
+              // parent's voice. A second model turn was dropping finished
+              // results when the room was busy.
+              void deliverWorkerResult(db, {
+                accountId,
+                conversationId,
+                parentAgentId: agentId,
+                delegationId: spawned.delegationId,
+                skillsRoot: input.skillsRoot,
+                settled,
+              }).catch(() => {});
               return;
             }
             void resumeParentAfterWorker(db, {
@@ -1469,7 +1371,9 @@ async function replyWithModelTx(
     model: getModel(input.provider, input.modelId, credential.apiKey, credential.baseUrl),
     instructions: prompt.instructions,
     messages: prompt.messages,
-    tools: { ...voice, ...(profile ? linuxTools(db, accountId, profile) : {}) },
+    // Computer tools stay on the worker. This turn only talks and spawns, so a
+    // search cannot hold the room while the person sends the next message.
+    tools: voice,
     stopWhen: isStepCount(12),
     providerOptions:
       input.provider === "openai"
@@ -1518,13 +1422,10 @@ async function replyWithModelTx(
 export async function replyWithModel(db: Db, input: TurnInput): Promise<GenerateResult> {
   const credential = await keyFor(db, input.accountId, input.provider);
   const prompt = toModelPrompt(input);
-  const profile = input.linuxProfile;
   const result = await generateText({
     model: getModel(input.provider, input.modelId, credential.apiKey, credential.baseUrl),
     instructions: prompt.instructions,
     messages: prompt.messages,
-    tools: profile ? linuxTools(db, input.accountId, profile) : undefined,
-    stopWhen: profile ? isStepCount(12) : undefined,
     providerOptions:
       input.provider === "openai"
         ? { openai: { promptCacheKey: input.promptCacheKey, promptCacheRetention: "24h" } }

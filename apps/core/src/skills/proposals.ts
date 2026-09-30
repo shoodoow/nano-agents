@@ -5,6 +5,7 @@ import { and, eq, sql } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
 import { agents, proposals } from "../db/schema.js";
 import { remember } from "../memory/memory.js";
+import { accountSkillRoot } from "./skills.js";
 
 type Database = Pick<ReturnType<typeof getDb>, "insert" | "select" | "update">;
 
@@ -72,7 +73,7 @@ export async function approve(db: Database, accountId: string, proposalId: strin
     return null;
   }
   if (proposal.kind === "skill") {
-    writeSkill(skillsRoot, proposal.body);
+    writeSkill(skillsRoot, accountId, proposal.body);
   }
   if (proposal.kind === "prompt") {
     await db
@@ -114,7 +115,7 @@ export async function reject(db: Database, accountId: string, proposalId: string
   return updated ?? null;
 }
 
-function writeSkill(skillsRoot: string | undefined, body: string) {
+function writeSkill(skillsRoot: string | undefined, accountId: string, body: string) {
   if (!skillsRoot) {
     throw new Error("A skill proposal needs a skills directory.");
   }
@@ -122,7 +123,8 @@ function writeSkill(skillsRoot: string | undefined, body: string) {
   if (!name) {
     throw new Error("A skill proposal needs a name.");
   }
-  const directory = join(skillsRoot, name);
+  // Account folder, not the shared root: another tenant must not receive this file.
+  const directory = join(accountSkillRoot(skillsRoot, accountId), name);
   mkdirSync(directory, { recursive: true });
   writeFileSync(join(directory, "SKILL.md"), body);
 }

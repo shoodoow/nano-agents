@@ -3,6 +3,7 @@ import { getDb } from "../db/client.js";
 import { conversations, delegations, members, messages } from "../db/schema.js";
 import { eq } from "drizzle-orm";
 import { createAccount, createAgent } from "../roster/roster.js";
+import { saveUserMessage } from "./rooms.js";
 import { spawnWorker } from "./subagents.js";
 import { deliverWorkerResult, runTurn, toModelPrompt } from "./turn.js";
 
@@ -60,6 +61,29 @@ describe("runTurn", () => {
     expect(stored.filter((message) => message.agentId === ada.id)).toHaveLength(1);
     expect(stored.filter((message) => message.agentId === cy.id)).toHaveLength(1);
     expect(stored.filter((message) => message.agentId === bea.id)).toHaveLength(0);
+  });
+
+  it("answers a message that arrived during the turn without waiting for the scheduler", async () => {
+    const account = await createAccount(db, { name: "Queue" });
+    const ada = await createAgent(db, account.id, agent("Ada"));
+    const [room] = await db
+      .insert(conversations)
+      .values({ accountId: account.id, kind: "direct", ownerAgentId: ada.id, title: "queue" })
+      .returning();
+    await db.insert(members).values({ conversationId: room!.id, accountId: account.id, agentId: ada.id });
+    const seen: string[] = [];
+    await runTurn(db, account.id, room!.id, "first", async ({ tail }) => {
+      seen.push(tail);
+      if (seen.length === 1) {
+        await saveUserMessage(db, account.id, room!.id, { text: "second", queued: true });
+      }
+      return "ok";
+    });
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toContain("second");
+    const stored = await db.select().from(messages).where(eq(messages.conversationId, room!.id));
+    expect(stored.filter((message) => message.body === "second")).toHaveLength(1);
+    expect(stored.find((message) => message.body === "second")?.queued).toBe(false);
   });
 
   it("lets a reply mention the next agent once", async () => {
@@ -198,7 +222,7 @@ describe("runTurn", () => {
     });
     expect(first).toBe("delivered");
     const stored = await db.select().from(messages).where(eq(messages.conversationId, room!.id));
-    expect(stored.some((m) => m.agentId === owner.id && m.body.includes("three ledger rows"))).toBe(true);
+    expect(stored.some((m) => m.agentId === owner.id && m.body.includes("three rows in the ledger"))).toBe(true);
     const second = await deliverWorkerResult(db, {
       accountId: account.id,
       conversationId: room!.id,
