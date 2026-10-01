@@ -1,15 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { profileToolNames } from "../computer/profile-tools.js";
 import { workerToolNames } from "../rooms/subagents.js";
-import { listTools } from "./tools.js";
+import { dispatcherToolNames } from "../turn/tools/registry.js";
 
-describe("listTools", () => {
-  it("includes the default tools and prefixes plugin tools, in a stable order", () => {
-    const plugins = [
-      { server: "pluginB", tools: [{ name: "search", description: "Search B." }] },
-      { server: "pluginA", tools: [{ name: "search", description: "Search A." }] },
-    ];
-    const names = listTools(plugins).map((tool) => tool.name);
+describe("dispatcher SDK tools", () => {
+  it("registers built-in dispatcher tools in stable sorted order", () => {
+    const names = dispatcherToolNames();
     expect(names).toEqual([
       "add_to_group",
       "check_worker",
@@ -21,8 +17,6 @@ describe("listTools", () => {
       "list_routines",
       "list_team",
       "notify_user",
-      "pluginA_search",
-      "pluginB_search",
       "react_to_message",
       "read_history",
       "read_skill",
@@ -33,7 +27,7 @@ describe("listTools", () => {
       "todo_write",
       "update_routine",
     ]);
-    expect(listTools(plugins).map((tool) => tool.name)).toEqual(names);
+    expect(dispatcherToolNames()).toEqual(names);
     for (const name of profileToolNames()) {
       expect(names).not.toContain(name);
     }

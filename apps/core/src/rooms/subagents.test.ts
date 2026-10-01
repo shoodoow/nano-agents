@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
-import { and, eq } from "drizzle-orm";
+import { and, count, eq } from "drizzle-orm";
 import { getDb } from "../db/client.js";
 import { agents, conversations, delegations, members, messages } from "../db/schema.js";
 import { createAccount, createAgent } from "../roster/roster.js";
@@ -16,8 +16,10 @@ import {
   reclaimStaleDelegations,
   recordDelegation,
   runWorker,
+  MAX_WORKERS_PER_PARENT,
   spawnWorker,
   stopWorker,
+  WorkerCapacityError,
   workerSuccessCue,
 } from "./subagents.js";
 
@@ -252,6 +254,138 @@ describe("subagents and teams", () => {
     const reclaimed = await reclaimStaleDelegations(db, 1_000);
     expect(reclaimed.map((row) => row.id)).toContain(stale.delegationId);
     expect((await checkWorker(db, account.id, stale.workerId)).status).toBe("failed");
+  });
+
+  it("reuses a free hidden worker instead of inserting another row", async () => {
+    const account = await createAccount(db, { name: "Reuse" });
+    const chief = await createAgent(db, account.id, agent("Chief"));
+    const [room] = await db
+      .insert(conversations)
+      .values({ accountId: account.id, kind: "direct", ownerAgentId: chief.id, title: "dm" })
+      .returning();
+    await db.insert(members).values({ conversationId: room!.id, accountId: account.id, agentId: chief.id });
+
+    const first = await spawnWorker(db, {
+      accountId: account.id,
+      conversationId: room!.id,
+      parentAgentId: chief.id,
+      label: "Job",
+      role: "Teammate",
+      jobDescription: "Runs tasks.",
+      task: "Task 1",
+    });
+    await runWorker(db, {
+      accountId: account.id,
+      conversationId: room!.id,
+      parentAgentId: chief.id,
+      childId: first.workerId,
+      delegationId: first.delegationId,
+      task: "Task 1",
+      generate: async () => "Done",
+    });
+    const again = await spawnWorker(db, {
+      accountId: account.id,
+      conversationId: room!.id,
+      parentAgentId: chief.id,
+      label: "Reuse",
+      role: "Teammate",
+      jobDescription: "Runs tasks.",
+      task: "Task 2",
+    });
+    const [workerRows] = await db
+      .select({ value: count() })
+      .from(agents)
+      .where(and(eq(agents.parentId, chief.id), eq(agents.accountId, account.id), eq(agents.hidden, true)));
+    expect(workerRows?.value).toBe(1);
+    expect(again.workerId).toBe(first.workerId);
+    expect((await checkWorker(db, account.id, again.workerId)).status).toBe("running");
+  });
+
+  it("throws WorkerCapacityError when every hidden worker is still running", async () => {
+    const account = await createAccount(db, { name: "Full" });
+    const chief = await createAgent(db, account.id, agent("Chief"));
+    const [room] = await db
+      .insert(conversations)
+      .values({ accountId: account.id, kind: "direct", ownerAgentId: chief.id, title: "dm" })
+      .returning();
+    await db.insert(members).values({ conversationId: room!.id, accountId: account.id, agentId: chief.id });
+
+    for (let i = 0; i < MAX_WORKERS_PER_PARENT; i++) {
+      await spawnWorker(db, {
+        accountId: account.id,
+        conversationId: room!.id,
+        parentAgentId: chief.id,
+        label: `Busy-${i}`,
+        role: "Teammate",
+        jobDescription: "Runs tasks.",
+        task: `Task ${i}`,
+      });
+    }
+    await expect(
+      spawnWorker(db, {
+        accountId: account.id,
+        conversationId: room!.id,
+        parentAgentId: chief.id,
+        label: "One more",
+        role: "Teammate",
+        jobDescription: "Runs tasks.",
+        task: "Nope",
+      }),
+    ).rejects.toBeInstanceOf(WorkerCapacityError);
+  });
+
+  it("does not count hidden workers toward the teammate hire cap", async () => {
+    const account = await createAccount(db, { name: "Split caps" });
+    const cmo = await createAgent(db, account.id, agent("CMO"));
+    const group = await createGroupRoom(db, {
+      accountId: account.id,
+      ownerAgentId: cmo.id,
+      title: "Marketing",
+      memberIds: [],
+    });
+    for (let i = 0; i < MAX_WORKERS_PER_PARENT; i++) {
+      const spawned = await spawnWorker(db, {
+        accountId: account.id,
+        conversationId: group.id,
+        parentAgentId: cmo.id,
+        label: `Worker-${i}`,
+        role: "Runner",
+        jobDescription: "Runs tasks.",
+        task: `Task ${i}`,
+      });
+      await runWorker(db, {
+        accountId: account.id,
+        conversationId: group.id,
+        parentAgentId: cmo.id,
+        childId: spawned.workerId,
+        delegationId: spawned.delegationId,
+        task: `Task ${i}`,
+        generate: async () => "ok",
+      });
+    }
+    const social = await hireSubagent(db, {
+      accountId: account.id,
+      conversationId: group.id,
+      parentAgentId: cmo.id,
+      label: "Social",
+      role: "Social manager",
+      jobDescription: "Grow channels.",
+    });
+    expect(social.hidden).toBe(false);
+    const team = await listTeam(db, account.id, cmo.id);
+    expect(team.some((m) => m.id === social.id)).toBe(true);
+    expect(team.length).toBe(1);
+    expect(
+      await spawnWorker(db, {
+        accountId: account.id,
+        conversationId: group.id,
+        parentAgentId: cmo.id,
+        label: "Reuse slot",
+        role: "Runner",
+        jobDescription: "Runs tasks.",
+        task: "After teammates hire",
+      }),
+    ).toMatchObject({ status: "running" });
   });
 
   it("claims delivery exactly once and spots an already-posted result", async () => {

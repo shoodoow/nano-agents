@@ -31,21 +31,36 @@ import {
   runWorker,
   spawnWorker,
   stopWorker,
+  WorkerCapacityError,
 } from "../../rooms/subagents.js";
 import { readSkillForAccount } from "../../skills/skills.js";
 import { createOwnRoutine, deleteOwnRoutine, listOwnRoutines, updateOwnRoutine } from "../../routines/routines.js";
 import { emitTurnBus } from "../events/bus.js";
 import { DELEGATE_SYNC_TIMEOUT_MS, MAX_DELEGATION_DEPTH } from "../constants.js";
-import { validateWorkerTask } from "./catalog.js";
+import { normalizeSendMessageInput } from "./normalize-send-message.js";
+import { validateWorkerTask } from "./worker-task.js";
 import type { ToolContext } from "./context.js";
+import { ZodError } from "zod";
 
 export type ToolExecutor = (ctx: ToolContext, input: Record<string, unknown>) => Promise<unknown>;
 
 export async function executeSendMessage(ctx: ToolContext, input: Record<string, unknown>) {
-  const parsed = sendMessageInputSchema.parse({
-    blocks: input.blocks,
-    replyTo: input.replyTo ?? null,
-  });
+  let parsed: ReturnType<typeof sendMessageInputSchema.parse>;
+  const normalized = normalizeSendMessageInput(input);
+  try {
+    parsed = sendMessageInputSchema.parse({
+      blocks: normalized.blocks,
+      replyTo: normalized.replyTo ?? null,
+    });
+  } catch (error) {
+    if (error instanceof ZodError) {
+      return {
+        error:
+          'Invalid send_message blocks. Use blocks: [{ "kind": "text", "markdown": "your message" }]. Each block must include kind (text | image | code | file | widget).',
+      };
+    }
+    throw error;
+  }
   const saved = await saveSendMessage(ctx.store, {
     accountId: ctx.accountId,
     conversationId: ctx.conversationId,
@@ -216,18 +231,26 @@ export async function executeSpawnWorker(ctx: ToolContext, input: Record<string,
   const valid = validateWorkerTask(task);
   if (!valid.ok) return { error: valid.hint };
   const parsed = spawnWorkerInputSchema.parse(input);
-  const spawned = await spawnWorker(ctx.store, {
-    accountId: ctx.accountId,
-    conversationId: ctx.conversationId,
-    parentAgentId: ctx.agentId,
-    label: parsed.label,
-    role: parsed.role,
-    personality: parsed.personality,
-    jobDescription: parsed.jobDescription,
-    task: parsed.task,
-    provider: parsed.provider,
-    modelId: parsed.modelId,
-  });
+  let spawned: Awaited<ReturnType<typeof spawnWorker>>;
+  try {
+    spawned = await spawnWorker(ctx.store, {
+      accountId: ctx.accountId,
+      conversationId: ctx.conversationId,
+      parentAgentId: ctx.agentId,
+      label: parsed.label,
+      role: parsed.role,
+      personality: parsed.personality,
+      jobDescription: parsed.jobDescription,
+      task: parsed.task,
+      provider: parsed.provider,
+      modelId: parsed.modelId,
+    });
+  } catch (error) {
+    if (error instanceof WorkerCapacityError) {
+      return { error: error.message, workers: error.workers };
+    }
+    throw error;
+  }
   void runWorker(ctx.db, {
     accountId: ctx.accountId,
     conversationId: ctx.conversationId,

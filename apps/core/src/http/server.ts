@@ -12,6 +12,7 @@ import { novncAssets, novncClientPage } from "./screen-client.js";
 import type { getDb } from "../db/client.js";
 import { devices, notifications } from "../db/schema.js";
 import { and, desc, eq } from "drizzle-orm";
+import { deleteMcpServer, listMcpServers, saveMcpServer } from "../mcp/store.js";
 import { listProviderKeys, saveProviderKey } from "../keys/keys.js";
 import { createProfile, pipeExec } from "../linux/linux.js";
 import { buildInstructions } from "../prompt/build-instructions.js";
@@ -161,6 +162,16 @@ function mountRoutes(app: Express, ctx: AppContext): void {
   });
   accounts.put("/:accountId/providers", guard, async (req, res) => {
     res.json(await saveProviderKey(ctx.db, pathParam(req, "accountId"), req.body));
+  });
+  accounts.get("/:accountId/mcp", guard, async (req, res) => {
+    res.json(await listMcpServers(ctx.db, pathParam(req, "accountId")));
+  });
+  accounts.put("/:accountId/mcp", guard, async (req, res) => {
+    res.json(await saveMcpServer(ctx.db, pathParam(req, "accountId"), req.body));
+  });
+  accounts.delete("/:accountId/mcp/:slug", guard, async (req, res) => {
+    await deleteMcpServer(ctx.db, pathParam(req, "accountId"), pathParam(req, "slug"));
+    res.status(204).end();
   });
   accounts.get("/:accountId/agents", guard, async (req, res) => {
     res.json(await listAgents(ctx.db, pathParam(req, "accountId")));

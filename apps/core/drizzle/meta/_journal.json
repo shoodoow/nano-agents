@@ -103,15 +103,22 @@
     {
       "idx": 14,
       "version": "7",
-      "when": 1759270000000,
+      "when": 1790701000000,
       "tag": "0014_agent-identity",
       "breakpoints": true
     },
     {
       "idx": 15,
       "version": "7",
-      "when": 1759271000000,
+      "when": 1790702000000,
       "tag": "0015_worker-delivery",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1790703000000,
+      "tag": "0016_account_mcp_servers",
       "breakpoints": true
     }
   ]

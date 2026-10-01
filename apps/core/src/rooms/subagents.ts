@@ -14,9 +14,25 @@ import { createProfile } from "../linux/linux.js";
 import { agents, conversations, delegations, members, messages } from "../db/schema.js";
 import { RoomCapacityError } from "./rooms.js";
 
-export const MAX_CHILDREN_PER_PARENT = 10;
+/** Visible teammates from hire_subagent (hidden background workers do not count). */
+export const MAX_TEAMMATES_PER_PARENT = 10;
+/** Concurrent hidden worker rows when none are free to reuse. */
+export const MAX_WORKERS_PER_PARENT = 10;
+/** @deprecated Use MAX_TEAMMATES_PER_PARENT — workers use MAX_WORKERS_PER_PARENT. */
+export const MAX_CHILDREN_PER_PARENT = MAX_TEAMMATES_PER_PARENT;
 export const MAX_TEAM_DEPTH = 2;
 export const MAX_ROOM_MEMBERS = 20;
+
+/** Returned when spawn_worker cannot insert or reuse a worker; tool layer maps this to { error }. */
+export class WorkerCapacityError extends Error {
+  readonly workers: { workerId: string; label: string; status: string }[];
+
+  constructor(workers: { workerId: string; label: string; status: string }[], message: string) {
+    super(message);
+    this.name = "WorkerCapacityError";
+    this.workers = workers;
+  }
+}
 
 /**
  * Returns how deep an agent sits in the team tree (0 = top-level hire).
@@ -81,12 +97,14 @@ export async function hireSubagent(
   if (!parent) throw new Error("Parent agent not found.");
   const depth = await teamDepth(store, input.accountId, input.parentAgentId);
   if (depth >= MAX_TEAM_DEPTH) throw new Error("Subagents cannot hire their own subagents beyond depth 2.");
-  const [childCount] = await store
+  const [teammateCount] = await store
     .select({ value: count() })
     .from(agents)
-    .where(and(eq(agents.parentId, input.parentAgentId), eq(agents.accountId, input.accountId)));
-  if ((childCount?.value ?? 0) >= MAX_CHILDREN_PER_PARENT) {
-    throw new Error("This agent already has 10 subagents.");
+    .where(
+      and(eq(agents.parentId, input.parentAgentId), eq(agents.accountId, input.accountId), eq(agents.hidden, false)),
+    );
+  if ((teammateCount?.value ?? 0) >= MAX_TEAMMATES_PER_PARENT) {
+    throw new Error(`This agent already has ${MAX_TEAMMATES_PER_PARENT} teammates. Background workers do not count toward that cap.`);
   }
   const [room] = await store
     .select()
@@ -187,12 +205,14 @@ export async function listTeam(store: Store, accountId: string, agentId: string)
     return store
       .select({ id: agents.id, name: agents.name, label: agents.label, role: agents.role })
       .from(agents)
-      .where(and(eq(agents.parentId, agentId), eq(agents.accountId, accountId)));
+      .where(
+        and(eq(agents.parentId, agentId), eq(agents.accountId, accountId), eq(agents.hidden, false)),
+      );
   }
   return store
     .select({ id: agents.id, name: agents.name, label: agents.label, role: agents.role })
     .from(agents)
-    .where(and(eq(agents.teamId, self.teamId), eq(agents.accountId, accountId)));
+    .where(and(eq(agents.teamId, self.teamId), eq(agents.accountId, accountId), eq(agents.hidden, false)));
 }
 
 /**
@@ -243,6 +263,120 @@ function workerPreamble(): string {
   return readFileSync(url, "utf8").trim();
 }
 
+async function latestDelegationStatus(
+  store: Store,
+  accountId: string,
+  workerId: string,
+): Promise<"running" | "done" | "failed" | "none"> {
+  const [row] = await store
+    .select({ status: delegations.status })
+    .from(delegations)
+    .where(and(eq(delegations.childAgentId, workerId), eq(delegations.accountId, accountId)))
+    .orderBy(desc(delegations.createdAt))
+    .limit(1);
+  if (!row) return "none";
+  return row.status as "running" | "done" | "failed";
+}
+
+/** Free worker = hidden child whose latest delegation is not running (done, failed, or never run). */
+async function findFreeHiddenWorker(store: Store, accountId: string, parentAgentId: string) {
+  const hidden = await store
+    .select({ id: agents.id, createdAt: agents.createdAt })
+    .from(agents)
+    .where(and(eq(agents.parentId, parentAgentId), eq(agents.accountId, accountId), eq(agents.hidden, true)))
+    .orderBy(agents.createdAt);
+  for (const row of hidden) {
+    const status = await latestDelegationStatus(store, accountId, row.id);
+    if (status !== "running") return row.id;
+  }
+  return null;
+}
+
+async function workerCapacitySnapshot(store: Store, accountId: string, parentAgentId: string) {
+  const hidden = await store
+    .select({ id: agents.id, label: agents.label })
+    .from(agents)
+    .where(and(eq(agents.parentId, parentAgentId), eq(agents.accountId, accountId), eq(agents.hidden, true)));
+  const workers: { workerId: string; label: string; status: string }[] = [];
+  for (const child of hidden) {
+    const status = await latestDelegationStatus(store, accountId, child.id);
+    workers.push({ workerId: child.id, label: child.label, status });
+  }
+  return workers;
+}
+
+async function throwWorkerCapacity(store: Store, accountId: string, parentAgentId: string): Promise<never> {
+  const workers = await workerCapacitySnapshot(store, accountId, parentAgentId);
+  const ids = workers.map((w) => `${w.workerId} (${w.label}, ${w.status})`).join("; ");
+  throw new WorkerCapacityError(
+    workers,
+    `Worker limit (${MAX_WORKERS_PER_PARENT}) reached and every hidden worker is still running. ` +
+      `Do not call spawn_worker again this turn. Use check_worker on an existing id, or stop_worker on a wedged one to free a slot. ` +
+      `Finished workers are reused automatically on the next spawn_worker. Current worker ids: ${ids || "(none)"}`,
+  );
+}
+
+async function assignWorkerRow(
+  store: Store,
+  input: {
+    accountId: string;
+    conversationId: string;
+    parentAgentId: string;
+    childAgentId: string;
+    task: string;
+    label: string;
+    role: string;
+    personality: string;
+    jobDescription: string;
+    provider: string;
+    modelId: string;
+  },
+): Promise<{ workerId: string; delegationId: string; status: "running" }> {
+  await store
+    .update(agents)
+    .set({
+      label: input.label,
+      role: input.role,
+      personality: input.personality,
+      jobDescription: input.jobDescription,
+      provider: input.provider,
+      modelId: input.modelId,
+    })
+    .where(and(eq(agents.id, input.childAgentId), eq(agents.accountId, input.accountId)));
+  return startWorkerDelegation(store, {
+    accountId: input.accountId,
+    conversationId: input.conversationId,
+    parentAgentId: input.parentAgentId,
+    childAgentId: input.childAgentId,
+    task: input.task,
+  });
+}
+
+async function startWorkerDelegation(
+  store: Store,
+  input: {
+    accountId: string;
+    conversationId: string;
+    parentAgentId: string;
+    childAgentId: string;
+    task: string;
+  },
+): Promise<{ workerId: string; delegationId: string; status: "running" }> {
+  const [row] = await store
+    .insert(delegations)
+    .values({
+      accountId: input.accountId,
+      parentAgentId: input.parentAgentId,
+      childAgentId: input.childAgentId,
+      conversationId: input.conversationId,
+      task: input.task,
+      status: "running",
+    })
+    .returning();
+  if (!row) throw new Error("Delegation insert returned no row.");
+  return { workerId: input.childAgentId, delegationId: row.id, status: "running" };
+}
+
 /**
  * Spawns an ephemeral background worker for the calling agent.
  * Why: the parent stays chatty while long work runs privately — the user can
@@ -280,13 +414,38 @@ export async function spawnWorker(
   if (!parent) throw new Error("Parent agent not found.");
   const depth = await teamDepth(store, input.accountId, input.parentAgentId);
   if (depth >= MAX_TEAM_DEPTH) throw new Error("Subagents cannot spawn their own workers beyond depth 2.");
-  const [childCount] = await store
+
+  const workerMeta = {
+    label: data.label,
+    role: data.role,
+    personality: data.personality ?? "",
+    jobDescription: data.jobDescription,
+    provider: data.provider ?? parent.provider,
+    modelId: data.modelId ?? parent.modelId,
+  };
+
+  const freeId = await findFreeHiddenWorker(store, input.accountId, input.parentAgentId);
+  if (freeId) {
+    return assignWorkerRow(store, {
+      accountId: input.accountId,
+      conversationId: input.conversationId,
+      parentAgentId: input.parentAgentId,
+      childAgentId: freeId,
+      task: data.task,
+      ...workerMeta,
+    });
+  }
+
+  const [workerCount] = await store
     .select({ value: count() })
     .from(agents)
-    .where(and(eq(agents.parentId, input.parentAgentId), eq(agents.accountId, input.accountId)));
-  if ((childCount?.value ?? 0) >= MAX_CHILDREN_PER_PARENT) {
-    throw new Error("This agent already has 10 subagents.");
+    .where(
+      and(eq(agents.parentId, input.parentAgentId), eq(agents.accountId, input.accountId), eq(agents.hidden, true)),
+    );
+  if ((workerCount?.value ?? 0) >= MAX_WORKERS_PER_PARENT) {
+    await throwWorkerCapacity(store, input.accountId, input.parentAgentId);
   }
+
   const baseName = data.label.trim().replace(/\s+/g, "-").slice(0, 60) || "worker";
   const [child] = await store
     .insert(agents)
@@ -307,19 +466,13 @@ export async function spawnWorker(
   if (!child) throw new Error("Worker insert returned no row.");
   // NOTE: no members insert — workers are never room members. Room 1:1
   // integrity holds structurally, and group threads stay free of worker noise.
-  const [row] = await store
-    .insert(delegations)
-    .values({
-      accountId: input.accountId,
-      parentAgentId: input.parentAgentId,
-      childAgentId: child.id,
-      conversationId: input.conversationId,
-      task: data.task,
-      status: "running",
-    })
-    .returning();
-  if (!row) throw new Error("Delegation insert returned no row.");
-  return { workerId: child.id, delegationId: row.id, status: "running" };
+  return startWorkerDelegation(store, {
+    accountId: input.accountId,
+    conversationId: input.conversationId,
+    parentAgentId: input.parentAgentId,
+    childAgentId: child.id,
+    task: data.task,
+  });
 }
 
 /**
@@ -344,8 +497,8 @@ export async function checkWorker(store: Store, accountId: string, workerId: str
 /**
  * Stops a worker's running delegation.
  * Why: wedged or obsolete work should die on request instead of burning
- * budget until reclaim. Marks failed with the reason; the worker row stays
- * hidden for audit. Idempotent: nothing running reads as stopped.
+ * budget until reclaim. Marks failed with the reason; the worker becomes free
+ * for reuse on the next spawn_worker. Idempotent: nothing running reads as stopped.
  * Input: store, account id, worker agent id. Output: {stopped} flag.
  */
 export async function stopWorker(store: Store, accountId: string, workerId: string): Promise<{ stopped: boolean }> {

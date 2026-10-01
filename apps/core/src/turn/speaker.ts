@@ -14,8 +14,6 @@ import type { TurnEvent } from "../rooms/send-message.js";
 import { runAgentLoop } from "./agent-loop.js";
 import { mentionedAgents } from "./mentions.js";
 import { toModelMessages } from "./prompt-media.js";
-import { listTools } from "../skills/tools.js";
-import { pluginToolOffers } from "./plugins/registry.js";
 import type { GenerateResult, TurnInput } from "./types.js";
 import { unwrapGenerateResult } from "./util.js";
 import { createTraceSession } from "./trace/plugins.js";
@@ -84,7 +82,6 @@ export async function speakOnce(
     },
     summary: summary.map((item) => ({ key: item.key, body: item.body })),
     messages: history.map((message) => ({ body: message.body })),
-    tools: listTools(pluginToolOffers()).map((tool) => tool.name),
     catalog,
     room: {
       title: room.title,

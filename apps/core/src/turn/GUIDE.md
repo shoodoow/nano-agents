@@ -8,7 +8,7 @@ POST /messages
   → messages (user row)
   → runTurn (orchestrator)
        → speakOnce (per @mentioned agent)
-            → buildContext (system + identity + tool names + skill catalog in prefix; room + summary + thread in tail)
+            → buildContext (system + identity + optional skill names in prefix; room + summary + thread in tail)
             → runAgentLoop
                  → buildToolSet("dispatcher")  — built-in tools only today
                  → runModelHarness (AI SDK generateText + trace plugins)
@@ -73,31 +73,16 @@ Core passes `process.env.SKILLS_DIR` from [`server.ts`](../../http/server.ts) in
 
 ## Plugin tools (MCP catalog)
 
-**Today:** plugin tools are merged into the **prompt tool list** only, via [`listTools`](../../skills/tools.ts). Names are `{server}_{tool}` (e.g. `crm_search`) so caches stay stable and collisions are avoided.
+**Today:** plugin tools are registered in-process and merged into the **AI SDK tool map** via [`buildFullToolSet`](./tools/registry.ts). Names are `{server}_{tool}` (e.g. `crm_search`) so collisions are avoided. They are not duplicated in the text prompt.
 
-```ts
-import { listTools } from "../skills/tools.js";
+**Account MCP (preferred):** HTTP connectors per account in `mcp_servers`; API under `/accounts/:id/mcp`. Tools merge in [`buildFullToolSet`](./tools/registry.ts) via [`mcp/tools.ts`](../mcp/tools.ts). See [`plugins/README.md`](../../../../plugins/README.md).
 
-const plugins = [
-  { server: "crm", tools: [{ name: "search_contacts", description: "Search CRM contacts by email or name." }] },
-];
-
-const catalog = listTools(plugins); // sorted; includes send_message, spawn_worker, … + crm_search_contacts
-```
-
-Use `catalog.map((t) => t.name)` when building `buildContext({ tools: [...] })` if you wire plugins at the HTTP layer.
-
-**In-process plugins (working):** call [`registerPluginTool`](./plugins/registry.ts) before turns run. Tools are exposed as `{server}_{name}` in both the prompt and `buildToolSet`. Sample: **`demo_echo`** in [`plugins/sample-echo.ts`](../../plugins/sample-echo.ts), loaded from [`plugins/bootstrap.ts`](../../plugins/bootstrap.ts). See [`plugins/README.md`](../../../../plugins/README.md).
-
-Remote MCP servers are not connected yet; use `registerPluginTool` for local executors or bridge MCP calls inside `execute`.
+**In-process (optional):** [`registerPluginTool`](./plugins/registry.ts) for global code-only tools — not account-scoped.
 
 ### Adding a built-in tool (fully working)
 
-1. [`tools/catalog.ts`](./tools/catalog.ts) — `name`, `description`, `modes: ["dispatcher"]`
-2. [`tools/executors.ts`](./tools/executors.ts) — `execute…(ctx, input)`
-3. [`tools/registry.ts`](./tools/registry.ts) — JSON schema + map in `dispatcherExecutors`
-
-Prompt prefix picks up names via `listToolNames("dispatcher")` in [`speaker.ts`](./speaker.ts).
+1. [`tools/registry.ts`](./tools/registry.ts) — `builtInTools` entry (`description`, `inputSchema`, `modes`)
+2. [`tools/executors.ts`](./tools/executors.ts) — matching handler in `dispatcherExecutors`
 
 ---
 
@@ -131,6 +116,5 @@ Event types: `run.start`, `model.step.finish`, `tool.call.start`, `tool.call.fin
 | Talk to user | `send_message` only (see `prompts/system.md`) |
 | Long work | `spawn_worker` with detailed `task` brief |
 | Procedure | Skill folder + `read_skill` |
-| Extra tool names in prompt | `listTools(mcpPlugins)` in context |
-| Extra tool **execution** | Registry executor (built-in) or future MCP bridge |
+| Extra tool **execution** | `buildFullToolSet` (built-in catalog + MCP + in-process plugins) |
 | Debug a turn | `.tool-trace.log` or custom `registerTracePlugin` |

@@ -1,6 +1,6 @@
 /**
  * In-process plugin tools (MCP-style naming, local executors).
- * Why: one place to register extra dispatcher tools; names become server_tool in prompt + SDK.
+ * Why: one place to register extra dispatcher tools; names become server_tool in the SDK tool map.
  * DB: whatever each plugin execute writes.
  */
 import { jsonSchema, type Schema } from "ai";
@@ -33,7 +33,6 @@ export function pluginToolFullName(server: string, toolName: string): string {
   return `${server}_${toolName}`;
 }
 
-/** Shape expected by listTools() for prompt prefix. */
 export function pluginToolOffers(): { server: string; tools: { name: string; description: string }[] }[] {
   const byServer = new Map<string, { name: string; description: string }[]>();
   for (const entry of registrations) {

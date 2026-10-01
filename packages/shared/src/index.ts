@@ -23,6 +23,21 @@ export const providerKeySchema = z
 
 export type ProviderKey = z.infer<typeof providerKeySchema>;
 
+/** Per-account HTTP MCP connector (Streamable MCP URL + optional bearer token). */
+export const mcpServerInputSchema = z.object({
+  slug: z
+    .string()
+    .trim()
+    .min(1)
+    .max(32)
+    .regex(/^[a-z][a-z0-9_-]{0,31}$/, "Slug must start with a letter and use lowercase letters, digits, _ or -."),
+  url: z.string().url().max(2_048),
+  secret: z.string().max(16_384).optional().default(""),
+  enabled: z.boolean().optional(),
+});
+
+export type McpServerInput = z.infer<typeof mcpServerInputSchema>;
+
 /**
  * Agent identity (Phase 17): role + personality + job.
  * Why: users jammed tone + duties + constraints into one blob and the model

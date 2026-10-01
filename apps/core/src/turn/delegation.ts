@@ -8,8 +8,6 @@ import { agents, conversations, members, messages } from "../db/schema.js";
 import { buildContext, identityBlock } from "../memory/context.js";
 import { createProfile } from "../linux/linux.js";
 import type { TurnEvent } from "../rooms/send-message.js";
-import { listTools } from "../skills/tools.js";
-import { pluginToolOffers } from "./plugins/registry.js";
 import { DELEGATION_HISTORY_SLICE } from "./constants.js";
 import { runAgentLoop } from "./agent-loop.js";
 import type { GenerateResult, TurnInput } from "./types.js";
@@ -116,7 +114,6 @@ export async function runDelegatedTurn(
     },
     summary: [],
     messages: recent.map((row) => ({ body: row.body })),
-    tools: listTools(pluginToolOffers()).map((tool) => tool.name),
     room: {
       title: room.title,
       kind: room.kind,

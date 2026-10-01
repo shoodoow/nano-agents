@@ -1,36 +1,25 @@
-# Plugin tools
+# MCP plugins (per account)
 
-Plugin tools extend the **dispatcher** with extra AI SDK tools. Names in the prompt are `{server}_{tool}` (e.g. `demo_echo`).
+Each account connects **HTTP Streamable MCP** servers. Tool names in chat are `{slug}_{tool}` (e.g. `crm_search`).
 
-## Built-in sample
+## API
 
-[`apps/core/src/plugins/sample-echo.ts`](../apps/core/src/plugins/sample-echo.ts) registers `demo_echo` — echoes `{ text }` back. Loaded from [`main.ts`](../apps/core/src/main.ts) via `loadBuiltinPlugins()`.
+- `GET /accounts/:accountId/mcp` — list connectors (URL, tools cache, last error; no secrets)
+- `PUT /accounts/:accountId/mcp` — create/update (`slug`, `url`, optional `secret` bearer, optional `enabled`)
+- `DELETE /accounts/:accountId/mcp/:slug`
 
-Ask the agent: “Use demo_echo with text hello” (after `send_message` ack per system prompt).
+Secrets are sealed like provider keys. On save, core connects once, refreshes `tools_cache`, and reuses live sessions during turns.
 
-## Add your own
+## Sample stdio server (local dev)
 
-1. Create `apps/core/src/plugins/my-plugin.ts`:
+For testing the MCP protocol locally, run the in-repo echo server (stdio — not addable via the account API):
 
-```ts
-import { jsonSchema } from "ai";
-import { registerPluginTool } from "../turn/plugins/registry.js";
+[`apps/core/src/mcp/servers/echo.ts`](../apps/core/src/mcp/servers/echo.ts)
 
-export function registerMyPlugin() {
-  registerPluginTool({
-    server: "acme",
-    name: "ping",
-    description: "Returns pong.",
-    inputSchema: jsonSchema<{ message?: string }>({
-      type: "object",
-      properties: { message: { type: "string" } },
-    }),
-    execute: async (_ctx, input) => ({ pong: true, message: input.message ?? "" }),
-  });
-}
-```
+Expose it with any Streamable HTTP wrapper you use in dev, or point an account MCP URL at your hosted endpoint.
 
-2. Call `registerMyPlugin()` from [`bootstrap.ts`](../apps/core/src/plugins/bootstrap.ts).
-3. Restart core. The tool appears in the prompt and in `buildToolSet`.
+## In-process tools
 
-See [GUIDE.md](../apps/core/src/turn/GUIDE.md) for skills vs plugins vs trace plugins.
+Optional code-only tools still use [`registerPluginTool`](../apps/core/src/turn/plugins/registry.ts) (no sample shipped). Prefer MCP for anything account-specific.
+
+See [GUIDE.md](../apps/core/src/turn/GUIDE.md).

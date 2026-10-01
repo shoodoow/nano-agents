@@ -18,11 +18,11 @@ export type BuiltContext = {
 
 /**
  * Splits one turn into a cacheable prefix and an append-only tail.
- * Why: the prefix (system + identity + tools + catalog) is byte-stable for
- * provider caching; the tail (room line, summary, messages) changes every
- * turn and lives after the breakpoint. Identity composes in fixed order.
+ * Why: the prefix (system + identity + optional skills catalog) is byte-stable
+ * for provider caching; tool names/schemas live on the AI SDK tools argument,
+ * not duplicated here. The tail (room line, summary, messages) changes every turn.
  * Input: account/agent ids, prompt version, identity, summary items, recent
- * messages, optional tools/catalog/room.
+ * messages, optional skills catalog/room.
  * Output: prefix + tail plus provider cache hints.
  */
 export function buildContext(input: {
@@ -32,14 +32,10 @@ export function buildContext(input: {
   identity: AgentIdentity;
   summary: { key: string; body: string }[];
   messages: { body: string }[];
-  tools?: string[];
   catalog?: string;
   room?: { title: string; kind: string; members: string[]; selfName: string };
 }): BuiltContext {
-  const extras = [
-    ...(input.tools && input.tools.length > 0 ? [[...input.tools].sort().join("\n")] : []),
-    ...(input.catalog ? [input.catalog] : []),
-  ];
+  const extras = [...(input.catalog ? [input.catalog] : [])];
   const prefix = [buildInstructions(input.identity), ...extras].join("\n\n");
   const summaryLines = [...input.summary].sort(
     (left, right) => keyOrder.indexOf(left.key) - keyOrder.indexOf(right.key) || left.body.localeCompare(right.body),

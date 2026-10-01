@@ -10,7 +10,7 @@ import { ensureTracePlugins } from "./trace/bootstrap.js";
 import { createTraceSession } from "./trace/plugins.js";
 import { runModelHarness } from "./trace/harness.js";
 import { randomUUID } from "node:crypto";
-import { buildToolSet } from "./tools/registry.js";
+import { buildFullToolSet } from "./tools/registry.js";
 import type { ToolContext } from "./tools/context.js";
 
 type Db = ReturnType<typeof getDb>;
@@ -59,7 +59,7 @@ export async function runAgentLoop(
     generate: input.generate,
     traceSession,
   };
-  const tools = buildToolSet(mode, toolCtx);
+  const tools = await buildFullToolSet(mode, toolCtx);
   const { text, cacheReadTokens } = await runModelHarness({
     ...input,
     db,
