@@ -40,7 +40,9 @@ export function profileToolNames(): string[] {
  * Input: database (search keys), account id, Linux username.
  * Output: AI SDK tool map keyed by profileToolNames().
  */
-export function profileTools(db: Database, accountId: string, profile: string) {
+// Loose record on purpose: AI SDK tool generics vary per inputSchema, so the
+// exact inferred type cannot be named portably (TS2883). Callers only index it.
+export function profileTools(db: Database, accountId: string, profile: string): Record<string, any> {
   const home = accountHome(accountId, profile);
   const shared = accountShared(accountId);
   return {

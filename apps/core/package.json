@@ -17,6 +17,7 @@
     "@better-auth/expo": "1.6.23",
     "@mozilla/readability": "^0.6.0",
     "@nano-agents/shared": "workspace:*",
+    "@novnc/novnc": "1.7.0",
     "ai": "7.0.118",
     "better-auth": "1.6.23",
     "dockerode": "5.0.1",

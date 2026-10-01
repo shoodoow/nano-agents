@@ -59,6 +59,23 @@ test("the screen url is the core websocket", () => {
   expect(core.screenUrl("account", "uabc")).toBe("ws://127.0.0.1:3000/accounts/account/screens/uabc");
 });
 
+test("the screen page and its socket share one origin so the cookie is sent", () => {
+  const plain = createCore("http://127.0.0.1:3000");
+  const page = new URL(plain.screenPageUrl("account", "uabc"));
+  const socket = new URL(plain.screenUrl("account", "uabc"));
+  expect(page.origin).toBe(socket.origin.replace(/^ws/, "http"));
+  expect(page.pathname).toBe("/accounts/account/screens/uabc/client");
+
+  const secure = createCore("https://core.example");
+  expect(secure.screenPageUrl("account", "uabc")).toBe("https://core.example/accounts/account/screens/uabc/client");
+  expect(secure.screenUrl("account", "uabc")).toBe("wss://core.example/accounts/account/screens/uabc");
+});
+
+test("the screen page escapes a profile that needs it", () => {
+  const core = createCore("http://127.0.0.1:3000");
+  expect(core.screenPageUrl("account", "u abc")).toBe("http://127.0.0.1:3000/accounts/account/screens/u%20abc/client");
+});
+
 test("the stream resumes from a cursor and devices register", async () => {
   const seen: string[] = [];
   const sse = `data: {"type":"message","message":{"id":"m2"},"cursor":42,"conversationId":"c1"}\n\n`;

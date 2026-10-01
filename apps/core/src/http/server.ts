@@ -8,6 +8,7 @@ import { pinoHttp } from "pino-http";
 import { reactionSchema, deviceSchema, subagentCreateSchema } from "@nano-agents/shared";
 import { createAuth, localBrowserOrigins } from "../auth/auth.js";
 import { handBack, profileOnAccount, startDesktop, takeOver } from "../desktop/desktop.js";
+import { novncAssets, novncClientPage } from "./screen-client.js";
 import type { getDb } from "../db/client.js";
 import { devices, notifications } from "../db/schema.js";
 import { and, desc, eq } from "drizzle-orm";
@@ -196,6 +197,7 @@ function mountRoutes(app: Express, ctx: AppContext): void {
   });
   accounts.post("/:accountId/screens/:profile/takeover", guard, (req, res) => setScreen(ctx.db, req, res, "takeover"));
   accounts.post("/:accountId/screens/:profile/handback", guard, (req, res) => setScreen(ctx.db, req, res, "handback"));
+  accounts.get("/:accountId/screens/:profile/client", novncClientPage);
   accounts.post("/:accountId/uploads", guard, async (req, res) => {
     // Scoped under the account so requireSession can match the session's
     // accountId. A standalone /uploads route has no account context and can
@@ -227,6 +229,7 @@ function mountRoutes(app: Express, ctx: AppContext): void {
     res.status(201).json({ url, name: typeof name === "string" ? name : "upload", mime: typeof mime === "string" ? mime : null });
   });
   app.use("/accounts", accounts);
+  app.use(novncAssets());
 
   const conversations = Router();
   conversations.get("/:conversationId/messages", guard, async (req, res) => {

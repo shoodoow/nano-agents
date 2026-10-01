@@ -125,6 +125,7 @@ export type CoreClient = {
   reject: (accountId: string, proposalId: string) => Promise<Proposal[]>;
   saveProfile: (accountId: string, agentId: string, profile: AgentProfile) => Promise<RosterAgent>;
   screenUrl: (accountId: string, profile: string) => string;
+  screenPageUrl: (accountId: string, profile: string) => string;
   takeOver: (accountId: string, profile: string) => Promise<void>;
   handBack: (accountId: string, profile: string) => Promise<void>;
 };
@@ -181,6 +182,7 @@ export function createCore(
     reject: (accountId, proposalId) => decide(baseUrl, accountId, proposalId, "reject", fetchImpl),
     saveProfile: (accountId, agentId, profile) => saveProfile(baseUrl, accountId, agentId, profile, fetchImpl),
     screenUrl: (accountId, profile) => screenUrl(baseUrl, accountId, profile),
+    screenPageUrl: (accountId, profile) => screenPageUrl(baseUrl, accountId, profile),
     takeOver: (accountId, profile) => screenFlag(baseUrl, accountId, profile, "takeover", fetchImpl),
     handBack: (accountId, profile) => screenFlag(baseUrl, accountId, profile, "handback", fetchImpl),
   };
@@ -647,6 +649,20 @@ export function screenUrl(baseUrl: string, accountId: string, profile: string): 
   const url = new URL(baseUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.pathname = `/accounts/${accountId}/screens/${encodeURIComponent(profile)}`;
+  url.search = "";
+  return url.toString();
+}
+
+/**
+ * Builds the URL of the noVNC viewer page for one profile.
+ * Input: the core base URL, the account id, and the Linux username.
+ * Output: a core http(s) URL. The page and the socket it opens share an origin
+ * so the session cookie the phone holds reaches the core's screen proxy.
+ */
+export function screenPageUrl(baseUrl: string, accountId: string, profile: string): string {
+  const url = new URL(baseUrl);
+  url.protocol = url.protocol === "https:" ? "https:" : "http:";
+  url.pathname = `/accounts/${accountId}/screens/${encodeURIComponent(profile)}/client`;
   url.search = "";
   return url.toString();
 }
