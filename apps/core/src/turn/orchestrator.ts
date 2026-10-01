@@ -13,6 +13,7 @@ import { HEARTBEAT_MS } from "./constants.js";
 import { TurnEmitter } from "./events/emitter.js";
 import { registerWorkerLifecycle } from "./handlers/worker-lifecycle.js";
 import { speakOnce } from "./speaker.js";
+import { compactConversation } from "../memory/compact-turn.js";
 import type { GenerateResult, TurnInput, TurnOptions } from "./types.js";
 
 type Db = ReturnType<typeof getDb>;
@@ -115,6 +116,7 @@ export async function runTurn(
       });
       await heartbeatRun(db, runId).catch(() => {});
     }
+    await compactConversation(db, accountId, conversationId);
     await finishRun(db, runId);
     await emit({ type: "run", run: { id: runId, status: "done" as const, error: null } });
     emitter.emitDone();

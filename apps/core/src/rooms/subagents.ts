@@ -747,16 +747,26 @@ export async function runWorker(
       tools,
       stopWhen: isStepCount(WORKER_STEPS),
     });
-    const { collectWorkerFallback, collectWorkerText } = await import("../turn/worker-report.js");
+    const { classifyWorkerEnding, collectWorkerFallback, collectWorkerText } = await import("../turn/worker-report.js");
+    const ranTools =
+      (result.toolResults?.length ?? 0) > 0 ||
+      (result.steps ?? []).some(
+        (step) => ((step as { toolCalls?: unknown[] }).toolCalls?.length ?? 0) > 0 || (step.toolResults?.length ?? 0) > 0,
+      );
     const text = collectWorkerText(result);
-    if (!text) {
+    const ending = classifyWorkerEnding(text, ranTools);
+    if (ending.kind === "stall") {
+      // The worker narrated a next step but never took it (weak model ended on a
+      // text-only turn). Hand back a tool digest if any ran, else a clean
+      // failure — never record the narration as a success the parent delivers.
       await finish(
         "failed",
-        collectWorkerFallback(result) || "The model finished without a report. No findings were returned.",
+        collectWorkerFallback(result) || "The task was not completed — the worker stopped before acting. No findings were returned.",
       );
       return;
     }
-    await finish("done", text);
+    // report | needs_person: deliver as-is (needs_person triggers the sign-in handover).
+    await finish("done", ending.result);
   } catch (error) {
     await finish("failed", error instanceof Error ? error.message : "The worker failed.");
   }

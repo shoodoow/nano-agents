@@ -23,6 +23,47 @@ export function isEmptyWorkerReport(text: string): boolean {
   );
 }
 
+/** The labeled sections (or a NEEDS_PERSON line) that mark a finished worker report. */
+const REPORT_MARKERS = /(^|\n)\s*(\*{0,2}(findings|what i did|blockers)\*{0,2}\s*:)|NEEDS_PERSON:/i;
+
+/** Mid-task narration that promises a next step the worker never took. */
+const NEXT_STEP_NARRATION = /\b(let me|i'?ll|i will|going to|about to|now i'?ll|let's)\b/i;
+
+/** Screens only the person can clear (login/2FA/payment), seen but not acted on. */
+const PERSON_GATE = /\b(log in|login|sign in|sign-in|signin|logged out|log back in|2fa|two-?factor|verification code|verify (?:your|it'?s you)|enter (?:your )?password|password|captcha|checkpoint|confirm it'?s you|payment)\b/i;
+
+export type WorkerEnding =
+  | { kind: "report"; result: string }
+  | { kind: "needs_person"; result: string }
+  | { kind: "stall" };
+
+/**
+ * Decides what a worker's final text actually is.
+ * Why: the AI SDK stops the moment a step has no tool call, so a weak model
+ * that narrates ("Let me take a screenshot") instead of acting ends the run,
+ * and that narration was being recorded as a successful result. A real report
+ * carries Findings/What I did/Blockers or a NEEDS_PERSON line; a run that did
+ * real tool work is trusted even without the labels; everything else is a stall
+ * — and a stall that mentions a login/2FA/payment wall becomes a NEEDS_PERSON
+ * handoff so the person is actually asked to step in instead of left hanging.
+ * Input: the collected text and whether any tool ran. Output: the ending kind.
+ */
+export function classifyWorkerEnding(text: string, ranTools: boolean): WorkerEnding {
+  const trimmed = text.trim();
+  if (trimmed && (REPORT_MARKERS.test(trimmed) || ranTools)) {
+    return { kind: "report", result: trimmed.slice(0, MAX) };
+  }
+  const stalledOnNarration = !trimmed || (!ranTools && NEXT_STEP_NARRATION.test(trimmed));
+  if (stalledOnNarration && PERSON_GATE.test(trimmed)) {
+    return { kind: "needs_person", result: "NEEDS_PERSON: Sign in on my computer, then tell me to continue." };
+  }
+  if (!trimmed || (!ranTools && NEXT_STEP_NARRATION.test(trimmed))) {
+    return { kind: "stall" };
+  }
+  // Non-empty, non-narration text with no tools: treat as a plain report.
+  return { kind: "report", result: trimmed.slice(0, MAX) };
+}
+
 /**
  * Pulls a deliverable report out of a generateText result.
  * Why: AI SDK `text` is only the final step. OpenRouter reasoning models

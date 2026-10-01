@@ -2,12 +2,14 @@
  * One agent speaks in a turn (context load → model loop → mention chain).
  * DB: reads messages/summary; writes messages via tools or stub path.
  */
-import { and, asc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
 import { agents, messages, summaryItems } from "../db/schema.js";
 import { buildContext } from "../memory/context.js";
-import { mergeSummary } from "../memory/summary.js";
+import { memoriesFor } from "../memory/memory.js";
+import { recallRelevant } from "../memory/recall.js";
 import { createProfile } from "../linux/linux.js";
+import { RECENT_WINDOW, SUMMARY_WINDOW } from "./constants.js";
 import { propose } from "../skills/proposals.js";
 import { skillCatalogForAccount } from "../skills/skills.js";
 import type { TurnEvent } from "../rooms/send-message.js";
@@ -56,15 +58,34 @@ export async function speakOnce(
       // Computer unavailable; chat continues.
     }
   }
-  const history = await db
-    .select()
-    .from(messages)
-    .where(and(eq(messages.conversationId, conversationId), eq(messages.accountId, accountId)))
-    .orderBy(asc(messages.createdAt));
-  const summary = await db
-    .select()
-    .from(summaryItems)
-    .where(and(eq(summaryItems.conversationId, conversationId), eq(summaryItems.accountId, accountId)));
+  // Recent window only: older turns live in folded summary items, not the prompt,
+  // so a years-long thread stays inside the context window and stays sharp.
+  const recent = (
+    await db
+      .select()
+      .from(messages)
+      .where(and(eq(messages.conversationId, conversationId), eq(messages.accountId, accountId)))
+      .orderBy(desc(messages.createdAt))
+      .limit(RECENT_WINDOW)
+  ).reverse();
+  const summary = (
+    await db
+      .select()
+      .from(summaryItems)
+      .where(and(eq(summaryItems.conversationId, conversationId), eq(summaryItems.accountId, accountId)))
+      .orderBy(desc(summaryItems.createdAt))
+      .limit(SUMMARY_WINDOW)
+  ).reverse();
+  const facts = await memoriesFor(db, accountId, agentId);
+  // Pull back the slice of older context most relevant to the latest message.
+  // No-ops (returns []) unless an embedding key is configured.
+  const lastUserMessage = [...recent].reverse().find((message) => !message.agentId)?.body ?? cue ?? "";
+  const recall = await recallRelevant(db, {
+    accountId,
+    agentId,
+    conversationId,
+    query: lastUserMessage,
+  }).catch(() => [] as string[]);
   const catalog = skillsRoot
     ? skillCatalogForAccount(skillsRoot, accountId)
         .map((skill) => `${skill.name}: ${skill.description}`)
@@ -81,7 +102,9 @@ export async function speakOnce(
       job: agent.jobDescription,
     },
     summary: summary.map((item) => ({ key: item.key, body: item.body })),
-    messages: history.map((message) => ({ body: message.body })),
+    messages: recent.map((message) => ({ body: message.body })),
+    memories: facts.map((fact) => ({ body: fact.body })),
+    recall,
     catalog,
     room: {
       title: room.title,
@@ -91,7 +114,7 @@ export async function speakOnce(
     },
   });
   const emittedMessages: (typeof messages.$inferSelect)[] = [];
-  const modelMessages = toModelMessages(history);
+  const modelMessages = toModelMessages(recent);
   if (cue) modelMessages.push({ role: "user", content: cue });
   const useStub = typeof generate === "function";
   const traceSession = createTraceSession({
@@ -155,7 +178,6 @@ export async function speakOnce(
   if (emittedMessages.length > 0) {
     for (const row of emittedMessages) {
       saved.push(row);
-      await mergeSummary(db, accountId, conversationId, [{ key: "topics", body: row.body, messageId: row.id }]);
     }
     if (result.proposal) {
       await propose(db, accountId, {
@@ -192,9 +214,6 @@ export async function speakOnce(
     .returning();
   saved.push(wrapped!);
   await emit({ type: "message", message: wrapped! });
-  if (text) {
-    await mergeSummary(db, accountId, conversationId, [{ key: "topics", body: text, messageId: wrapped!.id }]);
-  }
   if (result.proposal) {
     await propose(db, accountId, {
       agentId,

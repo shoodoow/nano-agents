@@ -134,6 +134,13 @@
    "when": 1790705000000,
    "tag": "0018_account-secrets",
    "breakpoints": true
+  },
+  {
+   "idx": 19,
+   "version": "7",
+   "when": 1790706000000,
+   "tag": "0019_semantic_recall",
+   "breakpoints": true
   }
  ]
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { collectWorkerFallback, collectWorkerText, isEmptyWorkerReport } from "./worker-report.js";
+import { classifyWorkerEnding, collectWorkerFallback, collectWorkerText, isEmptyWorkerReport } from "./worker-report.js";
 
 describe("collectWorkerText", () => {
   it("uses an earlier step when the final step is only a tool call", () => {
@@ -44,5 +44,34 @@ describe("isEmptyWorkerReport", () => {
     expect(isEmptyWorkerReport("The worker finished with no output.")).toBe(true);
     expect(isEmptyWorkerReport("Findings: (no output)\nWhat I did: nothing")).toBe(true);
     expect(isEmptyWorkerReport("Findings: 120 followers")).toBe(false);
+  });
+});
+
+describe("classifyWorkerEnding", () => {
+  it("accepts a labeled report", () => {
+    const ending = classifyWorkerEnding("Findings: 120 followers.\nWhat I did: opened the profile.", false);
+    expect(ending.kind).toBe("report");
+  });
+
+  it("trusts text when real tool work ran, even without labels", () => {
+    const ending = classifyWorkerEnding("The profile has 120 followers and a link in bio.", true);
+    expect(ending.kind).toBe("report");
+  });
+
+  it("turns the Emily login-wall stall into a sign-in handoff", () => {
+    // The exact text that was recorded as a false success.
+    const ending = classifyWorkerEnding("The page shows an Instagram login wall. Let me take a fresh screenshot to confirm.", false);
+    expect(ending.kind).toBe("needs_person");
+    if (ending.kind === "needs_person") expect(ending.result).toMatch(/NEEDS_PERSON:/);
+  });
+
+  it("flags bare next-step narration with no tools as a stall", () => {
+    expect(classifyWorkerEnding("Let me open the file and check.", false).kind).toBe("stall");
+    expect(classifyWorkerEnding("", false).kind).toBe("stall");
+  });
+
+  it("passes an explicit NEEDS_PERSON line straight through as a report", () => {
+    const ending = classifyWorkerEnding("NEEDS_PERSON: Sign in to Instagram @getstackbrief", false);
+    expect(ending.kind).toBe("report");
   });
 });

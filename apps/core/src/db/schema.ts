@@ -1,5 +1,8 @@
-import { boolean, bigserial, check, index, integer, jsonb, pgTable, primaryKey, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, bigserial, check, index, integer, jsonb, pgTable, primaryKey, text, timestamp, unique, uniqueIndex, uuid, vector } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+
+/** Embedding width for semantic recall (OpenAI text-embedding-3-small). */
+export const EMBEDDING_DIMS = 1536;
 
 export const accounts = pgTable("accounts", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -180,9 +183,16 @@ export const summaryItems = pgTable(
     messageId: uuid("message_id")
       .notNull()
       .references(() => messages.id),
+    // Semantic recall: folded items are embedded so older context can be pulled
+    // back by relevance instead of dumping the whole summary every turn. Null
+    // until the backfill embeds it (or when no embedding provider is configured).
+    embedding: vector("embedding", { dimensions: EMBEDDING_DIMS }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [check("summary_items_key_check", sql`${table.key} in ('decisions', 'actions', 'open', 'entities', 'corrections', 'topics')`)],
+  (table) => [
+    check("summary_items_key_check", sql`${table.key} in ('decisions', 'actions', 'open', 'entities', 'corrections', 'topics')`),
+    index("summary_items_embedding_index").using("hnsw", table.embedding.op("vector_cosine_ops")),
+  ],
 );
 
 export const memories = pgTable(
@@ -198,6 +208,8 @@ export const memories = pgTable(
     messageId: uuid("message_id")
       .notNull()
       .references(() => messages.id),
+    // Semantic recall over durable facts (see summary_items.embedding).
+    embedding: vector("embedding", { dimensions: EMBEDDING_DIMS }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -206,6 +218,7 @@ export const memories = pgTable(
       "memories_scope_agent_check",
       sql`(${table.scope} = 'user' and ${table.agentId} is null) or (${table.scope} = 'agent' and ${table.agentId} is not null)`,
     ),
+    index("memories_embedding_index").using("hnsw", table.embedding.op("vector_cosine_ops")),
   ],
 );
 
