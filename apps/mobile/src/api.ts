@@ -4,6 +4,7 @@ import {
   messageCreateSchema,
   roomCreateSchema,
   type AgentProfile,
+  type MarkShape,
   type MessageBlock,
 } from "@nano-agents/shared";
 
@@ -46,6 +47,9 @@ export type RosterAgent = {
   notify: boolean;
   pinned: boolean;
   hidden: boolean;
+  markShape: MarkShape | null;
+  markColor: string | null;
+  avatarUrl: string | null;
 };
 
 export type Proposal = {
@@ -54,6 +58,29 @@ export type Proposal = {
   kind: string;
   body: string;
   status: string;
+};
+
+export type Routine = {
+  id: string;
+  body: string;
+  cron: string;
+  timezone: string;
+  paused: boolean;
+  nextRunAt: string;
+};
+
+export type RoutineInput = {
+  conversationId: string;
+  body: string;
+  cron: string;
+  timezone?: string;
+};
+
+export type RoutinePatch = {
+  body?: string;
+  cron?: string;
+  timezone?: string;
+  paused?: boolean;
 };
 
 export type StreamEvent = {
@@ -126,6 +153,11 @@ export type CoreClient = {
   approve: (accountId: string, proposalId: string) => Promise<Proposal[]>;
   reject: (accountId: string, proposalId: string) => Promise<Proposal[]>;
   saveProfile: (accountId: string, agentId: string, profile: AgentProfile) => Promise<RosterAgent>;
+  saveSecret: (accountId: string, input: { name: string; secret: string }) => Promise<{ name: string; configured: boolean }>;
+  listRoutines: (accountId: string, agentId: string) => Promise<Routine[]>;
+  createRoutine: (accountId: string, agentId: string, input: RoutineInput) => Promise<Routine>;
+  updateRoutine: (accountId: string, agentId: string, routineId: string, input: RoutinePatch) => Promise<Routine>;
+  deleteRoutine: (accountId: string, agentId: string, routineId: string) => Promise<void>;
   screenUrl: (accountId: string, profile: string) => string;
   screenPageUrl: (accountId: string, profile: string) => string;
   takeOver: (accountId: string, profile: string) => Promise<void>;
@@ -183,6 +215,12 @@ export function createCore(
     approve: (accountId, proposalId) => decide(baseUrl, accountId, proposalId, "approve", fetchImpl),
     reject: (accountId, proposalId) => decide(baseUrl, accountId, proposalId, "reject", fetchImpl),
     saveProfile: (accountId, agentId, profile) => saveProfile(baseUrl, accountId, agentId, profile, fetchImpl),
+    saveSecret: (accountId, input) => saveSecret(baseUrl, accountId, input, fetchImpl),
+    listRoutines: (accountId, agentId) => listRoutines(baseUrl, accountId, agentId, fetchImpl),
+    createRoutine: (accountId, agentId, input) => createRoutine(baseUrl, accountId, agentId, input, fetchImpl),
+    updateRoutine: (accountId, agentId, routineId, input) =>
+      updateRoutine(baseUrl, accountId, agentId, routineId, input, fetchImpl),
+    deleteRoutine: (accountId, agentId, routineId) => deleteRoutine(baseUrl, accountId, agentId, routineId, fetchImpl),
     screenUrl: (accountId, profile) => screenUrl(baseUrl, accountId, profile),
     screenPageUrl: (accountId, profile) => screenPageUrl(baseUrl, accountId, profile),
     takeOver: (accountId, profile) => screenFlag(baseUrl, accountId, profile, "takeover", fetchImpl),
@@ -639,6 +677,205 @@ async function saveProfile(
   return readJson<RosterAgent>(fetchImpl, `${baseUrl}/agents/${agentId}?accountId=${accountId}`, {
     method: "PATCH",
     body: JSON.stringify(body),
+  });
+}
+
+/**
+ * Lists one agent's routines, soonest first.
+ * Input: the core base URL, account + agent ids, and fetch.
+ * Output: the agent's routines.
+ */
+async function listRoutines(
+  baseUrl: string,
+  accountId: string,
+  agentId: string,
+  fetchImpl: typeof fetch,
+): Promise<Routine[]> {
+  return readJson<Routine[]>(fetchImpl, `${baseUrl}/agents/${agentId}/routines?accountId=${accountId}`);
+}
+
+/**
+ * Creates one routine owned by the agent.
+ * Input: the core base URL, account + agent ids, the room + body + cron, and fetch.
+ * Output: the saved routine.
+ */
+async function createRoutine(
+  baseUrl: string,
+  accountId: string,
+  agentId: string,
+  input: RoutineInput,
+  fetchImpl: typeof fetch,
+): Promise<Routine> {
+  return readJson<Routine>(fetchImpl, `${baseUrl}/agents/${agentId}/routines?accountId=${accountId}`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+/**
+ * Changes one routine's body, schedule, or paused flag.
+ * Input: the core base URL, ids, the patch fields, and fetch.
+ * Output: the updated routine.
+ */
+async function updateRoutine(
+  baseUrl: string,
+  accountId: string,
+  agentId: string,
+  routineId: string,
+  input: RoutinePatch,
+  fetchImpl: typeof fetch,
+): Promise<Routine> {
+  return readJson<Routine>(fetchImpl, `${baseUrl}/agents/${agentId}/routines/${routineId}?accountId=${accountId}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+/**
+ * Deletes one routine and its pending jobs.
+ * Input: the core base URL, ids, and fetch. Output: nothing.
+ */
+async function deleteRoutine(
+  baseUrl: string,
+  accountId: string,
+  agentId: string,
+  routineId: string,
+  fetchImpl: typeof fetch,
+): Promise<void> {
+  const cookie = readAuthCookie();
+  const response = await fetchImpl(`${baseUrl}/agents/${agentId}/routines/${routineId}?accountId=${accountId}`, {
+    method: "DELETE",
+    headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) },
+  });
+  if (!response.ok) {
+    const failure = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(failure?.error ?? `Core returned ${response.status}.`);
+  }
+}
+
+const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/**
+ * Words one cron schedule the way the bot info page shows it.
+ * Why: "32 9 * * 1-5" means nothing to a person; "Weekdays at 9:32 AM" does.
+ * Input: the cron text. Output: "Every day at 10:11 AM", "Weekdays at 9:32 AM",
+ * "Every Monday at 4:14 PM", "Every 15 minutes", or the raw cron when unknown.
+ */
+export function formatSchedule(cron: string): string {
+  const fields = cron.trim().split(/\s+/);
+  if (fields.length !== 5) {
+    return cron;
+  }
+  const [minute, hour, dayOfMonth, month, dayOfWeek] = fields as [string, string, string, string, string];
+  const interval = /^\*\/(\d+)$/.exec(minute);
+  if (interval && hour === "*" && dayOfMonth === "*" && month === "*" && dayOfWeek === "*") {
+    const step = Number(interval[1]);
+    return step === 1 ? "Every minute" : `Every ${step} minutes`;
+  }
+  if (!/^\d+$/.test(minute) || !/^\d+$/.test(hour) || dayOfMonth !== "*" || month !== "*") {
+    return cron;
+  }
+  const minuteNum = Number(minute);
+  const hourNum = Number(hour);
+  if (minuteNum < 0 || minuteNum > 59 || hourNum < 0 || hourNum > 23) {
+    return cron;
+  }
+  const time = formatWallTime(hourNum, minuteNum);
+  if (dayOfWeek === "*") {
+    return `Every day at ${time}`;
+  }
+  const days = parseCronWeekdays(dayOfWeek);
+  if (!days) {
+    return cron;
+  }
+  if (days.size === 5 && days.has(1) && days.has(2) && days.has(3) && days.has(4) && days.has(5)) {
+    return `Weekdays at ${time}`;
+  }
+  if (days.size === 1) {
+    const [day] = [...days];
+    return `Every ${WEEKDAY_NAMES[day ?? 0]} at ${time}`;
+  }
+  return cron;
+}
+
+/** Words one wall time. Input: 24-hour hour + minute. Output: "9:32 AM". */
+function formatWallTime(hour: number, minute: number): string {
+  const suffix = hour < 12 ? "AM" : "PM";
+  const twelve = hour % 12 === 0 ? 12 : hour % 12;
+  return `${twelve}:${String(minute).padStart(2, "0")} ${suffix}`;
+}
+
+/**
+ * Parses a cron weekday field. Input: "1", "1-5", "1,3,5".
+ * Output: the weekday set (0=Sunday..6=Saturday), or null when unknown.
+ */
+function parseCronWeekdays(raw: string): Set<number> | null {
+  const days = new Set<number>();
+  for (const part of raw.split(",")) {
+    const range = /^(\d+)-(\d+)$/.exec(part);
+    if (range) {
+      const start = Number(range[1]);
+      const end = Number(range[2]);
+      if (start > end || start < 0 || end > 7) {
+        return null;
+      }
+      for (let day = start; day <= end; day += 1) {
+        days.add(day === 7 ? 0 : day);
+      }
+      continue;
+    }
+    if (!/^\d+$/.test(part)) {
+      return null;
+    }
+    const day = Number(part);
+    if (day < 0 || day > 7) {
+      return null;
+    }
+    days.add(day === 7 ? 0 : day);
+  }
+  return days.size > 0 ? days : null;
+}
+
+/**
+ * Builds a cron from the routine composer's schedule picks.
+ * Input: "daily" or "weekdays" or one weekday index, plus wall hour/minute.
+ * Output: the cron text the core scheduler accepts.
+ */
+export function buildCron(kind: "daily" | "weekdays" | number, hour: number, minute: number): string {
+  if (kind === "daily") {
+    return `${minute} ${hour} * * *`;
+  }
+  if (kind === "weekdays") {
+    return `${minute} ${hour} * * 1-5`;
+  }
+  return `${minute} ${hour} * * ${kind}`;
+}
+
+/**
+ * The routine title shown in the list.
+ * Why: routines carry a body, not a title — the first line is the name.
+ * Input: the routine body. Output: the first line, capped at 80 chars.
+ */
+export function routineTitle(body: string): string {
+  const first = body.split("\n")[0]?.trim() ?? "";
+  return first.length > 80 ? `${first.slice(0, 80)}…` : first || "Untitled routine";
+}
+
+/**
+ * Saves one vault secret for the account. Write-only: the name echoes back,
+ * the value never does, and it never appears in chat.
+ * Input: the core base URL, account id, env name + secret, fetch.
+ * Output: the name and configured flag.
+ */
+async function saveSecret(
+  baseUrl: string,
+  accountId: string,
+  input: { name: string; secret: string },
+  fetchImpl: typeof fetch,
+): Promise<{ name: string; configured: boolean }> {
+  return readJson<{ name: string; configured: boolean }>(fetchImpl, `${baseUrl}/accounts/${accountId}/secrets`, {
+    method: "POST",
+    body: JSON.stringify(input),
   });
 }
 

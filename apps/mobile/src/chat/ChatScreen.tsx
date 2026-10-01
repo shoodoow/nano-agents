@@ -122,6 +122,8 @@ export function ChatScreen({
   onMention,
   onReply,
   onClearReply,
+  onPollSubmit,
+  onSecretSubmit,
   onReact,
   onApprove,
   onDeny,
@@ -129,12 +131,11 @@ export function ChatScreen({
   onBack,
   onDesktop,
   onAgentMenu,
-  agentMenu,
 }: {
   agent: RosterAgent;
   title: string;
   subtitle: string;
-  members: { id: string; name: string }[];
+  members: RosterAgent[];
   messages: Bubble[];
   draft: string;
   sending: boolean;
@@ -153,6 +154,8 @@ export function ChatScreen({
   onMention: () => void;
   onReply: (bubble: Bubble) => void;
   onClearReply: () => void;
+  onPollSubmit: (text: string) => void;
+  onSecretSubmit: (name: string, secret: string) => Promise<void>;
   onReact: (bubble: Bubble, emoji: string) => void;
   onApprove: () => void;
   onDeny: () => void;
@@ -160,7 +163,6 @@ export function ChatScreen({
   onBack: () => void;
   onDesktop: () => void;
   onAgentMenu: () => void;
-  agentMenu?: ReactNode;
 }) {
   const list = useRef<FlatList<Bubble>>(null);
   const [pickingFor, setPickingFor] = useState<string | null>(null);
@@ -196,7 +198,7 @@ export function ChatScreen({
           onPress={onAgentMenu}
           style={styles.pill}
         >
-          <Avatar id={agent.id} size={22} round />
+          <Avatar id={agent.id} size={22} round shape={agent.markShape} color={agent.markColor} photo={agent.avatarUrl} />
           <View style={styles.titles}>
             <Text style={styles.pillName} numberOfLines={1}>
               {title}
@@ -238,11 +240,21 @@ export function ChatScreen({
           const blocks: MessageBlock[] =
             item.blocks && item.blocks.length > 0 ? item.blocks : [{ kind: "text", markdown: item.body }];
           const nameColor = item.mine ? colors.text : colorFor(item.agentId ?? item.author);
+          const author = item.agentId === agent.id ? agent : (members.find((member) => member.id === item.agentId) ?? null);
           return (
             <View>
               {showTime ? <Text style={styles.time}>Today {item.time}</Text> : null}
               <View style={[styles.row, item.mine ? styles.rowMine : styles.rowTheirs]}>
-                {!item.mine ? <Avatar id={item.agentId ?? item.author} size={32} round /> : null}
+                {!item.mine ? (
+                  <Avatar
+                    id={item.agentId ?? item.author}
+                    size={32}
+                    round
+                    shape={author?.markShape ?? null}
+                    color={author?.markColor ?? null}
+                    photo={author?.avatarUrl ?? null}
+                  />
+                ) : null}
                 <View style={styles.column}>
                   {!item.mine ? (
                     <Text style={[styles.author, { color: nameColor }]} numberOfLines={1}>
@@ -259,7 +271,15 @@ export function ChatScreen({
                     >
                       {item.replyPreview ? <Text style={styles.quote}>↩ {item.replyPreview}</Text> : null}
                       {blocks.map((block, blockIndex) => (
-                        <BlockView key={blockIndex} block={block} onApprove={onApprove} onDeny={onDeny} fetchBlob={onFetchBlob} />
+                        <BlockView
+                          key={blockIndex}
+                          block={block}
+                          onApprove={onApprove}
+                          onDeny={onDeny}
+                          onSubmitPoll={onPollSubmit}
+                          onSubmitSecret={onSecretSubmit}
+                          fetchBlob={onFetchBlob}
+                        />
                       ))}
                       <Reactions
                         reactions={item.reactions ?? []}
@@ -312,7 +332,7 @@ export function ChatScreen({
         <View style={styles.mentions}>
           {mentionCandidates.map((member) => (
             <Pressable key={member.id} style={styles.mentionRow} onPress={() => pickMention(member.name)}>
-              <Avatar id={member.id} size={24} round />
+              <Avatar id={member.id} size={24} round shape={member.markShape} color={member.markColor} photo={member.avatarUrl} />
               <Text style={styles.mentionName}>{member.name}</Text>
             </Pressable>
           ))}
@@ -357,7 +377,6 @@ export function ChatScreen({
           </View>
         </Pressable>
       </Modal>
-      {agentMenu ? <View style={styles.agentMenu}>{agentMenu}</View> : null}
     </KeyboardAvoidingView>
   );
 }
@@ -458,5 +477,4 @@ const styles = StyleSheet.create({
   sheetRow: { paddingVertical: 14, paddingHorizontal: 12, borderRadius: 10 },
   sheetCancel: { alignItems: "center", marginTop: 4, backgroundColor: colors.bubble },
   sheetText: { color: colors.text, fontSize: 16 },
-  agentMenu: { position: "absolute", top: 60, left: 8, right: 8, bottom: 12 },
 });

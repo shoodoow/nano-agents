@@ -6,7 +6,7 @@ import express, { Router, type Express, type NextFunction, type Request, type Re
 import pino from "pino";
 import { pinoHttp } from "pino-http";
 import { deviceSchema } from "@nano-agents/shared";
-import { reactionSchema, subagentCreateSchema } from "@nano-agents/agent-tools";
+import { reactionSchema, routineCreateInputSchema, subagentCreateSchema } from "@nano-agents/agent-tools";
 import { createAuth, localBrowserOrigins } from "../auth/auth.js";
 import { handBack, profileOnAccount, startDesktop, takeOver } from "../desktop/desktop.js";
 import { novncAssets, novncClientPage } from "./screen-client.js";
@@ -15,6 +15,7 @@ import { devices, notifications } from "../db/schema.js";
 import { and, desc, eq } from "drizzle-orm";
 import { deleteMcpServer, listMcpServers, saveMcpServer } from "../mcp/store.js";
 import { listProviderKeys, saveProviderKey } from "../keys/keys.js";
+import { saveSecret } from "../keys/secrets.js";
 import { createProfile, pipeExec } from "../linux/linux.js";
 import { buildInstructions } from "../prompt/build-instructions.js";
 import {
@@ -37,6 +38,7 @@ import { saveReaction } from "../rooms/send-message.js";
 import type { TurnEvent } from "../rooms/send-message.js";
 import { createAccount, createAgent, getAgent, listAgents, updateAgentFlags, AgentNameError } from "../roster/roster.js";
 import { hireSubagent, listTeam } from "../rooms/subagents.js";
+import { createOwnRoutine, deleteOwnRoutine, listOwnRoutines, updateOwnRoutine } from "../routines/routines.js";
 import { approve, listProposals, reject } from "../skills/proposals.js";
 
 type Database = ReturnType<typeof getDb>;
@@ -163,6 +165,14 @@ function mountRoutes(app: Express, ctx: AppContext): void {
   });
   accounts.put("/:accountId/providers", guard, async (req, res) => {
     res.json(await saveProviderKey(ctx.db, pathParam(req, "accountId"), req.body));
+  });
+  accounts.post("/:accountId/secrets", guard, async (req, res) => {
+    // Write-only vault: the name echoes back, the value never does.
+    try {
+      res.status(201).json(await saveSecret(ctx.db, pathParam(req, "accountId"), req.body));
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Invalid secret." });
+    }
   });
   accounts.get("/:accountId/mcp", guard, async (req, res) => {
     res.json(await listMcpServers(ctx.db, pathParam(req, "accountId")));
@@ -459,6 +469,79 @@ function mountRoutes(app: Express, ctx: AppContext): void {
       return;
     }
     res.json(updated);
+  });
+  agents.get("/:agentId/routines", guard, async (req, res) => {
+    res.json(await listOwnRoutines(ctx.db, queryAccountId(req), pathParam(req, "agentId")));
+  });
+  agents.post("/:agentId/routines", guard, async (req, res) => {
+    const accountId = queryAccountId(req);
+    const agentId = pathParam(req, "agentId");
+    if (!(await getAgent(ctx.db, accountId, agentId))) {
+      res.status(404).json({ error: "Agent not found." });
+      return;
+    }
+    const raw = (req.body ?? {}) as { conversationId?: unknown; body?: unknown; cron?: unknown; timezone?: unknown };
+    if (typeof raw.conversationId !== "string" || raw.conversationId.length === 0) {
+      res.status(400).json({ error: "conversationId is required." });
+      return;
+    }
+    try {
+      const data = routineCreateInputSchema.parse({
+        body: raw.body,
+        cron: raw.cron,
+        timezone: raw.timezone ?? undefined,
+      });
+      res
+        .status(201)
+        .json(
+          await createOwnRoutine(ctx.db, { accountId, conversationId: raw.conversationId, agentId, ...data }),
+        );
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Invalid routine." });
+    }
+  });
+  agents.patch("/:agentId/routines/:routineId", guard, async (req, res) => {
+    const accountId = queryAccountId(req);
+    const agentId = pathParam(req, "agentId");
+    if (!(await getAgent(ctx.db, accountId, agentId))) {
+      res.status(404).json({ error: "Agent not found." });
+      return;
+    }
+    const raw = (req.body ?? {}) as { body?: unknown; cron?: unknown; timezone?: unknown; paused?: unknown };
+    try {
+      const updated = await updateOwnRoutine(ctx.db, accountId, agentId, {
+        routineId: pathParam(req, "routineId"),
+        body: typeof raw.body === "string" ? raw.body : undefined,
+        cron: typeof raw.cron === "string" ? raw.cron : undefined,
+        timezone: typeof raw.timezone === "string" ? raw.timezone : undefined,
+        paused: typeof raw.paused === "boolean" ? raw.paused : undefined,
+      });
+      if (!updated) {
+        res.status(404).json({ error: "Routine not found." });
+        return;
+      }
+      res.json(updated);
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Invalid routine." });
+    }
+  });
+  agents.delete("/:agentId/routines/:routineId", guard, async (req, res) => {
+    const accountId = queryAccountId(req);
+    const agentId = pathParam(req, "agentId");
+    if (!(await getAgent(ctx.db, accountId, agentId))) {
+      res.status(404).json({ error: "Agent not found." });
+      return;
+    }
+    try {
+      const deleted = await deleteOwnRoutine(ctx.db, accountId, agentId, pathParam(req, "routineId"));
+      if (!deleted) {
+        res.status(404).json({ error: "Routine not found." });
+        return;
+      }
+      res.status(204).end();
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Invalid routine." });
+    }
   });
   agents.get("/:agentId/prompt", guard, async (req, res) => {
     const agent = await getAgent(ctx.db, queryAccountId(req), pathParam(req, "agentId"));

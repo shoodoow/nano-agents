@@ -31,14 +31,12 @@ export function DesktopScreen({
   accountId,
   agent,
   onBack,
-  onProfile,
   onApprovals,
   onError,
 }: {
   accountId: string;
   agent: RosterAgent;
   onBack: () => void;
-  onProfile: () => void;
   onApprovals: () => void;
   onError: (error: unknown) => void;
 }) {
@@ -142,7 +140,7 @@ export function DesktopScreen({
           <CircleButton label="Back" onPress={onBack}>
             <IconBack />
           </CircleButton>
-          <Avatar id={agent.id} size={22} round />
+          <Avatar id={agent.id} size={22} round shape={agent.markShape} color={agent.markColor} photo={agent.avatarUrl} />
           <Text style={styles.name}>{agent.name}</Text>
         </View>
         <View style={styles.headerSide}>
@@ -161,7 +159,6 @@ export function DesktopScreen({
             label="More"
             onPress={() =>
               Alert.alert(agent.name, undefined, [
-                { text: "Edit profile", onPress: onProfile },
                 { text: "Approvals", onPress: onApprovals },
                 { text: "Cancel", style: "cancel" },
               ])

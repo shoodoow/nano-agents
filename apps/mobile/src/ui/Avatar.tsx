@@ -1,5 +1,7 @@
+import { Image } from "expo-image";
 import { View } from "react-native";
 import { palette } from "../theme/tokens";
+import { MARK_SHAPES, Mark, type MarkShape } from "./Mark";
 
 /**
  * Picks a stable face color for one agent.
@@ -17,10 +19,41 @@ export function colorFor(id: string): string {
 
 /**
  * Draws the rounded face used on the roster and in chat.
- * Input: the agent id, the pixel size, and whether the face is a circle.
- * Output: a colored mark with two eyes.
+ * Input: the agent id, the pixel size, circle vs squircle, the person flag,
+ * and the saved mark (shape id, hex color, photo URL — all nullable).
+ * Output: the uploaded photo, the saved character mark, or the legacy
+ * hash-colored face when the agent never customized its mark.
  */
-export function Avatar({ id, size, round = false, person = false }: { id: string; size: number; round?: boolean; person?: boolean }) {
+export function Avatar({
+  id,
+  size,
+  round = false,
+  person = false,
+  shape = null,
+  color = null,
+  photo = null,
+}: {
+  id: string;
+  size: number;
+  round?: boolean;
+  person?: boolean;
+  shape?: string | null;
+  color?: string | null;
+  photo?: string | null;
+}) {
+  if (!person && photo) {
+    return (
+      <Image
+        source={{ uri: photo }}
+        contentFit="cover"
+        style={{ width: size, height: size, borderRadius: round ? size / 2 : size * 0.32 }}
+      />
+    );
+  }
+  if (!person && (shape ?? color)) {
+    const known = MARK_SHAPES.some((entry) => entry.id === shape);
+    return <Mark shape={known ? (shape as MarkShape) : "square"} color={color ?? colorFor(id)} size={size * 0.72} />;
+  }
   const backgroundColor = person ? "#3A3A3C" : colorFor(id);
   const ink = backgroundColor === "#F2F2F7" ? "#111111" : "#FFFFFF";
   if (person) {

@@ -12,6 +12,7 @@ import { saveSendMessage } from "../rooms/send-message.js";
 import { publish } from "../rooms/stream.js";
 import { alreadyDelivered, claimDelivery } from "../rooms/subagents.js";
 import type { GenerateResult, TurnInput } from "./types.js";
+import { isEmptyWorkerReport } from "./worker-report.js";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -27,6 +28,8 @@ export async function deliverWorkerResult(
     generate?: (input: TurnInput) => Promise<GenerateResult>;
   },
 ): Promise<"delivered" | "skipped"> {
+  const raw = input.settled.result.trim().slice(0, 4000);
+  if (isEmptyWorkerReport(raw)) return "skipped";
   if (
     await alreadyDelivered(db, {
       accountId: input.accountId,
@@ -40,7 +43,6 @@ export async function deliverWorkerResult(
   if (!(await claimDelivery(db, input.delegationId))) {
     return "skipped";
   }
-  const raw = input.settled.result.trim().slice(0, 4000) || "The worker finished with no output.";
   const needs = raw.match(/NEEDS_PERSON:\s*(.+)/i);
   const text = needs
     ? `I need you on my computer. ${needs[1].trim()} Tell me when you're done and I'll continue.`

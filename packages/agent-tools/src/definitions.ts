@@ -30,7 +30,7 @@ import {
 } from "./schemas.js";
 
 const WORKER_TASK_HINT =
-  "Task must include Goal, Inputs (exact URLs/paths), Method, Success check, and Return format. Never pass provider or modelId — the worker uses your model. Desktop/browser: Method starts with computer_screenshot; reuse the existing Chromium window on the desktop (do not pkill chromium or reopen login if the person may have signed in); only launch a background chromium if the URL is not already open; then screenshot again and describe what is visible — no OCR unless the person asked.";
+  "Task must include Goal, Inputs (exact URLs/paths), Method, Success check, and Return format. Never pass provider or modelId — the worker uses your model. Desktop/browser: put the exact URL in the task; Method starts with computer_screenshot; reuse the existing Chromium window (do not pkill chromium); drive clicks with computer_click, computer_type, and computer_key, never xdotool, CDP, or Playwright from bash; screenshot again and describe what is visible — no OCR unless the person asked. If the screen needs a password, 2FA, captcha, or payment, the worker ends with NEEDS_PERSON.";
 
 export type ToolSurface = "dispatcher" | "worker";
 

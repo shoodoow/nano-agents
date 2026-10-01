@@ -84,7 +84,7 @@ export function InboxScreen({
         ListHeaderComponent={
           featured ? (
             <Pressable accessibilityRole="button" onPress={() => onOpen(featured)} style={styles.featured}>
-              <Avatar id={featured.id} size={92} />
+              <Avatar id={featured.id} size={92} shape={featured.markShape} color={featured.markColor} photo={featured.avatarUrl} />
               <View style={styles.featuredName}>
                 <Text style={styles.featuredLabel}>{featured.name}</Text>
                 {featured.notify ? <View style={styles.online} accessibilityLabel="Notifications on" /> : null}
@@ -121,7 +121,7 @@ export function InboxScreen({
         }
         renderItem={({ item }) => (
           <Pressable accessibilityRole="button" onPress={() => onOpen(item)} style={({ pressed }) => [styles.row, pressed && styles.pressed]}>
-            <Avatar id={item.id} size={46} round={item.name.length % 2 === 0} />
+            <Avatar id={item.id} size={46} round={item.name.length % 2 === 0} shape={item.markShape} color={item.markColor} photo={item.avatarUrl} />
             <View style={styles.rowBody}>
               <View style={styles.rowTop}>
                 <Text style={styles.name} numberOfLines={1}>

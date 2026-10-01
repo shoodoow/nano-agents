@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { createCore } from "./api";
+import { buildCron, createCore, formatSchedule, routineTitle } from "./api";
 
 test("approve refreshes the list without the decided proposal", async () => {
   const pending = [{ id: "p1", agentId: "a", kind: "memory", body: "Remember the gate.", status: "pending" }];
@@ -52,6 +52,71 @@ test("a group is created on the signed-in account", async () => {
     "22222222-2222-4222-8222-222222222222",
   ]);
   expect(room.id).toBe("room-1");
+});
+
+test("routines round-trip over the agent endpoints", async () => {
+  const routines = [{ id: "r1", body: "Sell the license", cron: "32 9 * * 1-5", timezone: "UTC", paused: false }];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/agents/a1/routines?accountId=account-1") && init?.method === "POST") {
+      const body = JSON.parse(String(init.body)) as { cron: string };
+      expect(body.cron).toBe("32 9 * * 1-5");
+      return new Response(JSON.stringify({ ...routines[0], id: "r2" }), { status: 201 });
+    }
+    if (url.endsWith("/agents/a1/routines?accountId=account-1")) {
+      return new Response(JSON.stringify(routines), { status: 200 });
+    }
+    if (url.endsWith("/agents/a1/routines/r1?accountId=account-1") && init?.method === "PATCH") {
+      return new Response(JSON.stringify({ ...routines[0], paused: true }), { status: 200 });
+    }
+    if (url.endsWith("/agents/a1/routines/r1?accountId=account-1") && init?.method === "DELETE") {
+      return new Response(null, { status: 204 });
+    }
+    return new Response("missing", { status: 404 });
+  };
+  const core = createCore("http://core.example", fetchImpl);
+  await expect(core.listRoutines("account-1", "a1")).resolves.toHaveLength(1);
+  const created = await core.createRoutine("account-1", "a1", {
+    conversationId: "c1",
+    body: "Sell the license",
+    cron: "32 9 * * 1-5",
+  });
+  expect(created.id).toBe("r2");
+  const updated = await core.updateRoutine("account-1", "a1", "r1", { paused: true });
+  expect(updated.paused).toBe(true);
+  await expect(core.deleteRoutine("account-1", "a1", "r1")).resolves.toBeUndefined();
+});
+
+test("schedules read the way the bot info page shows them", () => {
+  expect(formatSchedule("32 9 * * 1-5")).toBe("Weekdays at 9:32 AM");
+  expect(formatSchedule("11 10 * * *")).toBe("Every day at 10:11 AM");
+  expect(formatSchedule("14 16 * * 1")).toBe("Every Monday at 4:14 PM");
+  expect(formatSchedule("12 17 * * *")).toBe("Every day at 5:12 PM");
+  expect(formatSchedule("*/15 * * * *")).toBe("Every 15 minutes");
+  expect(formatSchedule("0 0 * * 0")).toBe("Every Sunday at 12:00 AM");
+  expect(formatSchedule("nonsense")).toBe("nonsense");
+  expect(formatSchedule("0 9 1 * *")).toBe("0 9 1 * *");
+  expect(buildCron("daily", 10, 11)).toBe("11 10 * * *");
+  expect(buildCron("weekdays", 9, 32)).toBe("32 9 * * 1-5");
+  expect(buildCron(1, 16, 14)).toBe("14 16 * * 1");
+  expect(routineTitle("Sell the license\nRun the weekday check.")).toBe("Sell the license");
+  expect(routineTitle("")).toBe("Untitled routine");
+});
+
+test("vault secrets post the name and value without echoing them back", async () => {
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/accounts/account-1/secrets") && init?.method === "POST") {
+      expect(JSON.parse(String(init.body))).toEqual({ name: "CMO_PASSWORD", secret: "s3cr3t" });
+      return new Response(JSON.stringify({ name: "CMO_PASSWORD", configured: true }), { status: 201 });
+    }
+    return new Response("missing", { status: 404 });
+  };
+  const core = createCore("http://core.example", fetchImpl);
+  await expect(core.saveSecret("account-1", { name: "CMO_PASSWORD", secret: "s3cr3t" })).resolves.toEqual({
+    name: "CMO_PASSWORD",
+    configured: true,
+  });
 });
 
 test("the screen url is the core websocket", () => {

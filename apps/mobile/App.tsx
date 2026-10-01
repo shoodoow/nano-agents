@@ -12,17 +12,17 @@ import {
   type Reaction,
   type RichMessage,
   type RosterAgent,
+  type Routine,
 } from "./src/api";
 import { configureForegroundBanners, getPushToken, onPushTap } from "./src/push";
 import { authClient } from "./src/auth";
 import { MenuSheet, type MenuPage, type SignedAccount } from "./src/account/MenuSheet";
 import { ApprovalsScreen } from "./src/approvals/ApprovalsScreen";
-import { AgentMenuSheet } from "./src/chat/AgentMenu";
+import { BotInfoScreen } from "./src/chat/BotInfoScreen";
 import { ChatScreen, type Bubble } from "./src/chat/ChatScreen";
 import { DesktopScreen } from "./src/desktop/DesktopScreen";
 import { InboxScreen } from "./src/inbox/InboxScreen";
 import { NewRoomSheet } from "./src/inbox/NewRoomSheet";
-import { ProfileScreen } from "./src/profile/ProfileScreen";
 import { colors } from "./src/theme/tokens";
 
 configureAuthCookie(authClient.getCookie);
@@ -119,7 +119,6 @@ export default function App() {
   const [providers, setProviders] = useState<ProviderSetting[]>([]);
   const [screen, setScreen] = useState<Screen>({ name: "inbox" });
   const [menu, setMenu] = useState<MenuPage | null>(null);
-  const [agentMenu, setAgentMenu] = useState(false);
   const [creating, setCreating] = useState(false);
   const [afterSignup, setAfterSignup] = useState(false);
   const [draft, setDraft] = useState("");
@@ -138,6 +137,7 @@ export default function App() {
   const [attachOpen, setAttachOpen] = useState(false);
   const [note, setNote] = useState("");
   const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [routines, setRoutines] = useState<Routine[]>([]);
   const [profile, setProfile] = useState<RosterAgent | null>(null);
   const [conversationId, setConversationId] = useState("");
   const [groups, setGroups] = useState<{ id: string; title: string; memberCount: number }[]>([]);
@@ -435,7 +435,6 @@ export default function App() {
     setReplyTo(null);
     setAttachments([]);
     setAttachOpen(false);
-    setAgentMenu(false);
     setNote("");
   }
 
@@ -565,6 +564,72 @@ export default function App() {
     setSending(false);
   }
 
+  /**
+   * Sends one explicit text as the open chat's next turn.
+   * Why: poll widgets answer without touching the composer — draft text the
+   * user is typing must survive a tap on Submit. Input: room id + answer
+   * text. Output: nothing. The optimistic bubble confirms like a typed send.
+   */
+  async function sendText(conversationId: string, body: string): Promise<void> {
+    const text = body.trim();
+    if (!text || sending) {
+      return;
+    }
+    const pendingAt = new Date().toISOString();
+    const pendingId = `pending-${Date.now()}`;
+    const pending: Bubble = {
+      id: pendingId,
+      author: "You",
+      agentId: null,
+      mine: true,
+      body: text,
+      sortAt: pendingAt,
+      time: new Date(pendingAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }),
+      blocks: [{ kind: "text", markdown: text }],
+      replyTo: null,
+      replyPreview: null,
+      reactions: [],
+    };
+    setSending(true);
+    setTyping(true);
+    setNote("");
+    setMessages((current) => [...current, pending]);
+    let confirmedId = pendingId;
+    try {
+      const saved = await core.sendMessage(accountId.trim(), conversationId, text, {
+        blocks: [{ kind: "text", markdown: text }],
+        replyTo: null,
+      });
+      if (saved.message?.id) {
+        confirmedId = saved.message.id;
+        setMessages((current) => current.map((bubble) => (bubble.id === pendingId ? { ...bubble, id: confirmedId } : bubble)));
+      }
+    } catch (error) {
+      setMessages((current) => current.filter((bubble) => bubble.id !== pendingId));
+      setTyping(false);
+      setSending(false);
+      throw error;
+    }
+    expectReply.current = true;
+    setSending(false);
+  }
+
+  /**
+   * Saves one vault secret from a secret widget.
+   * Why: the masked value must never enter chat — it posts straight to the
+   * write-only vault. Input: env name + secret. Output: nothing. Throws
+   * after noting so the widget keeps the typed value on failure.
+   */
+  async function saveVaultSecret(name: string, secret: string): Promise<void> {
+    try {
+      await core.saveSecret(accountId.trim(), { name, secret });
+      setNote("Secret saved.");
+    } catch (error) {
+      show(error);
+      throw error;
+    }
+  }
+
   const MAX_IMAGE_BYTES = 5_000_000;
   const MAX_FILE_BYTES = 2_000_000;
 
@@ -681,18 +746,117 @@ export default function App() {
   }
 
   /**
+   * Opens the agent profile editor for one agent.
+   * Why: one shared path so chat-name taps land on the same form the
+   * desktop More menu used to open. Input: the agent. Output: nothing.
+   * The profile screen opens on it.
+   */
+  function openProfile(agent: RosterAgent): void {
+    void core
+      .listProviders(accountId.trim())
+      .then(setProviders)
+      .catch(show);
+    void refreshRoutines(agent.id).catch(show);
+    setProfile(agent);
+    setScreen({ name: "profile", agent });
+  }
+
+  /**
    * Saves the open profile and updates that agent in the roster.
-   * Input: none. It reads the profile fields on screen.
+   * Input: an optional draft (the notifications toggle saves immediately,
+   * before state settles). Omit it to save the profile on screen.
    * Output: nothing. The roster shows the saved name, label, and flags.
    */
-  async function saveProfile(): Promise<void> {
+  async function saveProfile(draft?: RosterAgent): Promise<void> {
+    const current = draft ?? profile;
+    if (!current) {
+      return;
+    }
+    const saved = await core.saveProfile(accountId.trim(), current.id, current);
+    setProfile(saved);
+    setAgents((rows) => rows.map((agent) => (agent.id === saved.id ? saved : agent)));
+    setLastChat((currentChat) =>
+      currentChat && currentChat.agent.id === saved.id
+        ? { ...currentChat, agent: saved, title: currentChat.kind === "group" ? currentChat.title : saved.name }
+        : currentChat,
+    );
+    setNote("Saved.");
+  }
+
+  /**
+   * Reloads one agent's routines into the bot info page.
+   * Input: the agent id. Output: nothing. The routines group re-renders.
+   */
+  async function refreshRoutines(agentId: string): Promise<void> {
+    setRoutines(await core.listRoutines(accountId.trim(), agentId));
+  }
+
+  /**
+   * Picks one photo from the library and saves it as the bot's avatar.
+   * Why: tapping the big mark on the bot info page replaces the drawn mark
+   * with a photo. Images travel as data URIs, validated by the core upload.
+   * Input: none (uses picker UI). Output: nothing. The draft shows the photo.
+   */
+  async function pickAvatar(): Promise<void> {
     if (!profile) {
       return;
     }
-    const saved = await core.saveProfile(accountId.trim(), profile.id, profile);
-    setProfile(saved);
-    setAgents((rows) => rows.map((agent) => (agent.id === saved.id ? saved : agent)));
-    setNote("Saved.");
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      setNote("Photo access is needed for the bot photo.");
+      return;
+    }
+    const picked = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      base64: true,
+      quality: 0.7,
+    });
+    if (picked.canceled || picked.assets.length === 0) {
+      return;
+    }
+    const asset = picked.assets[0]!;
+    if (!asset.base64) {
+      setNote("That image could not be read. Try another.");
+      return;
+    }
+    if (Math.floor((asset.base64.length * 3) / 4) > MAX_IMAGE_BYTES) {
+      setNote("That image is too large (over 5MB). Try a smaller one.");
+      return;
+    }
+    const mime = asset.mimeType ?? "image/jpeg";
+    const url = `data:${mime};base64,${asset.base64}`;
+    try {
+      await core.upload(accountId.trim(), { url, name: asset.fileName ?? "avatar" });
+    } catch (error) {
+      show(error);
+      return;
+    }
+    await saveProfile({ ...profile, avatarUrl: url });
+  }
+
+  /**
+   * Pauses or resumes one routine and reloads the group.
+   * Input: the routine and the wanted paused flag. Output: nothing.
+   */
+  async function pauseRoutine(routine: Routine, paused: boolean): Promise<void> {
+    if (!profile) {
+      return;
+    }
+    await core.updateRoutine(accountId.trim(), profile.id, routine.id, { paused });
+    await refreshRoutines(profile.id);
+  }
+
+  /**
+   * Deletes one routine and reloads the group.
+   * Input: the routine. Output: nothing. The detail page falls back to info.
+   */
+  async function removeRoutine(routine: Routine): Promise<void> {
+    if (!profile) {
+      return;
+    }
+    await core.deleteRoutine(accountId.trim(), profile.id, routine.id);
+    await refreshRoutines(profile.id);
+    setNote("Routine deleted.");
   }
 
   /**
@@ -815,21 +979,17 @@ export default function App() {
           onMention={() => setDraft(core.mention(draft, screen.agent.name))}
           onReply={setReplyTo}
           onClearReply={() => setReplyTo(null)}
+          onPollSubmit={(text) => void sendText(screen.conversationId, text).catch(show)}
+          onSecretSubmit={(name, secret) => saveVaultSecret(name, secret)}
           onReact={(bubble, emoji) => void toggleReaction(screen.conversationId, bubble, emoji).catch(show)}
           onApprove={() => void refreshProposals().catch(show)}
           onDeny={() => void refreshProposals().catch(show)}
           onFetchBlob={(messageId, index) =>
             core.blob(accountId.trim(), screen.conversationId, messageId, index)
           }
-          onBack={() => {
-            setAgentMenu(false);
-            setScreen({ name: "inbox" });
-          }}
+          onBack={() => setScreen({ name: "inbox" })}
           onDesktop={() => setScreen({ name: "desktop", agent: screen.agent })}
-          onAgentMenu={() => setAgentMenu(true)}
-          agentMenu={
-            agentMenu ? <AgentMenuSheet agent={screen.agent} onClose={() => setAgentMenu(false)} /> : null
-          }
+          onAgentMenu={() => openProfile(screen.agent)}
         />
       ) : null}
       {screen.name === "desktop" ? (
@@ -841,25 +1001,27 @@ export default function App() {
               ? setScreen({ name: "chat", ...lastChat })
               : setScreen({ name: "inbox" })
           }
-          onProfile={() => {
-            void core
-              .listProviders(accountId.trim())
-              .then(setProviders)
-              .catch(show);
-            setProfile(screen.agent);
-            setScreen({ name: "profile", agent: screen.agent });
-          }}
           onApprovals={() => void refreshProposals().catch(show)}
           onError={show}
         />
       ) : null}
       {screen.name === "profile" && profile ? (
-        <ProfileScreen
+        <BotInfoScreen
           profile={profile}
           providers={providers}
+          routines={routines}
           onChange={setProfile}
           onSave={() => void saveProfile().catch(show)}
-          onBack={() => setScreen({ name: "inbox" })}
+          onSaveNotify={(draft) => void saveProfile(draft).catch(show)}
+          onBack={() =>
+            lastChat && conversationId
+              ? setScreen({ name: "chat", ...lastChat })
+              : setScreen({ name: "inbox" })
+          }
+          onApprovals={() => void refreshProposals().catch(show)}
+          onPickAvatar={() => void pickAvatar().catch(show)}
+          onPauseRoutine={(routine, paused) => void pauseRoutine(routine, paused).catch(show)}
+          onDeleteRoutine={(routine) => void removeRoutine(routine).catch(show)}
         />
       ) : null}
       {screen.name === "approvals" ? (

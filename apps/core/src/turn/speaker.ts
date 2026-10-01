@@ -144,6 +144,7 @@ export async function speakOnce(
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     void traceSession.emit({ type: "run.error", phase: "model", message: message.slice(0, 500) });
+    console.log('error', message);
     result = {
       text: message.startsWith("Add an API key")
         ? message

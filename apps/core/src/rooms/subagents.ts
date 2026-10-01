@@ -587,10 +587,11 @@ export async function failuresSinceLastUser(
  * Input: worker/task/result + retry flag. Output: cue string (model-only, never saved as user text).
  */
 export function workerFollowupCue(input: { workerId: string; task: string; result: string; retry: boolean }): string {
+  const head = `Worker ${input.workerId} did not finish "${input.task.slice(0, 500)}". Result: ${input.result.slice(0, 1000)}.`;
   if (input.retry) {
-    return `Worker ${input.workerId} failed its task "${input.task.slice(0, 500)}" with: ${input.result.slice(0, 1000)}. Rewrite the task once with narrower scope and spawn_worker again. If that retry also fails, tell the person in plain words and stop.`;
+    return `${head} send_message one short sentence about what happened and the next step you are taking, then spawn_worker once with a narrower task. Do not stop after the failure, and never send an internal line like "The worker finished with no output."`;
   }
-  return `Worker ${input.workerId} failed again for "${input.task.slice(0, 500)}" with: ${input.result.slice(0, 1000)}. Tell the person in plain words what failed and stop. Do not spawn another worker.`;
+  return `${head} send_message what went wrong and the one thing the person can do next. Do not spawn another worker. Never send an internal status line.`;
 }
 
 /**
@@ -746,7 +747,15 @@ export async function runWorker(
       tools,
       stopWhen: isStepCount(WORKER_STEPS),
     });
-    const text = result.text.trim() || "The worker finished with no output.";
+    const { collectWorkerFallback, collectWorkerText } = await import("../turn/worker-report.js");
+    const text = collectWorkerText(result);
+    if (!text) {
+      await finish(
+        "failed",
+        collectWorkerFallback(result) || "The model finished without a report. No findings were returned.",
+      );
+      return;
+    }
     await finish("done", text);
   } catch (error) {
     await finish("failed", error instanceof Error ? error.message : "The worker failed.");

@@ -86,9 +86,9 @@ export async function updateAgentFlags(db: Database, accountId: string, agentId:
   const [row] = await db
     .update(agents)
     .set({
-      notify: data.notify,
-      pinned: data.pinned,
-      hidden: data.hidden,
+      ...(data.notify !== undefined ? { notify: data.notify } : {}),
+      ...(data.pinned !== undefined ? { pinned: data.pinned } : {}),
+      ...(data.hidden !== undefined ? { hidden: data.hidden } : {}),
       ...(data.name !== undefined ? { name: data.name } : {}),
       ...(data.label !== undefined ? { label: data.label } : {}),
       ...(data.role !== undefined ? { role: data.role } : {}),
@@ -96,6 +96,9 @@ export async function updateAgentFlags(db: Database, accountId: string, agentId:
       ...(data.jobDescription !== undefined ? { jobDescription: data.jobDescription } : {}),
       ...(data.provider !== undefined ? { provider: data.provider } : {}),
       ...(data.modelId !== undefined ? { modelId: data.modelId } : {}),
+      ...(data.markShape !== undefined ? { markShape: data.markShape } : {}),
+      ...(data.markColor !== undefined ? { markColor: data.markColor } : {}),
+      ...(data.avatarUrl !== undefined ? { avatarUrl: data.avatarUrl } : {}),
       ...(identityTouched ? { promptVersion: sql`${agents.promptVersion} + 1` } : {}),
     })
     .where(and(eq(agents.id, agentId), eq(agents.accountId, accountId)))

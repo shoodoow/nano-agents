@@ -3,6 +3,8 @@
  * - interval every N minutes: minute field is star-slash-N, rest stars (UTC-agnostic)
  * - `M H * * *` daily at H:M wall time in the routine's timezone
  * - `M H * * D` weekly on weekday D (0-6, Sunday=0, 7 also Sunday)
+ * - `M H * * A-B` on weekdays A through B (e.g. 1-5 is Monday to Friday)
+ * - `M H * * A,B,...` on the listed weekdays
  * Anything else throws naming the supported shapes — the agent relays this
  * instead of silently scheduling the wrong cadence.
  */
@@ -52,8 +54,48 @@ export function nextCronRun(cron: string, timezone: string, fromMs: number = Dat
   if (dayOfWeek === "*") {
     return nextDaily(minuteNum, hourNum, timezone, fromMs);
   }
-  const dow = parseField(dayOfWeek === "7" ? "0" : dayOfWeek, 0, 6, "weekday");
-  return nextWeekly(minuteNum, hourNum, dow, timezone, fromMs);
+  return nextWeeklySet(minuteNum, hourNum, parseWeekdays(dayOfWeek, cron), timezone, fromMs);
+}
+
+/**
+ * Parses a weekday field into the matching weekday set.
+ * Why: "Weekdays at 9:32 AM" is `M H * * 1-5` — one routine, five days.
+ * Input: the raw field ("1", "1-5", "1,3,5") and the full cron for errors.
+ * Output: weekdays as 0=Sunday..6=Saturday. Throws naming the shape.
+ */
+function parseWeekdays(raw: string, cron: string): Set<number> {
+  const days = new Set<number>();
+  for (const part of raw.split(",")) {
+    const range = /^(\d+)-(\d+)$/.exec(part);
+    if (range) {
+      const start = weekdayNumber(range[1] ?? "", cron);
+      const end = weekdayNumber(range[2] ?? "", cron);
+      if (start > end) {
+        throw new Error(`Unsupported schedule "${cron}". Weekday ranges run forward, e.g. "1-5".`);
+      }
+      for (let day = start; day <= end; day += 1) {
+        days.add(day);
+      }
+      continue;
+    }
+    days.add(weekdayNumber(part, cron));
+  }
+  if (days.size === 0) {
+    throw new Error(`Unsupported schedule "${cron}". Use "*/N * * * *", "M H * * *" (daily), or "M H * * D" (weekly).`);
+  }
+  return days;
+}
+
+/** Parses one weekday number. Input: raw digits. Output: 0=Sunday..6=Saturday (7 folds to 0). */
+function weekdayNumber(raw: string, cron: string): number {
+  if (!/^\d+$/.test(raw)) {
+    throw new Error(`Unsupported schedule "${cron}". Weekdays must be numbers 0-7, ranges like "1-5", or lists like "1,3,5".`);
+  }
+  const value = Number(raw);
+  if (value < 0 || value > 7) {
+    throw new Error(`Unsupported schedule "${cron}". Weekdays must be 0-7, got "${raw}".`);
+  }
+  return value === 7 ? 0 : value;
 }
 
 function parseField(raw: string, min: number, max: number, name: string): number {
@@ -83,14 +125,14 @@ function nextDaily(minute: number, hour: number, timezone: string, fromMs: numbe
 }
 
 /**
- * Finds the next weekly H:M on weekday D in the zone.
+ * Finds the next H:M on one of the given weekdays in the zone.
  * Why: same wall-time math as daily, stepping forward to the next matching
- * weekday first (up to 8 days to cover a same-day miss).
+ * weekday first (up to 9 days covers a same-day miss plus a full week gap).
  */
-function nextWeekly(minute: number, hour: number, weekday: number, timezone: string, fromMs: number): Date {
-  for (let day = 0; day < 9; day += 1) {
+function nextWeeklySet(minute: number, hour: number, weekdays: Set<number>, timezone: string, fromMs: number): Date {
+  for (let day = 0; day < 10; day += 1) {
     const wall = wallParts(timezone, fromMs + day * 86_400_000);
-    if (wall.weekday !== weekday) continue;
+    if (!weekdays.has(wall.weekday)) continue;
     const candidate = wallToInstant(timezone, wall.year, wall.month, wall.day, hour, minute);
     if (candidate.getTime() > fromMs) return candidate;
   }

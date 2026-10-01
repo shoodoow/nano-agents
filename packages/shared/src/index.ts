@@ -69,7 +69,14 @@ export const agentFlagsSchema = z.object({
   hidden: z.boolean(),
 });
 
+export const markShapes = ["circle", "blob", "square", "pill", "triangle", "hexagon", "cloud", "drop"] as const;
+
+export type MarkShape = (typeof markShapes)[number];
+
 export const agentProfileSchema = agentFlagsSchema.extend({
+  notify: z.boolean().optional(),
+  pinned: z.boolean().optional(),
+  hidden: z.boolean().optional(),
   name: z.string().trim().min(1).max(100).optional(),
   label: z.string().trim().min(1).max(100).optional(),
   role: z.string().trim().min(1).max(100).optional(),
@@ -77,6 +84,14 @@ export const agentProfileSchema = agentFlagsSchema.extend({
   jobDescription: z.string().trim().min(1).max(10_000).optional(),
   provider: z.enum(providerNames).optional(),
   modelId: z.string().trim().min(1).max(200).optional(),
+  markShape: z.enum(markShapes).nullable().optional(),
+  markColor: z
+    .string()
+    .trim()
+    .regex(/^#[0-9a-fA-F]{6}$/, "Mark color must be a hex color like #8B5CF6.")
+    .nullable()
+    .optional(),
+  avatarUrl: z.string().trim().min(1).max(8_000_000).nullable().optional(),
 });
 
 export type Account = z.infer<typeof accountSchema>;
@@ -143,10 +158,20 @@ export const fileBlockSchema = z.object({
 
 export const widgetBlockSchema = z.object({
   kind: z.literal("widget"),
-  widget: z.enum(["checklist", "chart", "approval", "agent-card"]),
+  widget: z.enum(["checklist", "chart", "approval", "agent-card", "poll", "table", "secret"]),
   // Validated per-widget on the client; kept loose on the wire for forward compat.
   props: z.record(z.string(), z.unknown()),
 });
+
+/** Name rule for vault secrets: env-var shaped, so agents can ask for ENV_NAME. */
+export const secretNameRegex = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
+
+export const secretInputSchema = z.object({
+  name: z.string().trim().min(1).max(128).regex(secretNameRegex, "Secret name must look like an ENV_VAR."),
+  secret: z.string().min(1).max(16_384),
+});
+
+export type SecretInput = z.infer<typeof secretInputSchema>;
 
 export const messageBlockSchema = z.discriminatedUnion("kind", [
   textBlockSchema,

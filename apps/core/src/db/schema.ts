@@ -28,6 +28,11 @@ export const agents = pgTable(
     notify: boolean("notify").notNull().default(true),
     pinned: boolean("pinned").notNull().default(false),
     hidden: boolean("hidden").notNull().default(false),
+    // Bot mark (bot info page): shape id + hex color + optional photo URL.
+    // Null means the legacy hash-colored face — old rows keep working.
+    markShape: text("mark_shape"),
+    markColor: text("mark_color"),
+    avatarUrl: text("avatar_url"),
     // Teams (Phase 10): null for top-level hires, parent agent id for subagents.
     parentId: uuid("parent_id"),
     teamId: text("team_id"),
@@ -418,6 +423,23 @@ export const toolKeys = pgTable(
     primaryKey({ columns: [table.accountId, table.tool] }),
     check("tool_keys_tool_check", sql`${table.tool} in ('brave', 'exa')`),
   ],
+);
+
+// Vault secrets: values users save from secret widgets (passwords, tokens).
+// Sealed like provider keys and never listed — no read endpoint exists, so a
+// bot that asks for a secret can never see it. Agents consume them later via
+// env injection, never via chat.
+export const accountSecrets = pgTable(
+  "account_secrets",
+  {
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id),
+    name: text("name").notNull(),
+    secret: text("secret").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.accountId, table.name] })],
 );
 
 // Agent worklists (Phase 15): one current todo list per agent, replaced

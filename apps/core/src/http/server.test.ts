@@ -71,6 +71,18 @@ describe("server", () => {
     });
     expect(await patched.json()).toMatchObject({ pinned: true });
 
+    const marked = await fetch(`${baseUrl}/agents/${agent.id}?accountId=${account.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ markShape: "circle", markColor: "#FF3B30", avatarUrl: null }),
+    });
+    expect(await marked.json()).toMatchObject({ markShape: "circle", markColor: "#FF3B30", avatarUrl: null });
+
+    const badMark = await fetch(`${baseUrl}/agents/${agent.id}?accountId=${account.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ markShape: "heptagon" }),
+    });
+    expect(badMark.status).toBe(400);
+
     const prompt = await fetch(`${baseUrl}/agents/${agent.id}/prompt?accountId=${account.id}`);
     const body = (await prompt.json()) as { prompt: string };
     expect(body.prompt.indexOf(systemPrompt)).toBe(0);
@@ -83,6 +95,80 @@ describe("server", () => {
     const second = (await other.json()) as { id: string };
     const hidden = await fetch(`${baseUrl}/agents/${agent.id}?accountId=${second.id}`);
     expect(hidden.status).toBe(404);
+  });
+
+  it("lists, pauses, and deletes one agent's routines over HTTP", async () => {
+    const account = await postJson<{ id: string }>(`${baseUrl}/accounts`, { name: "Routines" });
+    const ada = await postJson<{ id: string }>(`${baseUrl}/accounts/${account.id}/agents`, agent("Ada"));
+    const room = await postJson<{ id: string }>(`${baseUrl}/accounts/${account.id}/conversations`, {
+      kind: "group",
+      title: "desk",
+      ownerAgentId: ada.id,
+      memberAgentIds: [ada.id],
+    });
+    const created = await postJson<{ id: string }>(
+      `${baseUrl}/agents/${ada.id}/routines?accountId=${account.id}`,
+      { conversationId: room.id, body: "Sell the license", cron: "32 9 * * *", timezone: "UTC" },
+    );
+    expect(created.id).toBeTruthy();
+
+    const listed = (await (
+      await fetch(`${baseUrl}/agents/${ada.id}/routines?accountId=${account.id}`)
+    ).json()) as { id: string; paused: boolean }[];
+    expect(listed.map((row) => row.id)).toEqual([created.id]);
+    expect(listed[0]?.paused).toBe(false);
+
+    const bad = await fetch(`${baseUrl}/agents/${ada.id}/routines?accountId=${account.id}`, {
+      method: "POST",
+      body: JSON.stringify({ conversationId: room.id, body: "Bad", cron: "nonsense" }),
+    });
+    expect(bad.status).toBe(400);
+
+    const paused = await fetch(`${baseUrl}/agents/${ada.id}/routines/${created.id}?accountId=${account.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ paused: true }),
+    });
+    expect(((await paused.json()) as { paused: boolean }).paused).toBe(true);
+
+    const removed = await fetch(
+      `${baseUrl}/agents/${ada.id}/routines/${created.id}?accountId=${account.id}`,
+      { method: "DELETE" },
+    );
+    expect(removed.status).toBe(204);
+    const empty = (await (
+      await fetch(`${baseUrl}/agents/${ada.id}/routines?accountId=${account.id}`)
+    ).json()) as unknown[];
+    expect(empty).toEqual([]);
+
+    const outsider = await postJson<{ id: string }>(`${baseUrl}/accounts`, { name: "Outsider" });
+    const foreign = (await (
+      await fetch(`${baseUrl}/agents/${ada.id}/routines?accountId=${outsider.id}`)
+    ).json()) as unknown[];
+    expect(foreign).toEqual([]);
+    const blocked = await fetch(`${baseUrl}/agents/${ada.id}/routines?accountId=${outsider.id}`, {
+      method: "POST",
+      body: JSON.stringify({ conversationId: room.id, body: "Nope", cron: "0 9 * * *" }),
+    });
+    expect(blocked.status).toBe(404);
+  });
+
+  it("stores vault secrets write-only and rejects bad names", async () => {
+    const account = await postJson<{ id: string }>(`${baseUrl}/accounts`, { name: "Vault HTTP" });
+    const secret = await postJson<{ name: string; configured: boolean }>(
+      `${baseUrl}/accounts/${account.id}/secrets`,
+      { name: "CMO_PASSWORD", secret: "s3cr3t" },
+    );
+    expect(secret).toEqual({ name: "CMO_PASSWORD", configured: true });
+    const empty = await fetch(`${baseUrl}/accounts/${account.id}/secrets`, {
+      method: "POST",
+      body: JSON.stringify({ name: "CMO_PASSWORD", secret: "" }),
+    });
+    expect(empty.status).toBe(400);
+    const badName = await fetch(`${baseUrl}/accounts/${account.id}/secrets`, {
+      method: "POST",
+      body: JSON.stringify({ name: "has space", secret: "x" }),
+    });
+    expect(badName.status).toBe(400);
   });
 
   it("stores a mentioned reply and the agent that reply mentions, in order", async () => {

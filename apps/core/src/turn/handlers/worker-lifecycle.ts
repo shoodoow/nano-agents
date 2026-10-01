@@ -4,8 +4,9 @@
  */
 import type { getDb } from "../../db/client.js";
 import { subscribeTurnBus } from "../events/bus.js";
-import { deliverWorkerResult } from "../worker-delivery.js";
 import { resumeParentAfterWorker } from "../parent-wake.js";
+import { deliverWorkerResult } from "../worker-delivery.js";
+import { isEmptyWorkerReport } from "../worker-report.js";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -20,7 +21,9 @@ export function registerWorkerLifecycle(
   subscribeTurnBus(async (event) => {
     if (event.type !== "worker.settled") return;
     const db = getDbInstance();
-    if (event.status !== "failed") {
+    // An empty "done" report is a miss, not an answer. Wake the parent so it
+    // tells the person and tries a narrower pass instead of posting the placeholder.
+    if (event.status !== "failed" && !isEmptyWorkerReport(event.result)) {
       await deliverWorkerResult(db, {
         accountId: event.accountId,
         conversationId: event.conversationId,
