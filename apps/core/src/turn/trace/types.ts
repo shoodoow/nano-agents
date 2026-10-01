@@ -20,7 +20,17 @@ export type TraceUsage = {
 };
 
 export type TraceEvent =
-  | { type: "run.start"; prefix: string; tail: string; promptCacheKey: string; toolNames: string[] }
+  | {
+      type: "run.start";
+      prefix: string;
+      tail: string;
+      promptCacheKey: string;
+      toolNames: string[];
+      /** AI SDK system instructions (cached prefix + tail). */
+      instructions: unknown;
+      /** Conversation messages passed to the model for this run. */
+      modelMessages: unknown;
+    }
   | {
       type: "model.step.finish";
       step: number;

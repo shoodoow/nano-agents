@@ -55,6 +55,15 @@ describe("roster", () => {
     });
     expect(flagged).toMatchObject({ notify: false, pinned: true, hidden: true });
 
+    const retargeted = await updateAgentFlags(db, first.id, created.id, {
+      notify: false,
+      pinned: true,
+      hidden: true,
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-20250514",
+    });
+    expect(retargeted).toMatchObject({ provider: "anthropic", modelId: "claude-sonnet-4-20250514" });
+
     expect(await getAgent(db, second.id, created.id)).toBeNull();
 
     await db.update(agents).set({ linuxProfile: "ada" }).where(eq(agents.id, created.id));

@@ -74,7 +74,7 @@ export async function createAgent(db: Database, accountId: string, input: unknow
 }
 
 /**
- * Changes an agent's name, label, identity, pin, hide, and notify.
+ * Changes an agent's name, label, identity, model provider, pin, hide, and notify.
  * Why: identity edits bump promptVersion so the OpenAI promptCacheKey rotates
  * — otherwise the provider keeps serving the stale cached prefix.
  * Input: a database client, the owning account id, the agent id, and profile fields.
@@ -94,6 +94,8 @@ export async function updateAgentFlags(db: Database, accountId: string, agentId:
       ...(data.role !== undefined ? { role: data.role } : {}),
       ...(data.personality !== undefined ? { personality: data.personality } : {}),
       ...(data.jobDescription !== undefined ? { jobDescription: data.jobDescription } : {}),
+      ...(data.provider !== undefined ? { provider: data.provider } : {}),
+      ...(data.modelId !== undefined ? { modelId: data.modelId } : {}),
       ...(identityTouched ? { promptVersion: sql`${agents.promptVersion} + 1` } : {}),
     })
     .where(and(eq(agents.id, agentId), eq(agents.accountId, accountId)))

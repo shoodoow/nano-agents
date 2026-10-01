@@ -43,6 +43,8 @@ export const jsonlTracePlugin: TracePlugin = {
         tail: event.tail,
         promptCacheKey: event.promptCacheKey,
         tools: event.toolNames,
+        instructions: event.instructions,
+        modelMessages: event.modelMessages,
       });
     } else if (event.type === "model.step.finish") {
       await appendLine({

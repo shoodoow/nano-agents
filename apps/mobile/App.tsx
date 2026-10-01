@@ -17,6 +17,7 @@ import { configureForegroundBanners, getPushToken, onPushTap } from "./src/push"
 import { authClient } from "./src/auth";
 import { MenuSheet, type MenuPage, type SignedAccount } from "./src/account/MenuSheet";
 import { ApprovalsScreen } from "./src/approvals/ApprovalsScreen";
+import { AgentMenuSheet } from "./src/chat/AgentMenu";
 import { ChatScreen, type Bubble } from "./src/chat/ChatScreen";
 import { DesktopScreen } from "./src/desktop/DesktopScreen";
 import { InboxScreen } from "./src/inbox/InboxScreen";
@@ -48,6 +49,7 @@ function toBubble(
     agentId: row.agentId,
     mine: row.agentId === null,
     body: row.body,
+    sortAt: row.createdAt,
     time: new Date(row.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }),
     blocks,
     replyTo: row.replyTo ?? null,
@@ -76,6 +78,10 @@ function toBubbles(
     byMessage.set(reaction.messageId, list);
   }
   return rows.map((row) => toBubble(row, byId, byMessage, roster));
+}
+
+function sortBubbles(bubbles: Bubble[]): Bubble[] {
+  return [...bubbles].sort((left, right) => left.sortAt.localeCompare(right.sortAt) || left.id.localeCompare(right.id));
 }
 
 export type Attachment = {
@@ -113,6 +119,7 @@ export default function App() {
   const [providers, setProviders] = useState<ProviderSetting[]>([]);
   const [screen, setScreen] = useState<Screen>({ name: "inbox" });
   const [menu, setMenu] = useState<MenuPage | null>(null);
+  const [agentMenu, setAgentMenu] = useState(false);
   const [creating, setCreating] = useState(false);
   const [afterSignup, setAfterSignup] = useState(false);
   const [draft, setDraft] = useState("");
@@ -314,7 +321,7 @@ export default function App() {
           merged.push(bubble);
         }
       }
-      return merged;
+      return sortBubbles(merged);
     });
   }
 
@@ -330,9 +337,8 @@ export default function App() {
 
   /**
    * Keeps the open chat matched to the server while the room stays on screen.
-   * Why: a reply can land after the next user message, and its saved time is
-   * the turn start, so it belongs between those bubbles. Leaving was the only
-   * reload; this merge runs on that same order without leaving.
+   * Why: agent bubbles commit as the turn runs; polling merges them in true
+   * createdAt order so a slow reply never jumps above newer user messages.
    * Input: the open room id. Output: nothing. Stops on leave.
    */
   useEffect(() => {
@@ -429,6 +435,7 @@ export default function App() {
     setReplyTo(null);
     setAttachments([]);
     setAttachOpen(false);
+    setAgentMenu(false);
     setNote("");
   }
 
@@ -510,6 +517,7 @@ export default function App() {
       }
     }
     const fallback = body || (attachments.length === 1 && attachments[0]?.kind === "image" ? "[image]" : `[${attachments.length} attachments]`);
+    const pendingAt = new Date().toISOString();
     const pendingId = `pending-${Date.now()}`;
     const pending: Bubble = {
       id: pendingId,
@@ -517,7 +525,8 @@ export default function App() {
       agentId: null,
       mine: true,
       body: fallback,
-      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }),
+      sortAt: pendingAt,
+      time: new Date(pendingAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }),
       blocks,
       replyTo: replyTo?.id ?? null,
       replyPreview: replyTo?.body.slice(0, 80) ?? null,
@@ -812,8 +821,15 @@ export default function App() {
           onFetchBlob={(messageId, index) =>
             core.blob(accountId.trim(), screen.conversationId, messageId, index)
           }
-          onBack={() => setScreen({ name: "inbox" })}
+          onBack={() => {
+            setAgentMenu(false);
+            setScreen({ name: "inbox" });
+          }}
           onDesktop={() => setScreen({ name: "desktop", agent: screen.agent })}
+          onAgentMenu={() => setAgentMenu(true)}
+          agentMenu={
+            agentMenu ? <AgentMenuSheet agent={screen.agent} onClose={() => setAgentMenu(false)} /> : null
+          }
         />
       ) : null}
       {screen.name === "desktop" ? (
@@ -826,6 +842,10 @@ export default function App() {
               : setScreen({ name: "inbox" })
           }
           onProfile={() => {
+            void core
+              .listProviders(accountId.trim())
+              .then(setProviders)
+              .catch(show);
             setProfile(screen.agent);
             setScreen({ name: "profile", agent: screen.agent });
           }}
@@ -836,6 +856,7 @@ export default function App() {
       {screen.name === "profile" && profile ? (
         <ProfileScreen
           profile={profile}
+          providers={providers}
           onChange={setProfile}
           onSave={() => void saveProfile().catch(show)}
           onBack={() => setScreen({ name: "inbox" })}

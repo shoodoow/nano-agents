@@ -59,8 +59,14 @@ export async function runTurn(
   });
   const emit = (event: Parameters<TurnEmitter["emit"]>[0]) => emitter.emit(event);
 
-  let stamp = Date.now();
-  const nextTime = () => new Date(stamp++);
+  // Wall clock per bubble so a long turn does not back-date replies before
+  // messages the person sent while the agent was still thinking.
+  let stamp = 0;
+  const nextTime = () => {
+    const now = Date.now();
+    stamp = stamp === 0 ? now : Math.max(stamp + 1, now);
+    return new Date(stamp);
+  };
   const incoming = typeof body === "string" ? { text: body, blocks: null as null, replyTo: null as null } : body;
   if (!options?.cue) {
     if (options?.alreadySavedUserMessage) {

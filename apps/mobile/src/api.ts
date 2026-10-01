@@ -27,6 +27,12 @@ export type Reaction = {
   emoji: string;
 };
 
+export type ProviderSetting = {
+  provider: "openai" | "anthropic" | "xai" | "local";
+  baseUrl: string | null;
+  configured: boolean;
+};
+
 export type RosterAgent = {
   id: string;
   name: string;
@@ -34,6 +40,8 @@ export type RosterAgent = {
   role: string;
   personality: string;
   jobDescription: string;
+  provider: ProviderSetting["provider"];
+  modelId: string;
   linuxProfile: string | null;
   notify: boolean;
   pinned: boolean;
@@ -46,12 +54,6 @@ export type Proposal = {
   kind: string;
   body: string;
   status: string;
-};
-
-export type ProviderSetting = {
-  provider: "openai" | "anthropic" | "xai" | "local";
-  baseUrl: string | null;
-  configured: boolean;
 };
 
 export type StreamEvent = {

@@ -56,6 +56,8 @@ export async function runModelHarness(
     tail: input.tail,
     promptCacheKey: input.promptCacheKey,
     toolNames,
+    instructions: prompt.instructions,
+    modelMessages: prompt.messages,
   });
 
   let stepIndex = 0;

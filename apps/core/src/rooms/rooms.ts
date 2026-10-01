@@ -484,7 +484,7 @@ export async function listMessages(db: Database, accountId: string, conversation
     })
     .from(messages)
     .where(and(eq(messages.conversationId, conversationId), eq(messages.accountId, accountId)))
-    .orderBy(asc(messages.createdAt));
+    .orderBy(asc(messages.createdAt), asc(messages.id));
   // Shrink the wire: oversized data: URLs become lazy blobRefs. The stored
   // rows are untouched; the phone fetches bytes per image on demand.
   return rows.map((row) => ({ ...row, payload: stripBloatedBlocks(row.id, row.payload) }));

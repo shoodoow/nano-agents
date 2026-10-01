@@ -75,6 +75,8 @@ export const agentProfileSchema = agentFlagsSchema.extend({
   role: z.string().trim().min(1).max(100).optional(),
   personality: z.string().trim().max(500).optional(),
   jobDescription: z.string().trim().min(1).max(10_000).optional(),
+  provider: z.enum(providerNames).optional(),
+  modelId: z.string().trim().min(1).max(200).optional(),
 });
 
 export type Account = z.infer<typeof accountSchema>;

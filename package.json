@@ -6,7 +6,8 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "build": "tsc -b --pretty false"
+    "build": "tsc -b --pretty false",
+    "db:reset": "pnpm --filter core db:reset"
   },
   "devDependencies": {
     "typescript": "7.0.2"

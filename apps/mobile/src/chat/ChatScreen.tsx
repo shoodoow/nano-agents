@@ -27,6 +27,8 @@ export type Bubble = {
   agentId: string | null;
   mine: boolean;
   body: string;
+  /** ISO timestamp for thread ordering (server createdAt or client pending time). */
+  sortAt: string;
   time: string;
   blocks?: MessageBlock[] | null;
   replyTo?: string | null;
@@ -126,6 +128,8 @@ export function ChatScreen({
   onFetchBlob,
   onBack,
   onDesktop,
+  onAgentMenu,
+  agentMenu,
 }: {
   agent: RosterAgent;
   title: string;
@@ -155,6 +159,8 @@ export function ChatScreen({
   onFetchBlob: (messageId: string, index: number) => Promise<{ url?: string; previewUrl?: string }>;
   onBack: () => void;
   onDesktop: () => void;
+  onAgentMenu: () => void;
+  agentMenu?: ReactNode;
 }) {
   const list = useRef<FlatList<Bubble>>(null);
   const [pickingFor, setPickingFor] = useState<string | null>(null);
@@ -184,7 +190,12 @@ export function ChatScreen({
         <CircleButton label="Back" onPress={onBack}>
           <IconBack />
         </CircleButton>
-        <View style={styles.pill}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Agent details for ${title}`}
+          onPress={onAgentMenu}
+          style={styles.pill}
+        >
           <Avatar id={agent.id} size={22} round />
           <View style={styles.titles}>
             <Text style={styles.pillName} numberOfLines={1}>
@@ -196,7 +207,7 @@ export function ChatScreen({
               </Text>
             ) : null}
           </View>
-        </View>
+        </Pressable>
         {agent.linuxProfile ? (
           <CircleButton label="Desktop" onPress={onDesktop}>
             <IconMonitor />
@@ -346,6 +357,7 @@ export function ChatScreen({
           </View>
         </Pressable>
       </Modal>
+      {agentMenu ? <View style={styles.agentMenu}>{agentMenu}</View> : null}
     </KeyboardAvoidingView>
   );
 }
@@ -446,4 +458,5 @@ const styles = StyleSheet.create({
   sheetRow: { paddingVertical: 14, paddingHorizontal: 12, borderRadius: 10 },
   sheetCancel: { alignItems: "center", marginTop: 4, backgroundColor: colors.bubble },
   sheetText: { color: colors.text, fontSize: 16 },
+  agentMenu: { position: "absolute", top: 60, left: 8, right: 8, bottom: 12 },
 });
