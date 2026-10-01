@@ -32,15 +32,15 @@ export async function listProviderKeys(db: Database, accountId: string): Promise
  */
 export async function saveProviderKey(db: Database, accountId: string, input: unknown): Promise<StoredKey> {
   const data = providerKeySchema.parse(input);
-  if (data.provider === "local" && data.baseUrl) {
-    assertSafeProviderUrl(data.baseUrl);
-  }
   const [existing] = await db
     .select()
     .from(providerKeys)
     .where(and(eq(providerKeys.accountId, accountId), eq(providerKeys.provider, data.provider)));
   const plain = data.secret.trim() || (existing ? open(existing.secret) : "");
-  const baseUrl = data.provider === "local" ? (data.baseUrl ?? null) : null;
+  const baseUrl = data.baseUrl !== undefined ? (data.baseUrl ?? null) : (existing?.baseUrl ?? null);
+  if (baseUrl) {
+    assertSafeProviderUrl(baseUrl);
+  }
   const secret = seal(plain);
   if (existing) {
     await db
@@ -69,7 +69,7 @@ function assertSafeProviderUrl(value: string): void {
 /**
  * Reads the secret the model call should use.
  * Input: a database client, the account id, and the provider name.
- * Output: the API key and the local base URL. Another account's key is not returned.
+ * Output: the API key and optional OpenAI-compatible base URL. Another account's key is not returned.
  */
 export async function keyFor(db: Database, accountId: string, provider: string): Promise<{ apiKey: string; baseUrl: string | null }> {
   const [row] = await db

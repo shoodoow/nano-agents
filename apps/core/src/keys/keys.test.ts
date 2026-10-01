@@ -29,3 +29,19 @@ test("provider keys stay scoped to their account and are never listed", async ()
   await db.delete(accounts).where(eq(accounts.id, first!.id));
   await db.delete(accounts).where(eq(accounts.id, second!.id));
 });
+
+test("openai keys can store an OpenAI-compatible base URL", async () => {
+  const [account] = await db.insert(accounts).values({ name: "NVIDIA Keys" }).returning();
+  const nvidiaBase = "https://integrate.api.nvidia.com/v1";
+  await saveProviderKey(db, account!.id, {
+    provider: "openai",
+    secret: "nvapi-test",
+    baseUrl: nvidiaBase,
+  });
+  await expect(keyFor(db, account!.id, "openai")).resolves.toEqual({
+    apiKey: "nvapi-test",
+    baseUrl: nvidiaBase,
+  });
+  await db.delete(providerKeys).where(eq(providerKeys.accountId, account!.id));
+  await db.delete(accounts).where(eq(accounts.id, account!.id));
+});

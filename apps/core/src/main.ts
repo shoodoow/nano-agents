@@ -1,6 +1,9 @@
 import { getDb } from "./db/client.js";
 import { startServer } from "./http/server.js";
+import { loadBuiltinPlugins } from "./plugins/bootstrap.js";
 import { startScheduler } from "./routines/scheduler.js";
+
+loadBuiltinPlugins();
 
 const databaseUrl = process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/nano_agents";
 const port = Number(process.env.PORT ?? 3000);
