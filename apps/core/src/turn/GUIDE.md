@@ -81,8 +81,8 @@ Core passes `process.env.SKILLS_DIR` from [`server.ts`](../../http/server.ts) in
 
 ### Adding a built-in tool (fully working)
 
-1. [`tools/registry.ts`](./tools/registry.ts) — `builtInTools` entry (`description`, `inputSchema`, `modes`)
-2. [`tools/executors.ts`](./tools/executors.ts) — matching handler in `dispatcherExecutors`
+1. [`packages/agent-tools/src/definitions.ts`](../../../../packages/agent-tools/src/definitions.ts) — one row (`name`, `description`, `surfaces`, `inputSchema` Zod)
+2. [`tools/executors.ts`](./tools/executors.ts) — dispatcher handler in `dispatcherExecutors` (or Linux execute in [`linux-tool-executes.ts`](../computer/linux-tool-executes.ts) for `surfaces: ["worker"]`, `requiresLinux: true`)
 
 ---
 

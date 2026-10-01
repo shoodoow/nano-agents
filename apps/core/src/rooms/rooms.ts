@@ -1,7 +1,20 @@
 import { memberAddSchema, messageCreateSchema, roomCreateSchema, sendMessageInputSchema } from "@nano-agents/shared";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { getDb, Store } from "../db/client.js";
-import { agents, conversations, members, messages, reactions } from "../db/schema.js";
+import {
+  agents,
+  conversations,
+  delegations,
+  events,
+  jobs,
+  members,
+  messages,
+  notifications,
+  reactions,
+  routines,
+  runs,
+  summaryItems,
+} from "../db/schema.js";
 import { materializeBlocks } from "./uploads.js";
 
 type Database = ReturnType<typeof getDb>;
@@ -90,6 +103,92 @@ export async function createGroupRoom(
     .values(agentIds.map((agentId) => ({ conversationId: room.id, accountId: input.accountId, agentId })))
     .returning();
   return { ...room, members: roomMembers };
+}
+
+/**
+ * Lists group rooms the agent belongs to (not direct chats).
+ */
+export async function listGroupRoomsForAgent(store: Store, accountId: string, agentId: string) {
+  const rows = await store
+    .select({
+      conversationId: conversations.id,
+      title: conversations.title,
+      ownerAgentId: conversations.ownerAgentId,
+    })
+    .from(conversations)
+    .innerJoin(
+      members,
+      and(
+        eq(members.conversationId, conversations.id),
+        eq(members.accountId, accountId),
+        eq(members.agentId, agentId),
+      ),
+    )
+    .where(and(eq(conversations.accountId, accountId), eq(conversations.kind, "group")))
+    .orderBy(asc(conversations.createdAt));
+  return rows.map((row) => ({
+    conversationId: row.conversationId,
+    title: row.title,
+    owned: row.ownerAgentId === agentId,
+  }));
+}
+
+/**
+ * Deletes a group the owner agent created. Refuses direct chats and active room.
+ */
+export async function deleteGroupRoom(
+  db: Database,
+  input: { accountId: string; ownerAgentId: string; conversationId: string; activeConversationId?: string },
+) {
+  if (input.conversationId === input.activeConversationId) {
+    throw new Error("Cannot delete the room you are in — finish this chat or open another room first.");
+  }
+  const [room] = await db
+    .select()
+    .from(conversations)
+    .where(and(eq(conversations.id, input.conversationId), eq(conversations.accountId, input.accountId)));
+  if (!room) throw new Error("Group not found.");
+  if (room.kind !== "group") throw new Error("Only group rooms can be deleted — private chats stay 1:1.");
+  if (room.ownerAgentId !== input.ownerAgentId) {
+    throw new Error("Only the group owner can delete it.");
+  }
+
+  await db.transaction(async (tx) => {
+    const routineRows = await tx
+      .select({ id: routines.id })
+      .from(routines)
+      .where(and(eq(routines.accountId, input.accountId), eq(routines.conversationId, input.conversationId)));
+    const routineIds = routineRows.map((row) => row.id);
+    if (routineIds.length > 0) {
+      await tx.delete(jobs).where(and(eq(jobs.accountId, input.accountId), inArray(jobs.routineId, routineIds)));
+      await tx.delete(routines).where(inArray(routines.id, routineIds));
+    }
+    await tx
+      .delete(notifications)
+      .where(and(eq(notifications.accountId, input.accountId), eq(notifications.conversationId, input.conversationId)));
+    await tx.delete(events).where(and(eq(events.accountId, input.accountId), eq(events.conversationId, input.conversationId)));
+    await tx.delete(runs).where(and(eq(runs.accountId, input.accountId), eq(runs.conversationId, input.conversationId)));
+    await tx
+      .delete(delegations)
+      .where(and(eq(delegations.accountId, input.accountId), eq(delegations.conversationId, input.conversationId)));
+    await tx
+      .delete(summaryItems)
+      .where(and(eq(summaryItems.accountId, input.accountId), eq(summaryItems.conversationId, input.conversationId)));
+    await tx.execute(
+      sql`delete from reactions where account_id = ${input.accountId} and message_id in (select id from messages where conversation_id = ${input.conversationId} and account_id = ${input.accountId})`,
+    );
+    await tx
+      .delete(messages)
+      .where(and(eq(messages.accountId, input.accountId), eq(messages.conversationId, input.conversationId)));
+    await tx
+      .delete(members)
+      .where(and(eq(members.accountId, input.accountId), eq(members.conversationId, input.conversationId)));
+    await tx
+      .delete(conversations)
+      .where(and(eq(conversations.id, input.conversationId), eq(conversations.accountId, input.accountId)));
+  });
+
+  return { deleted: true, conversationId: input.conversationId };
 }
 
 /**

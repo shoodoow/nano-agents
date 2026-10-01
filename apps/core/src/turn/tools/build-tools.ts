@@ -1,0 +1,107 @@
+import { jsonSchema, tool, type Schema, type ToolSet } from "ai";
+import { toolsForSurface, type ToolDefinition } from "@nano-agents/agent-tools";
+import type { getDb } from "../../db/client.js";
+import { readHistory } from "../../memory/memory.js";
+import { readSkillForAccount } from "../../skills/skills.js";
+import { linuxToolExecutes } from "../../computer/linux-tool-executes.js";
+import type { AgentMode } from "../types.js";
+import type { ToolContext } from "./context.js";
+import { dispatcherExecutors, executeDelegate } from "./executors.js";
+import { wrapToolExecute } from "./wrap-tool-execute.js";
+
+/** OpenAI-compatible empty tool input (avoids Zod→JSON Schema propertyNames warnings). */
+const NO_PARAMETERS_TOOLS = new Set(["list_groups", "list_team", "list_routines", "todo_list", "computer_screenshot"]);
+
+const emptyParametersSchema = jsonSchema<Record<string, never>>({
+  type: "object",
+  properties: {},
+  additionalProperties: false,
+});
+
+function sdkInputSchema(def: ToolDefinition): Schema<unknown> {
+  if (NO_PARAMETERS_TOOLS.has(def.name)) return emptyParametersSchema;
+  return def.inputSchema as unknown as Schema<unknown>;
+}
+
+export type WorkerToolBuildContext = {
+  db: ReturnType<typeof getDb>;
+  accountId: string;
+  conversationId: string;
+  profile: string | null;
+  skillsRoot?: string;
+};
+
+function descriptionFor(def: ToolDefinition, surface: "dispatcher" | "worker"): string {
+  if (surface === "worker" && def.descriptionWorker) return def.descriptionWorker;
+  return def.description;
+}
+
+function workerExecute(
+  def: ToolDefinition,
+  workerCtx: WorkerToolBuildContext,
+): (input: Record<string, unknown>) => Promise<unknown> {
+  const linux = workerCtx.profile ? linuxToolExecutes(workerCtx.db, workerCtx.accountId, workerCtx.profile) : {};
+  if (def.name === "read_history") {
+    return async (input) => {
+      const rows =
+        typeof input.messageId === "string"
+          ? await readHistory(workerCtx.db, workerCtx.accountId, workerCtx.conversationId, { messageId: input.messageId })
+          : await readHistory(workerCtx.db, workerCtx.accountId, workerCtx.conversationId, {
+              search: String(input.search ?? ""),
+            });
+      return rows.map((row) => ({ id: row.id, body: row.body }));
+    };
+  }
+  if (def.name === "read_skill") {
+    return async (input) => {
+      if (!workerCtx.skillsRoot) return "No skills directory configured.";
+      try {
+        return readSkillForAccount(workerCtx.skillsRoot, workerCtx.accountId, String(input.name));
+      } catch {
+        return "Skill not found.";
+      }
+    };
+  }
+  const linuxFn = linux[def.name];
+  if (!linuxFn) throw new Error(`Missing Linux execute for ${def.name}`);
+  return linuxFn;
+}
+
+function dispatcherExecute(name: string, ctx: ToolContext): (input: Record<string, unknown>) => Promise<unknown> {
+  if (name === "delegate") {
+    return (input) =>
+      executeDelegate(ctx, input, (args) =>
+        import("../delegation.js").then((module) => module.runDelegatedTurn(ctx.db, args)),
+      );
+  }
+  const fn = dispatcherExecutors[name];
+  if (!fn) throw new Error(`Missing dispatcher execute for ${name}`);
+  return (input) => fn(ctx, input);
+}
+
+export function buildDispatcherToolSet(mode: AgentMode, ctx: ToolContext): ToolSet {
+  const set: Record<string, unknown> = {};
+  for (const def of toolsForSurface("dispatcher")) {
+    if (def.name === "spawn_worker" && mode !== "dispatcher") continue;
+    if (!dispatcherExecutors[def.name] && def.name !== "delegate") continue;
+    set[def.name] = tool({
+      description: descriptionFor(def, "dispatcher"),
+      inputSchema: sdkInputSchema(def) as never,
+      execute: wrapToolExecute(ctx, mode, def.name, dispatcherExecute(def.name, ctx)) as never,
+    });
+  }
+  return set as ToolSet;
+}
+
+export function buildWorkerToolSet(workerCtx: WorkerToolBuildContext): ToolSet {
+  const set: Record<string, unknown> = {};
+  const defs = toolsForSurface("worker", { hasLinux: !!workerCtx.profile });
+  for (const def of defs) {
+    set[def.name] = tool({
+      description: descriptionFor(def, "worker"),
+      inputSchema: sdkInputSchema(def) as never,
+      execute: workerExecute(def, workerCtx) as never,
+    });
+  }
+  return set as ToolSet;
+}

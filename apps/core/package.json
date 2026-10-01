@@ -17,6 +17,7 @@
     "@better-auth/expo": "1.6.23",
     "@modelcontextprotocol/sdk": "1.31.0",
     "@mozilla/readability": "^0.6.0",
+    "@nano-agents/agent-tools": "workspace:*",
     "@nano-agents/shared": "workspace:*",
     "@novnc/novnc": "1.7.0",
     "ai": "7.0.118",

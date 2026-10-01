@@ -1,4 +1,5 @@
-import { routineCreateInputSchema, routineSchema, routineUpdateInputSchema, routineIdSchema } from "@nano-agents/shared";
+import { routineSchema } from "@nano-agents/shared";
+import { routineCreateInputSchema, routineIdSchema, routineUpdateInputSchema } from "@nano-agents/agent-tools";
 import { and, asc, eq, lte } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
 import type { Store } from "../db/client.js";

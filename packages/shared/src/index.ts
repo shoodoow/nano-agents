@@ -175,39 +175,13 @@ export type SendMessageInput = z.infer<typeof sendMessageInputSchema>;
 
 export const allowedEmojis = ["👍", "❤️", "👀", "🚀", "😮", "🎉", "✅", "❌"] as const;
 
-export const reactionSchema = z.object({
-  messageId: z.string().uuid(),
-  emoji: z.enum(allowedEmojis),
-});
-
-export type ReactionInput = z.infer<typeof reactionSchema>;
-
-// --- Teams / subagents (Phase 10) ---
-
-export const subagentCreateSchema = z.object({
-  label: z.string().trim().min(1).max(100),
-  role: z.string().trim().min(1).max(100),
-  personality: z.string().trim().max(500).optional().default(""),
-  jobDescription: z.string().trim().min(1).max(10_000),
-  provider: z.enum(providerNames).optional(),
-  modelId: z.string().trim().min(1).max(200).optional(),
-});
-
-export type SubagentCreate = z.infer<typeof subagentCreateSchema>;
-
-export const delegateSchema = z.object({
-  agentId: z.string().uuid(),
-  task: z.string().trim().min(1).max(20_000),
-});
-
-export type DelegateInput = z.infer<typeof delegateSchema>;
+export type RoomCreate = z.infer<typeof roomCreateSchema>;
+export type MessageCreate = z.infer<typeof messageCreateSchema>;
 
 export const memberAddSchema = z.object({
   agentId: z.string().uuid(),
 });
 
-export type RoomCreate = z.infer<typeof roomCreateSchema>;
-export type MessageCreate = z.infer<typeof messageCreateSchema>;
 export type MemberAdd = z.infer<typeof memberAddSchema>;
 
 export const summaryKeySchema = z.enum(["decisions", "actions", "open", "entities", "corrections", "topics"]);
@@ -288,16 +262,6 @@ export const runStatusSchema = z.enum(["running", "done", "failed"]);
 
 export const urgencySchema = z.enum(["info", "action-needed"]);
 
-export const notifyInputSchema = z.object({
-  title: z.string().trim().min(1).max(120),
-  body: z.string().trim().min(1).max(1000),
-  urgency: urgencySchema.optional().default("info"),
-  // Optional: point the tap at a specific message instead of the latest.
-  messageId: z.string().uuid().nullable().optional(),
-});
-
-export type NotifyInput = z.infer<typeof notifyInputSchema>;
-
 export const deviceSchema = z.object({
   expoPushToken: z.string().trim().min(1).max(500),
   platform: z.enum(["ios", "android", "web"]).nullable().optional(),
@@ -306,72 +270,3 @@ export const deviceSchema = z.object({
 export type DeviceInput = z.infer<typeof deviceSchema>;
 
 export const eventTypeSchema = z.enum(["message", "reaction", "run", "error", "notify"]);
-
-// --- Teams, workers, routine self-management (Phase 15) ---
-
-export const groupCreateInputSchema = z.object({
-  title: z.string().trim().min(1).max(200),
-  memberIds: z.array(z.string().uuid()).min(1).max(19),
-});
-
-export type GroupCreateInput = z.infer<typeof groupCreateInputSchema>;
-
-export const spawnWorkerInputSchema = z.object({
-  label: z.string().trim().min(1).max(100),
-  role: z.string().trim().min(1).max(100),
-  personality: z.string().trim().max(500).optional().default(""),
-  jobDescription: z.string().trim().min(1).max(10_000),
-  task: z.string().trim().min(1).max(20_000),
-  provider: z.enum(providerNames).optional(),
-  modelId: z.string().trim().min(1).max(200).optional(),
-});
-
-export type SpawnWorkerInput = z.infer<typeof spawnWorkerInputSchema>;
-
-export const workerRefSchema = z.object({
-  workerId: z.string().uuid(),
-});
-
-export type WorkerRef = z.infer<typeof workerRefSchema>;
-
-export const routineCreateInputSchema = z.object({
-  body: z.string().trim().min(1).max(20_000),
-  cron: z.string().trim().min(1).max(100),
-  timezone: z.string().trim().min(1).max(100).optional().default("UTC"),
-  paused: z.boolean().optional().default(false),
-});
-
-export type RoutineCreateInput = z.infer<typeof routineCreateInputSchema>;
-
-export const routineUpdateInputSchema = z.object({
-  routineId: z.string().uuid(),
-  body: z.string().trim().min(1).max(20_000).optional(),
-  cron: z.string().trim().min(1).max(100).optional(),
-  timezone: z.string().trim().min(1).max(100).optional(),
-  paused: z.boolean().optional(),
-});
-
-export type RoutineUpdateInput = z.infer<typeof routineUpdateInputSchema>;
-
-export const routineIdSchema = z.object({
-  routineId: z.string().uuid(),
-});
-
-export type RoutineId = z.infer<typeof routineIdSchema>;
-
-// --- Agent worklists (Phase 15, opencode todowrite pattern) ---
-
-export const todoStatusSchema = z.enum(["pending", "in_progress", "completed"]);
-
-export const todoItemSchema = z.object({
-  content: z.string().trim().min(1).max(500),
-  status: todoStatusSchema,
-});
-
-export type TodoItem = z.infer<typeof todoItemSchema>;
-
-export const todoWriteInputSchema = z.object({
-  todos: z.array(todoItemSchema).max(50),
-});
-
-export type TodoWriteInput = z.infer<typeof todoWriteInputSchema>;

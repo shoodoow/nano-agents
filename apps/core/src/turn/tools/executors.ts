@@ -4,6 +4,7 @@
  */
 import {
   delegateSchema,
+  groupConversationInputSchema,
   groupCreateInputSchema,
   notifyInputSchema,
   reactionSchema,
@@ -11,15 +12,15 @@ import {
   routineIdSchema,
   routineUpdateInputSchema,
   sendMessageInputSchema,
-  spawnWorkerInputSchema,
+  spawnWorkerToolInputSchema,
   subagentCreateSchema,
-} from "@nano-agents/shared";
-import { eq } from "drizzle-orm";
-import { delegations } from "../../db/schema.js";
+} from "@nano-agents/agent-tools";
+import { and, eq } from "drizzle-orm";
+import { conversations, delegations, members } from "../../db/schema.js";
 import { readHistory } from "../../memory/memory.js";
 import { todoList, todoWrite } from "../../memory/todos.js";
 import { saveNotification } from "../../notify/notify.js";
-import { createGroupRoom } from "../../rooms/rooms.js";
+import { createGroupRoom, deleteGroupRoom, listGroupRoomsForAgent } from "../../rooms/rooms.js";
 import { saveSendMessage, saveReaction } from "../../rooms/send-message.js";
 import {
   addGroupMember,
@@ -126,18 +127,67 @@ export async function executeReadSkill(ctx: ToolContext, input: Record<string, u
 }
 
 export async function executeHireSubagent(ctx: ToolContext, input: Record<string, unknown>) {
-  const parsed = subagentCreateSchema.parse(input);
-  const child = await hireSubagent(ctx.store, {
-    accountId: ctx.accountId,
-    conversationId: ctx.conversationId,
-    parentAgentId: ctx.agentId,
-    label: parsed.label,
-    role: parsed.role,
-    personality: parsed.personality,
-    jobDescription: parsed.jobDescription,
-    provider: parsed.provider,
-    modelId: parsed.modelId,
-  });
+  let parsed: ReturnType<typeof subagentCreateSchema.parse>;
+  try {
+    parsed = subagentCreateSchema.parse(input);
+  } catch (error) {
+    if (error instanceof ZodError) {
+      return { error: "Invalid hire_subagent input. Required: label, role, jobDescription." };
+    }
+    throw error;
+  }
+
+  const hireConversationId = parsed.conversationId ?? ctx.conversationId;
+  const [currentRoom] = await ctx.store
+    .select({ kind: conversations.kind })
+    .from(conversations)
+    .where(and(eq(conversations.id, ctx.conversationId), eq(conversations.accountId, ctx.accountId)));
+  if (currentRoom?.kind === "direct" && !parsed.conversationId) {
+    return {
+      error:
+        "Private chats stay 1:1. Call create_group with a title, then hire_subagent with conversationId set to the conversationId create_group returned.",
+    };
+  }
+  if (parsed.conversationId) {
+    const [target] = await ctx.store
+      .select({ kind: conversations.kind })
+      .from(conversations)
+      .where(and(eq(conversations.id, parsed.conversationId), eq(conversations.accountId, ctx.accountId)));
+    if (!target || target.kind !== "group") {
+      return { error: "conversationId must be a group room id from create_group on this account." };
+    }
+    const [membership] = await ctx.store
+      .select({ agentId: members.agentId })
+      .from(members)
+      .where(
+        and(
+          eq(members.conversationId, parsed.conversationId),
+          eq(members.accountId, ctx.accountId),
+          eq(members.agentId, ctx.agentId),
+        ),
+      );
+    if (!membership) {
+      return { error: "You must be a member of that group to hire there." };
+    }
+  }
+
+  let child: Awaited<ReturnType<typeof hireSubagent>>;
+  try {
+    child = await hireSubagent(ctx.store, {
+      accountId: ctx.accountId,
+      conversationId: hireConversationId,
+      parentAgentId: ctx.agentId,
+      label: parsed.label,
+      role: parsed.role,
+      personality: parsed.personality,
+      jobDescription: parsed.jobDescription,
+      provider: parsed.provider,
+      modelId: parsed.modelId,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "hire_subagent failed.";
+    return { error: message };
+  }
   const card = await saveSendMessage(ctx.store, {
     accountId: ctx.accountId,
     conversationId: ctx.conversationId,
@@ -148,7 +198,7 @@ export async function executeHireSubagent(ctx: ToolContext, input: Record<string
   });
   ctx.emittedMessages.push(card);
   await ctx.emit({ type: "message", message: card });
-  return { agentId: child.id, name: child.name };
+  return { agentId: child.id, name: child.name, hiredInConversationId: hireConversationId };
 }
 
 /** Delegate with sync timeout — use spawn_worker for longer work. */
@@ -230,7 +280,7 @@ export async function executeSpawnWorker(ctx: ToolContext, input: Record<string,
   const task = String(input.task ?? "");
   const valid = validateWorkerTask(task);
   if (!valid.ok) return { error: valid.hint };
-  const parsed = spawnWorkerInputSchema.parse(input);
+  const parsed = spawnWorkerToolInputSchema.parse(input);
   let spawned: Awaited<ReturnType<typeof spawnWorker>>;
   try {
     spawned = await spawnWorker(ctx.store, {
@@ -242,8 +292,6 @@ export async function executeSpawnWorker(ctx: ToolContext, input: Record<string,
       personality: parsed.personality,
       jobDescription: parsed.jobDescription,
       task: parsed.task,
-      provider: parsed.provider,
-      modelId: parsed.modelId,
     });
   } catch (error) {
     if (error instanceof WorkerCapacityError) {
@@ -296,7 +344,18 @@ export const dispatcherExecutors: Record<string, ToolExecutor> = {
     ),
   todo_list: (ctx) => todoList(ctx.store, ctx.accountId, ctx.agentId),
   create_group: async (ctx, input) => {
-    const parsed = groupCreateInputSchema.parse(input);
+    let parsed: ReturnType<typeof groupCreateInputSchema.parse>;
+    try {
+      parsed = groupCreateInputSchema.parse(input);
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return {
+          error:
+            'Invalid create_group input. Required: { "title": "Group name" }. memberIds is optional (omit or []); use agent UUIDs from list_team, not names — add members later with add_to_group.',
+        };
+      }
+      throw error;
+    }
     const room = await createGroupRoom(ctx.store, {
       accountId: ctx.accountId,
       ownerAgentId: ctx.agentId,
@@ -337,4 +396,26 @@ export const dispatcherExecutors: Record<string, ToolExecutor> = {
     return { deleted: true };
   },
   list_routines: (ctx) => listOwnRoutines(ctx.store, ctx.accountId, ctx.agentId),
+  list_groups: (ctx) => listGroupRoomsForAgent(ctx.store, ctx.accountId, ctx.agentId),
+  delete_group: async (ctx, input) => {
+    let parsed: ReturnType<typeof groupConversationInputSchema.parse>;
+    try {
+      parsed = groupConversationInputSchema.parse(input);
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return { error: 'Invalid delete_group input. Required: { "conversationId": "<group uuid from list_groups>" }.' };
+      }
+      throw error;
+    }
+    try {
+      return await deleteGroupRoom(ctx.db, {
+        accountId: ctx.accountId,
+        ownerAgentId: ctx.agentId,
+        conversationId: parsed.conversationId,
+        activeConversationId: ctx.conversationId,
+      });
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : "delete_group failed." };
+    }
+  },
 };

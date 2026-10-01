@@ -884,3 +884,46 @@
 {"_e":"metro:client_log","_t":1790853886795,"level":"warn","data":["expo-notifications: Android Push notifications (remote notifications) functionality provided by expo-notifications was removed from Expo Go with the release of SDK 53. Use a development build instead of Expo Go. Learn more at https://docs.expo.dev/develop/development-builds/introduction/."]}
 {"_e":"metro:client_log","_t":1790853886796,"level":"warn","data":["`expo-notifications` functionality is not fully supported in Expo Go:\nWe recommend you instead use a development build to avoid limitations. Learn more: https://expo.fyi/dev-client."]}
 {"_e":"metro:client_log","_t":1790853886819,"level":"warn","data":["SafeAreaView has been deprecated and will be removed in a future release. Please use 'react-native-safe-area-context' instead. See https://github.com/AppAndFlow/react-native-safe-area-context"]}
+{"_e":"metro:bundling:started","_t":1790857264992,"id":"7","platform":"ios","environment":null,"entry":"node_modules/.pnpm/expo@57.0.25_@babel+core@7.29.7_supports-color@8.1.1__@expo+dom-webview@57.0.1_react-do_2ce61803695c7fc40ed6ecb046419651/node_modules/expo/AppEntry.js"}
+{"_e":"metro:bundling:progress","_t":1790857264992,"id":"7","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:done","_t":1790857265021,"id":"7","total":1,"ms":29.00675}
+{"_e":"metro:bundling:started","_t":1790857265281,"id":"8","platform":"ios","environment":null,"entry":"node_modules/.pnpm/expo-network@57.0.2_expo@57.0.25_react@19.2.3/node_modules/expo-network/build/Network.js"}
+{"_e":"metro:bundling:progress","_t":1790857265281,"id":"8","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:done","_t":1790857265304,"id":"8","total":1,"ms":23.313708}
+{"_e":"metro:client_log","_t":1790857265339,"level":"warn","data":["expo-notifications: Android Push notifications (remote notifications) functionality provided by expo-notifications was removed from Expo Go with the release of SDK 53. Use a development build instead of Expo Go. Learn more at https://docs.expo.dev/develop/development-builds/introduction/."]}
+{"_e":"metro:client_log","_t":1790857265339,"level":"warn","data":["`expo-notifications` functionality is not fully supported in Expo Go:\nWe recommend you instead use a development build to avoid limitations. Learn more: https://expo.fyi/dev-client."]}
+{"_e":"metro:client_log","_t":1790857265405,"level":"warn","data":["SafeAreaView has been deprecated and will be removed in a future release. Please use 'react-native-safe-area-context' instead. See https://github.com/AppAndFlow/react-native-safe-area-context"]}
+{"_e":"root:init","_t":1790859175695,"format":"v0-jsonl","version":"57.0.27"}
+{"_e":"env:mode","_t":1790859175696,"nodeEnv":"development","babelEnv":"development","mode":"development"}
+{"_e":"env:load","_t":1790859175697,"mode":"development","files":[],"env":{}}
+{"_e":"devserver:start","_t":1790859175841,"mode":"development","web":true,"baseUrl":"","asyncRoutes":false,"routerRoot":"../../../app","serverComponents":false,"serverActions":false,"serverRendering":false,"apiRoutes":false,"exporting":false}
+{"_e":"metro:config","_t":1790859176237,"serverRoot":"../../../../..","projectRoot":"../../..","exporting":false,"flags":{"autolinkingModuleResolution":true,"serverActions":false,"serverComponents":false,"reactCompiler":false,"optimizeGraph":false,"treeshaking":false,"logbox":false}}
+{"_e":"expo:dev-tools-plugin:load","_t":1790859176303,"plugins":[]}
+{"_e":"metro:instantiate","_t":1790859176655,"atlas":false,"workers":9,"host":"::","port":8081}
+{"_e":"metro:bundling:started","_t":1790859177221,"id":"1","platform":"ios","environment":null,"entry":"node_modules/.pnpm/expo@57.0.25_@babel+core@7.29.7_supports-color@8.1.1__@expo+dom-webview@57.0.1_react-do_2ce61803695c7fc40ed6ecb046419651/node_modules/expo/AppEntry.js"}
+{"_e":"metro:bundling:progress","_t":1790859177221,"id":"1","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:progress","_t":1790859177222,"id":"1","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:progress","_t":1790859177322,"id":"1","progress":0.1921561268530681,"total":365,"current":160}
+{"_e":"metro:bundling:progress","_t":1790859177422,"id":"1","progress":0.6016042249447485,"total":673,"current":522}
+{"_e":"metro:bundling:progress","_t":1790859177522,"id":"1","progress":0.7711784062712553,"total":1026,"current":901}
+{"_e":"metro:bundling:done","_t":1790859177615,"id":"1","total":1026,"ms":393.676083}
+{"_e":"metro:bundling:started","_t":1790859177901,"id":"2","platform":"ios","environment":null,"entry":"node_modules/.pnpm/expo-network@57.0.2_expo@57.0.25_react@19.2.3/node_modules/expo-network/build/Network.js"}
+{"_e":"metro:bundling:progress","_t":1790859177901,"id":"2","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:progress","_t":1790859177902,"id":"2","progress":0,"total":1,"current":0}
+{"_e":"metro:client_log","_t":1790859177973,"level":"warn","data":["expo-notifications: Android Push notifications (remote notifications) functionality provided by expo-notifications was removed from Expo Go with the release of SDK 53. Use a development build instead of Expo Go. Learn more at https://docs.expo.dev/develop/development-builds/introduction/."]}
+{"_e":"metro:bundling:progress","_t":1790859177973,"id":"2","progress":0,"total":1,"current":0}
+{"_e":"metro:client_log","_t":1790859177973,"level":"warn","data":["`expo-notifications` functionality is not fully supported in Expo Go:\nWe recommend you instead use a development build to avoid limitations. Learn more: https://expo.fyi/dev-client."]}
+{"_e":"metro:bundling:progress","_t":1790859177973,"id":"2","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:progress","_t":1790859177973,"id":"2","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:done","_t":1790859177995,"id":"2","total":1,"ms":93.578833}
+{"_e":"metro:client_log","_t":1790859177995,"level":"warn","data":["SafeAreaView has been deprecated and will be removed in a future release. Please use 'react-native-safe-area-context' instead. See https://github.com/AppAndFlow/react-native-safe-area-context"]}
+{"_e":"metro:bundling:started","_t":1790859485226,"id":"3","platform":"ios","environment":null,"entry":"node_modules/.pnpm/expo@57.0.25_@babel+core@7.29.7_supports-color@8.1.1__@expo+dom-webview@57.0.1_react-do_2ce61803695c7fc40ed6ecb046419651/node_modules/expo/AppEntry.js"}
+{"_e":"metro:bundling:progress","_t":1790859485226,"id":"3","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:done","_t":1790859485256,"id":"3","total":1,"ms":29.971208}
+{"_e":"metro:bundling:started","_t":1790859485527,"id":"4","platform":"ios","environment":null,"entry":"node_modules/.pnpm/expo-network@57.0.2_expo@57.0.25_react@19.2.3/node_modules/expo-network/build/Network.js"}
+{"_e":"metro:bundling:progress","_t":1790859485527,"id":"4","progress":0,"total":1,"current":0}
+{"_e":"metro:bundling:done","_t":1790859485554,"id":"4","total":1,"ms":27.0645}
+{"_e":"metro:client_log","_t":1790859485591,"level":"warn","data":["expo-notifications: Android Push notifications (remote notifications) functionality provided by expo-notifications was removed from Expo Go with the release of SDK 53. Use a development build instead of Expo Go. Learn more at https://docs.expo.dev/develop/development-builds/introduction/."]}
+{"_e":"metro:client_log","_t":1790859485591,"level":"warn","data":["`expo-notifications` functionality is not fully supported in Expo Go:\nWe recommend you instead use a development build to avoid limitations. Learn more: https://expo.fyi/dev-client."]}
+{"_e":"metro:client_log","_t":1790859485659,"level":"warn","data":["SafeAreaView has been deprecated and will be removed in a future release. Please use 'react-native-safe-area-context' instead. See https://github.com/AppAndFlow/react-native-safe-area-context"]}
+{"_e":"metro:server_log","_t":1790861434662,"level":"error","data":["[timeout] connection terminated with Device for app='%s' on device='%s' after not responding for %s seconds.","host.exp.Exponent","iPhone 17 Pro","60"]}

@@ -1,4 +1,5 @@
-import { sendMessageInputSchema, reactionSchema, type MessageBlock } from "@nano-agents/shared";
+import { type MessageBlock } from "@nano-agents/shared";
+import { reactionSchema, sendMessageInputSchema } from "@nano-agents/agent-tools";
 import { and, eq } from "drizzle-orm";
 import type { Store } from "../db/client.js";
 import { messages, notifications, reactions, runs } from "../db/schema.js";

@@ -1,15 +1,14 @@
 import { readFileSync } from "node:fs";
-import { delegateSchema, spawnWorkerInputSchema, subagentCreateSchema, workerRefSchema } from "@nano-agents/shared";
-import { generateText, isStepCount, jsonSchema, tool } from "ai";
+import { delegateSchema, spawnWorkerInputSchema, subagentCreateSchema, workerRefSchema } from "@nano-agents/agent-tools";
+import { workerToolNames as agentWorkerToolNames } from "@nano-agents/agent-tools";
+import { generateText, isStepCount } from "ai";
 import { and, count, desc, eq, lt } from "drizzle-orm";
 import type { Store } from "../db/client.js";
 import type { getDb } from "../db/client.js";
 import { keyFor } from "../keys/keys.js";
 import { getModel } from "../model/get-model.js";
-import { readHistory } from "../memory/memory.js";
 import { identityBlock } from "../memory/context.js";
-import { readSkillForAccount } from "../skills/skills.js";
-import { profileToolNames, profileTools } from "../computer/profile-tools.js";
+import { buildWorkerToolSet } from "../turn/tools/build-tools.js";
 import { createProfile } from "../linux/linux.js";
 import { agents, conversations, delegations, members, messages } from "../db/schema.js";
 import { RoomCapacityError } from "./rooms.js";
@@ -730,7 +729,13 @@ export async function runWorker(
       .map((row) => (row.agentId ? "agent" : "user") + ": " + row.body.slice(0, 2000))
       .join("\n");
     const credential = await keyFor(db, input.accountId, child.provider);
-    const tools = workerTools(db, input.accountId, input.conversationId, profile, input.skillsRoot);
+    const tools = buildWorkerToolSet({
+      db,
+      accountId: input.accountId,
+      conversationId: input.conversationId,
+      profile,
+      skillsRoot: input.skillsRoot,
+    });
     const result = await generateText({
       model: getModel(child.provider, child.modelId, credential.apiKey, credential.baseUrl),
       instructions: [
@@ -755,48 +760,5 @@ export async function runWorker(
  * Input: whether this worker has a Linux profile. Output: sorted names.
  */
 export function workerToolNames(hasComputer: boolean): string[] {
-  const names = ["read_history", "read_skill"];
-  if (hasComputer) names.push(...profileToolNames());
-  return names.sort();
-}
-
-/**
- * Builds the restricted worker toolset (no voice, team, or notify).
- * Why: workers investigate and produce — they must be structurally unable to
- * message the user, spawn further workers, or delegate. Computer tools come
- * from profileTools. The chat turn does not get this map, so a search cannot hold the room.
- * Input: db, account/room ids, nullable profile, skills root.
- * Output: AI SDK tool map.
- */
-function workerTools(db: ReturnType<typeof getDb>, accountId: string, conversationId: string, profile: string | null, skillsRoot?: string) {
-  // Loose record: AI SDK tool generics vary per inputSchema; callers only need a tool map.
-  const base: Record<string, any> = {
-    read_history: tool({
-      description: "Read one cited message by id, or search a short slice (max 5), when the task depends on something said in the room.",
-      inputSchema: jsonSchema<{ messageId?: string; search?: string }>({
-        type: "object",
-        properties: { messageId: { type: "string" }, search: { type: "string" } },
-      }),
-      execute: async ({ messageId, search }) => {
-        const rows = messageId
-          ? await readHistory(db, accountId, conversationId, { messageId })
-          : await readHistory(db, accountId, conversationId, { search: search ?? "" });
-        return rows.map((row) => ({ id: row.id, body: row.body }));
-      },
-    }),
-    read_skill: tool({
-      description: "Load one skill's steps by name when the task needs that procedure. Skip it when the task is already clear.",
-      inputSchema: jsonSchema<{ name: string }>({ type: "object", properties: { name: { type: "string" } }, required: ["name"] }),
-      execute: async ({ name }) => {
-        if (!skillsRoot) return "No skills directory configured.";
-        try {
-          return readSkillForAccount(skillsRoot, accountId, name);
-        } catch {
-          return "Skill not found.";
-        }
-      },
-    }),
-  };
-  if (!profile) return base;
-  return { ...base, ...profileTools(db, accountId, profile) };
+  return agentWorkerToolNames(hasComputer);
 }
