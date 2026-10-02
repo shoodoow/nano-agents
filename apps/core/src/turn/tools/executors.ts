@@ -15,7 +15,7 @@ import {
   spawnWorkerToolInputSchema,
   subagentCreateSchema,
 } from "@nano-agents/agent-tools";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { conversations, delegations, members } from "../../db/schema.js";
 import { readHistory } from "../../memory/memory.js";
 import { todoList, todoWrite } from "../../memory/todos.js";
@@ -24,7 +24,6 @@ import { createGroupRoom, deleteGroupRoom, listGroupRoomsForAgent } from "../../
 import { saveSendMessage, saveReaction } from "../../rooms/send-message.js";
 import {
   addGroupMember,
-  checkWorker,
   failuresSinceLastUser,
   hireSubagent,
   listTeam,
@@ -270,7 +269,16 @@ export async function executeDelegate(
   }
 }
 
+/** Max spawns per turn: validation failures count, so the model can't retry-burn. */
+export const MAX_SPAWNS_PER_TURN = 3;
+
 export async function executeSpawnWorker(ctx: ToolContext, input: Record<string, unknown>) {
+  ctx.spawnCount = (ctx.spawnCount ?? 0) + 1;
+  if (ctx.spawnCount > MAX_SPAWNS_PER_TURN) {
+    return {
+      error: "Already spawned several workers this turn. send_message what you started, then stop — results arrive on their own.",
+    };
+  }
   const failed = await failuresSinceLastUser(ctx.store, ctx.accountId, ctx.conversationId, ctx.agentId);
   if (failed >= 2) {
     return {
@@ -280,7 +288,33 @@ export async function executeSpawnWorker(ctx: ToolContext, input: Record<string,
   const task = String(input.task ?? "");
   const valid = validateWorkerTask(task);
   if (!valid.ok) return { error: valid.hint };
-  const parsed = spawnWorkerToolInputSchema.parse(input);
+  // De-dupe: same parent+room already running (near-)identical task — reuse it
+  // instead of burning a second worker on the same question. Independent jobs
+  // (different task heads) still run side by side.
+  const taskHead = valid.task.trim().slice(0, 80).toLowerCase();
+  if (taskHead.length >= 20) {
+    const rows = await ctx.store
+      .select({ childAgentId: delegations.childAgentId, task: delegations.task })
+      .from(delegations)
+      .where(
+        and(
+          eq(delegations.accountId, ctx.accountId),
+          eq(delegations.conversationId, ctx.conversationId),
+          eq(delegations.parentAgentId, ctx.agentId),
+          eq(delegations.status, "running"),
+        ),
+      )
+      .orderBy(desc(delegations.createdAt))
+      .limit(5);
+    const same = rows.find((row) => row.task.trim().slice(0, 80).toLowerCase() === taskHead);
+    if (same) {
+      return {
+        error: `That job is already running as ${same.childAgentId} and its result will be delivered on its own. End the turn — do not spawn a duplicate.`,
+        workerId: same.childAgentId,
+      };
+    }
+  }
+  const parsed = spawnWorkerToolInputSchema.parse({ ...input, task: valid.task });
   let spawned: Awaited<ReturnType<typeof spawnWorker>>;
   try {
     spawned = await spawnWorker(ctx.store, {
@@ -365,7 +399,6 @@ export const dispatcherExecutors: Record<string, ToolExecutor> = {
     return { conversationId: room.id, title: room.title, members: room.members.length };
   },
   spawn_worker: executeSpawnWorker,
-  check_worker: (ctx, input) => checkWorker(ctx.store, ctx.accountId, String(input.workerId)),
   stop_worker: (ctx, input) => stopWorker(ctx.store, ctx.accountId, String(input.workerId)),
   create_routine: async (ctx, input) => {
     const routine = await createOwnRoutine(ctx.store, {
@@ -406,6 +439,15 @@ export const dispatcherExecutors: Record<string, ToolExecutor> = {
         return { error: 'Invalid delete_group input. Required: { "conversationId": "<group uuid from list_groups>" }.' };
       }
       throw error;
+    }
+    // Approval gate: deleting a group with its history is irreversible. The
+    // model must ask the person first and re-call with confirmed:true — the
+    // turn asking the question ends without deleting anything.
+    if (parsed.confirmed !== true) {
+      return {
+        error:
+          "Deleting a group is irreversible. First send_message what will be deleted and ask. Only re-call delete_group with confirmed:true after the person says yes.",
+      };
     }
     try {
       return await deleteGroupRoom(ctx.db, {

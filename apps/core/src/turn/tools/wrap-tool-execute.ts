@@ -4,6 +4,12 @@ import { DISPATCHER_TOOL_BUDGET_MS } from "../constants.js";
 import { tracePreview } from "../trace/sinks/jsonl.js";
 import type { ToolContext } from "./context.js";
 
+/** Same tool + byte-identical input this many times in a row = a loop, not work. */
+export const DOOM_LOOP_THRESHOLD = 3;
+
+export const DOOM_LOOP_ERROR =
+  "Same call 3 times in a row — stop looping. send_message a short status and end the turn now. Finished worker results arrive on their own; failed ones re-wake you.";
+
 export function wrapToolExecute(
   ctx: ToolContext,
   mode: AgentMode,
@@ -13,6 +19,26 @@ export function wrapToolExecute(
   return async (input: Record<string, unknown>) => {
     const toolCallId = randomUUID();
     const started = performance.now();
+    const inputJson = JSON.stringify(input ?? {});
+    const recent = (ctx.recentCalls ??= []);
+    recent.push({ name, input: inputJson });
+    if (recent.length > DOOM_LOOP_THRESHOLD) recent.shift();
+    if (
+      recent.length === DOOM_LOOP_THRESHOLD &&
+      recent.every((call) => call.name === name && call.input === inputJson)
+    ) {
+      const durationMs = Math.round(performance.now() - started);
+      await ctx.traceSession?.emit({
+        type: "tool.call.finish",
+        toolCallId,
+        name,
+        input,
+        outputPreview: tracePreview(DOOM_LOOP_ERROR),
+        durationMs,
+        error: "doom_loop",
+      });
+      return { error: DOOM_LOOP_ERROR };
+    }
     await ctx.traceSession?.emit({ type: "tool.call.start", toolCallId, name, input });
     try {
       let result: unknown;

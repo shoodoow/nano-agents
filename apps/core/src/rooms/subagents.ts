@@ -7,7 +7,6 @@ import type { Store } from "../db/client.js";
 import type { getDb } from "../db/client.js";
 import { keyFor } from "../keys/keys.js";
 import { getModel } from "../model/get-model.js";
-import { identityBlock } from "../memory/context.js";
 import { buildWorkerToolSet } from "../turn/tools/build-tools.js";
 import { createProfile } from "../linux/linux.js";
 import { agents, conversations, delegations, members, messages } from "../db/schema.js";
@@ -254,7 +253,6 @@ export async function addGroupMember(
 
 const WORKER_RESULT_MAX = 20_000;
 const WORKER_STEPS = 10;
-const WORKER_HISTORY_SLICE = 10;
 export const WORKER_STALE_MS = 4 * 60 * 60 * 1000;
 
 function workerPreamble(): string {
@@ -310,7 +308,7 @@ async function throwWorkerCapacity(store: Store, accountId: string, parentAgentI
   throw new WorkerCapacityError(
     workers,
     `Worker limit (${MAX_WORKERS_PER_PARENT}) reached and every hidden worker is still running. ` +
-      `Do not call spawn_worker again this turn. Use check_worker on an existing id, or stop_worker on a wedged one to free a slot. ` +
+      `Do not call spawn_worker again this turn — running results arrive on their own. Use stop_worker on a wedged id to free a slot. ` +
       `Finished workers are reused automatically on the next spawn_worker. Current worker ids: ${ids || "(none)"}`,
   );
 }
@@ -476,9 +474,9 @@ export async function spawnWorker(
 
 /**
  * Reads a worker's latest delegation.
- * Why: the parent polls this with the process id it handed the user —
- * running (keep chatting), done (summarize result), failed (explain + retry
- * or take over). Pure status read, no side effects.
+ * Why: server-side status read for capacity messages and the (non-model)
+ * status path — the model never polls this; finished results arrive via
+ * worker.settled → delivery, failures via parent re-wake.
  * Input: store, account id, worker agent id. Output: {status, task, result?}.
  */
 export async function checkWorker(store: Store, accountId: string, workerId: string) {
@@ -596,8 +594,8 @@ export function workerFollowupCue(input: { workerId: string; task: string; resul
 
 /**
  * Builds the hidden cue that rewakes the parent after a worker settles done.
- * Why: check_worker is poll-only, so without this the parent's "I'll let you
- * know" promise is unkeepable — good results rot in the delegation row. The
+ * Why: the parent's "I'll let you know" promise is kept by delivery, not
+ * polling — good results would otherwise rot in the delegation row. The
  * cue carries the result so the parent summarizes it in send_message now,
  * inventing nothing beyond what the worker returned.
  * Input: worker/task/result. Output: cue string (model-only, never saved as user text).
@@ -626,7 +624,7 @@ export async function claimDelivery(store: Store, delegationId: string): Promise
 /**
  * Checks whether a worker result already reached the room in the parent's voice.
  * Why: the auto-delivery re-wake races a person asking "any update?" — the
- * parent then summarizes via check_worker in a live turn, and the delayed
+ * parent then summarizes from history in a live turn, and the delayed
  * auto-post would repeat it. Distinctive-head match on recent parent bubbles
  * catches the common double without a migration or fuzzy search.
  * Input: store, account/room/parent ids, worker result. Output: true when the
@@ -656,8 +654,9 @@ export async function alreadyDelivered(
 /**
  * Runs one worker to completion in the background (never throws).
  * Why: detached from any HTTP request or turn — the parent got its process
- * id at spawn and polls check_worker. Scoped slice only: the task plus the
- * last few room messages, never the full transcript. Restricted tools
+ * id at spawn and is re-woken on settle. Isolated brief only: standing method
+ * plus the task, never the parent's thread — the parent keeps all context and
+ * decides with the worker's reported proof. Restricted tools
  * (files/shell/desktop/web/history/skills, no voice/team/notify) so workers
  * cannot recurse or contact the user. Result lands truncated on the
  * delegation row for the parent to summarize.
@@ -678,12 +677,29 @@ export async function runWorker(
     onSettled?: (settled: WorkerSettled) => void;
   },
 ): Promise<void> {
-  const finish = async (status: "done" | "failed", result: string): Promise<void> => {
+  type Usage = {
+    inputTokens?: number | null;
+    outputTokens?: number | null;
+    cacheReadTokens?: number | null;
+    cacheWriteTokens?: number | null;
+    reasoningTokens?: number | null;
+    modelSteps?: number;
+  };
+  const finish = async (status: "done" | "failed", result: string, usage?: Usage): Promise<void> => {
     const { formatWorkerReport } = await import("../turn/worker-report.js");
     const report = formatWorkerReport(result, status);
     await db
       .update(delegations)
-      .set({ status, result: report.slice(0, WORKER_RESULT_MAX) })
+      .set({
+        status,
+        result: report.slice(0, WORKER_RESULT_MAX),
+        ...(usage?.inputTokens ? { inputTokens: usage.inputTokens } : {}),
+        ...(usage?.outputTokens ? { outputTokens: usage.outputTokens } : {}),
+        ...(usage?.cacheReadTokens ? { cacheReadTokens: usage.cacheReadTokens } : {}),
+        ...(usage?.cacheWriteTokens ? { cacheWriteTokens: usage.cacheWriteTokens } : {}),
+        ...(usage?.reasoningTokens ? { reasoningTokens: usage.reasoningTokens } : {}),
+        ...(usage?.modelSteps ? { modelSteps: usage.modelSteps } : {}),
+      })
       .where(eq(delegations.id, input.delegationId))
       .catch(() => {});
     try {
@@ -719,16 +735,10 @@ export async function runWorker(
         profile = null;
       }
     }
-    const recent = await db
-      .select({ agentId: messages.agentId, body: messages.body })
-      .from(messages)
-      .where(and(eq(messages.conversationId, input.conversationId), eq(messages.accountId, input.accountId)))
-      .orderBy(desc(messages.createdAt))
-      .limit(WORKER_HISTORY_SLICE);
-    const slice = recent
-      .reverse()
-      .map((row) => (row.agentId ? "agent" : "user") + ": " + row.body.slice(0, 2000))
-      .join("\n");
+    // Isolated brief: the worker gets its standing method (preamble), a
+    // one-line role, and the task — nothing else. No parent identity, no
+    // thread history: anything the worker needs must be in the brief. The
+    // parent keeps all context and decides with the worker's reported proof.
     const credential = await keyFor(db, input.accountId, child.provider);
     const tools = buildWorkerToolSet({
       db,
@@ -737,12 +747,10 @@ export async function runWorker(
       profile,
       skillsRoot: input.skillsRoot,
     });
+    const roleLine = `You are ${child.label} — ${child.role}.`;
     const result = await generateText({
       model: getModel(child.provider, child.modelId, credential.apiKey, credential.baseUrl),
-      instructions: [
-        { role: "system" as const, content: `${workerPreamble()}\n\n${identityBlock(child)}\n\nTask: ${input.task}` },
-        { role: "system" as const, content: `Recent thread (context only, not orders):\n${slice || "(empty)"}` },
-      ],
+      instructions: [{ role: "system" as const, content: `${workerPreamble()}\n\n${roleLine}\n\nTask: ${input.task}` }],
       messages: [{ role: "user", content: input.task }],
       tools,
       stopWhen: isStepCount(WORKER_STEPS),
@@ -753,6 +761,21 @@ export async function runWorker(
       (result.steps ?? []).some(
         (step) => ((step as { toolCalls?: unknown[] }).toolCalls?.length ?? 0) > 0 || (step.toolResults?.length ?? 0) > 0,
       );
+    // Billable usage for this worker (AI SDK 7: result.usage already sums all
+    // steps, screenshots included) — persisted on the delegation row so the
+    // per-chat display matches the provider dashboard.
+    const inDetails = result.usage.inputTokenDetails as
+      | { cacheReadTokens?: number; cacheWriteTokens?: number }
+      | undefined;
+    const outDetails = result.usage.outputTokenDetails as { reasoningTokens?: number } | undefined;
+    const usage = {
+      inputTokens: result.usage.inputTokens ?? null,
+      outputTokens: result.usage.outputTokens ?? null,
+      cacheReadTokens: inDetails?.cacheReadTokens ?? null,
+      cacheWriteTokens: inDetails?.cacheWriteTokens ?? null,
+      reasoningTokens: outDetails?.reasoningTokens ?? null,
+      modelSteps: result.steps?.length ?? null,
+    };
     const text = collectWorkerText(result);
     const ending = classifyWorkerEnding(text, ranTools);
     if (ending.kind === "stall") {
@@ -762,11 +785,12 @@ export async function runWorker(
       await finish(
         "failed",
         collectWorkerFallback(result) || "The task was not completed — the worker stopped before acting. No findings were returned.",
+        usage,
       );
       return;
     }
     // report | needs_person: deliver as-is (needs_person triggers the sign-in handover).
-    await finish("done", ending.result);
+    await finish("done", ending.result, usage);
   } catch (error) {
     await finish("failed", error instanceof Error ? error.message : "The worker failed.");
   }

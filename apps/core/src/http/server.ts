@@ -32,6 +32,8 @@ import {
 } from "../rooms/rooms.js";
 import { runTurn, type TurnInput } from "../rooms/turn.js";
 import { acquireRun } from "../rooms/runs.js";
+import { buildChatContextInfo } from "../turn/usage/chat-context.js";
+import { dispatcherToolNames } from "../turn/tools/registry.js";
 import { listEventsSince } from "../rooms/events.js";
 import { attach, publish, type StreamEvent } from "../rooms/stream.js";
 import { saveReaction } from "../rooms/send-message.js";
@@ -431,6 +433,18 @@ function mountRoutes(app: Express, ctx: AppContext): void {
       return;
     }
     res.status(201).json(created);
+  });
+  conversations.get("/:conversationId/context", guard, async (req, res) => {
+    // Per-chat context + accurate usage for the phone header. DB-accurate run
+    // totals; context sizes are labeled estimates (tool schemas/images excluded).
+    const info = await buildChatContextInfo(ctx.db, queryAccountId(req), pathParam(req, "conversationId"), {
+      toolCount: dispatcherToolNames().length,
+    });
+    if (!info) {
+      res.status(404).json({ error: "Room not found." });
+      return;
+    }
+    res.json(info);
   });
   conversations.get("/:conversationId/members", guard, async (req, res) => {
     const rows = await listMembers(ctx.db, queryAccountId(req), pathParam(req, "conversationId"));

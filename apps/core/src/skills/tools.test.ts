@@ -8,7 +8,6 @@ describe("dispatcher SDK tools", () => {
     const names = dispatcherToolNames();
     expect(names).toEqual([
       "add_to_group",
-      "check_worker",
       "create_group",
       "create_routine",
       "delegate",

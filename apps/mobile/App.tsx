@@ -5,6 +5,7 @@ import * as FileSystem from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
 import {
   configureAuthCookie,
+  contextLine as formatContextLine,
   createCore,
   type MessageBlock,
   type Proposal,
@@ -140,6 +141,7 @@ export default function App() {
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [profile, setProfile] = useState<RosterAgent | null>(null);
   const [conversationId, setConversationId] = useState("");
+  const [contextLine, setContextLine] = useState<string | null>(null);
   const [groups, setGroups] = useState<{ id: string; title: string; memberCount: number }[]>([]);
   // Last opened chat, so the desktop back-button returns to the right title.
   const [lastChat, setLastChat] = useState<{
@@ -358,6 +360,8 @@ export default function App() {
         if (expectReply.current && fresh.some((bubble) => !bubble.mine && !known.has(bubble.id))) {
           expectReply.current = false;
           setTyping(false);
+          // Turn landed: usage changed, refresh the header line once.
+          void loadContextLine(liveRoomId);
         }
         for (const bubble of fresh) known.add(bubble.id);
         mergeThread(fresh);
@@ -397,6 +401,20 @@ export default function App() {
   }, [liveRoomId, accountId]);
 
   /**
+   * Loads per-chat context + usage for the header line. Best-effort: a failure
+   * hides the line instead of blocking the chat.
+   * Input: room id. Output: nothing. Sets the header line.
+   */
+  async function loadContextLine(roomId: string): Promise<void> {
+    try {
+      const info = await core.chatContext(accountId.trim(), roomId);
+      setContextLine(formatContextLine(info));
+    } catch {
+      setContextLine(null);
+    }
+  }
+
+  /**
    * Enters any room — direct or group — with the right header.
    * Why: one shared path so created, reopened, and direct rooms all show the
    * correct title (group title, never a disguised 1:1) plus member names.
@@ -430,6 +448,8 @@ export default function App() {
     setConversationId(room.id);
     setLastChat(opened);
     setScreen({ name: "chat", ...opened });
+    setContextLine(null);
+    void loadContextLine(room.id);
     setMessages(toBubbles(history, taps, roster));
     setDraft("");
     setReplyTo(null);
@@ -958,6 +978,7 @@ export default function App() {
           agent={screen.agent}
           title={screen.title}
           subtitle={screen.subtitle}
+          contextLine={contextLine}
           members={
             screen.kind === "group" ? agents.filter((row) => screen.memberIds.includes(row.id)) : []
           }

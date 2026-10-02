@@ -60,20 +60,20 @@ export async function runAgentLoop(
     traceSession,
   };
   const tools = await buildFullToolSet(mode, toolCtx);
-  const { text, cacheReadTokens } = await runModelHarness({
+  const { text, cacheReadTokens, usage } = await runModelHarness({
     ...input,
     db,
     mode,
     tools,
     traceSession,
   });
-  return { text, cacheReadTokens };
+  return { text, cacheReadTokens, usage };
 }
 
 /** Legacy single-shot path for tests that bypass tools. */
 export async function replyWithModel(db: Db, input: TurnInput): Promise<GenerateResult> {
   ensureTracePlugins();
-  const { text, cacheReadTokens } = await runModelHarness({
+  const { text, cacheReadTokens, usage } = await runModelHarness({
     ...input,
     db,
     conversationId: "",
@@ -82,5 +82,5 @@ export async function replyWithModel(db: Db, input: TurnInput): Promise<Generate
     tools: {},
     maxSteps: 1,
   });
-  return { text, cacheReadTokens };
+  return { text, cacheReadTokens, usage };
 }

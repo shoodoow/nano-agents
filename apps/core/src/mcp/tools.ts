@@ -55,8 +55,13 @@ export async function appendMcpTools(
     const token = await bearerForMcpRow(row);
     for (const entry of tools) {
       const fullName = `${row.slug}_${entry.name}`;
+      // Approval boundary (prompt-level: servers don't annotate read vs
+      // write): any external send/publish/delete/pay must be confirmed with
+      // the person via send_message first. Code-level gates apply where the
+      // action is known-destructive (e.g. delete_group's confirmed flag).
+      const askFirst = " If this sends, publishes, deletes, or pays externally, first confirm with the person via send_message and proceed only after yes.";
       set[fullName] = tool({
-        description: entry.description || `MCP ${row.slug}/${entry.name}`,
+        description: (entry.description || `MCP ${row.slug}/${entry.name}`) + askFirst,
         inputSchema: mcpInputSchema(entry) as never,
         execute: wrapExecute(fullName, async (input) => {
           const session = await getMcpSession(ctx.accountId, row.id, row.url, token);

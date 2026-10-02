@@ -11,7 +11,7 @@ import type { TurnEvent } from "../rooms/send-message.js";
 import { DELEGATION_HISTORY_SLICE } from "./constants.js";
 import { runAgentLoop } from "./agent-loop.js";
 import type { GenerateResult, TurnInput } from "./types.js";
-import { unwrapGenerateResult } from "./util.js";
+import { tailSlice, unwrapGenerateResult } from "./util.js";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -113,7 +113,7 @@ export async function runDelegatedTurn(
       job: child.jobDescription,
     },
     summary: [],
-    messages: recent.map((row) => ({ body: row.body })),
+    messages: recent.map((row) => ({ body: tailSlice(row.body) })),
     room: {
       title: room.title,
       kind: room.kind,

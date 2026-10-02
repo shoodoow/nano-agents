@@ -155,8 +155,17 @@ export const delegations = pgTable(
     task: text("task").notNull(),
     status: text("status").notNull().default("running"),
     // Worker result (Phase 15): final text the background worker produced
-    // (truncated), or the failure reason. check_worker reads this.
+    // (truncated), or the failure reason. Delivery reads this on settle.
     result: text("result"),
+    // Billable usage for the worker's own generateText (up to 10 steps with
+    // screenshots — the dominant cost; the dispatcher run row never sees it).
+    // Null until the worker settles; stub-generate test workers stay null.
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    cacheReadTokens: integer("cache_read_tokens"),
+    cacheWriteTokens: integer("cache_write_tokens"),
+    reasoningTokens: integer("reasoning_tokens"),
+    modelSteps: integer("model_steps"),
     // Delivery guard (Phase 19): auto-delivery flips this false->true exactly
     // once, so a worker success is posted to the room one time even if the
     // scheduler and the spawn call both race to deliver it.
@@ -300,6 +309,15 @@ export const runs = pgTable(
     kind: text("kind").notNull().default("turn"),
     status: text("status").notNull().default("running"),
     error: text("error"),
+    // Accurate billable usage for the whole run (sum of all model steps across
+    // all speakers — AI SDK result.usage is already step-accumulated).
+    // Null until the run lands; stub-generate test turns stay null.
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    cacheReadTokens: integer("cache_read_tokens"),
+    cacheWriteTokens: integer("cache_write_tokens"),
+    reasoningTokens: integer("reasoning_tokens"),
+    modelSteps: integer("model_steps"),
     heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },

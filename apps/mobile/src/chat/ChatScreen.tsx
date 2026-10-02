@@ -103,6 +103,7 @@ export function ChatScreen({
   agent,
   title,
   subtitle,
+  contextLine,
   members,
   messages,
   draft,
@@ -135,6 +136,7 @@ export function ChatScreen({
   agent: RosterAgent;
   title: string;
   subtitle: string;
+  contextLine?: string | null;
   members: RosterAgent[];
   messages: Bubble[];
   draft: string;
@@ -218,6 +220,11 @@ export function ChatScreen({
           <View style={styles.headerSpacer} />
         )}
       </View>
+      {contextLine ? (
+        <Text style={styles.contextLine} numberOfLines={1}>
+          {contextLine}
+        </Text>
+      ) : null}
       <FlatList
         ref={list}
         data={messages}
@@ -401,6 +408,7 @@ const styles = StyleSheet.create({
     maxWidth: "60%",
   },
   pillName: { color: colors.text, fontSize: 16, fontWeight: "600" },
+  contextLine: { color: colors.muted, fontSize: 12, textAlign: "center", paddingBottom: 4 },
   titles: { flexShrink: 1 },
   pillSub: { color: colors.muted, fontSize: 12 },
   empty: { alignItems: "center", paddingVertical: 32, gap: 6 },

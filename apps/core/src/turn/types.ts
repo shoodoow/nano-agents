@@ -31,11 +31,21 @@ export type TurnOptions = {
   acquireTimeoutMs?: number;
 };
 
+export type GenerateUsage = {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number | null;
+  cacheWriteTokens?: number | null;
+  reasoningTokens?: number | null;
+  steps?: number;
+};
+
 export type GenerateResult =
   | string
   | {
       text: string;
       cacheReadTokens?: number | null;
+      usage?: GenerateUsage;
       proposal?: { kind: "memory" | "skill" | "prompt"; body: string; messageIds: string[] };
     };
 

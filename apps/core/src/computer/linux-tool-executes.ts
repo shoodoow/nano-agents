@@ -9,8 +9,17 @@ type Database = ReturnType<typeof getDb>;
 
 export type LinuxToolExecute = (input: Record<string, unknown>) => Promise<unknown>;
 
-/** Execute bodies for Linux worker tools (schemas live in @nano-agents/agent-tools). */
+/**
+ * Execute bodies for Linux worker tools (schemas live in @nano-agents/agent-tools).
+ * Why: one factory per worker run, so per-run budgets (screenshot cap) reset
+ * with the run. Screenshots compound in model context — each one re-bills
+ * every later step — so the camera stops after the budget and the worker
+ * continues with DOM/text methods instead of burning millions of tokens.
+ */
 export function linuxToolExecutes(db: Database, accountId: string, profile: string): Record<string, LinuxToolExecute> {
+  /** Screenshots this worker has taken. Reset per run by construction. */
+  let screenshots = 0;
+  const SCREENSHOT_BUDGET = 8;
   return {
     read: async (input) => readFile(accountId, profile, String(input.path)),
     write: async (input) => {
@@ -18,7 +27,17 @@ export function linuxToolExecutes(db: Database, accountId: string, profile: stri
       return "Wrote the file.";
     },
     bash: async (input) => bash(accountId, profile, String(input.command)),
-    computer_screenshot: async () => screenshotImage(accountId, profile),
+    computer_screenshot: async () => {
+      screenshots += 1;
+      if (screenshots > SCREENSHOT_BUDGET) {
+        return (
+          `Screenshot budget spent (${SCREENSHOT_BUDGET} this run). Do not shoot again — ` +
+          `continue with web_fetch, headless --dump-dom, and the coordinates/descriptions you already have. ` +
+          `Only pixels you have not yet seen justify another look, and the camera stays off.`
+        );
+      }
+      return screenshotImage(accountId, profile);
+    },
     computer_mouse: async (input) => moveMouse(accountId, profile, Number(input.x), Number(input.y)),
     computer_click: async (input) => clickAt(accountId, profile, Number(input.x), Number(input.y)),
     computer_type: async (input) => typeText(accountId, profile, String(input.text)),

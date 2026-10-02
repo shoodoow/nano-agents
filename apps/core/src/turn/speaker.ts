@@ -17,7 +17,7 @@ import { runAgentLoop } from "./agent-loop.js";
 import { mentionedAgents } from "./mentions.js";
 import { toModelMessages } from "./prompt-media.js";
 import type { GenerateResult, TurnInput } from "./types.js";
-import { unwrapGenerateResult } from "./util.js";
+import { tailSlice, unwrapGenerateResult } from "./util.js";
 import { createTraceSession } from "./trace/plugins.js";
 import { randomUUID } from "node:crypto";
 
@@ -40,9 +40,15 @@ export async function speakOnce(
     queue: (string | undefined)[];
     spoken: Set<string>;
     cue?: string;
+    /**
+     * Per-run usage accumulator (mutated). Survives years-long threads:
+     * each speaker adds its harness usage; orchestrator persists the sum.
+     * Stub-generate test turns contribute nothing.
+     */
+    usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number; steps: number };
   },
 ): Promise<void> {
-  const { accountId, conversationId, agentId, memberRows, room, skillsRoot, generate, nextTime, runId, emit, saved, queue, spoken, cue } =
+  const { accountId, conversationId, agentId, memberRows, room, skillsRoot, generate, nextTime, runId, emit, saved, queue, spoken, cue, usage } =
     input;
   let [agent] = await db.select().from(agents).where(and(eq(agents.id, agentId), eq(agents.accountId, accountId)));
   if (!agent) throw new Error("Agent not found");
@@ -102,7 +108,7 @@ export async function speakOnce(
       job: agent.jobDescription,
     },
     summary: summary.map((item) => ({ key: item.key, body: item.body })),
-    messages: recent.map((message) => ({ body: message.body })),
+    messages: recent.map((message) => ({ body: tailSlice(message.body) })),
     memories: facts.map((fact) => ({ body: fact.body })),
     recall,
     catalog,
@@ -164,6 +170,14 @@ export async function speakOnce(
   let result: ReturnType<typeof unwrapGenerateResult>;
   try {
     result = unwrapGenerateResult(await generateWithStore());
+    if (usage && result.usage) {
+      usage.input += result.usage.inputTokens ?? 0;
+      usage.output += result.usage.outputTokens ?? 0;
+      usage.cacheRead += result.usage.cacheReadTokens ?? 0;
+      usage.cacheWrite += result.usage.cacheWriteTokens ?? 0;
+      usage.reasoning += result.usage.reasoningTokens ?? 0;
+      usage.steps += result.usage.steps ?? 0;
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     void traceSession.emit({ type: "run.error", phase: "model", message: message.slice(0, 500) });

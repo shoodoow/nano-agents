@@ -83,6 +83,40 @@ export type RoutinePatch = {
   paused?: boolean;
 };
 
+export type ChatContextInfo = {
+  conversationId: string;
+  counts: { messages: number; summaryItems: number; runs: number; runsDone: number; delegationsRunning: number; delegationsDone: number };
+  context: { prefixChars: number; tailChars: number; toolCount: number; estTokens: number; recentWindow: number; summaryWindow: number };
+  usage: {
+    runsTracked: number;
+    runsUntracked: number;
+    delegationsTracked: number;
+    delegationsUntracked: number;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    totalTokens: number;
+    lastRuns: { id: string; status: string; inputTokens: number | null; outputTokens: number | null; modelSteps: number | null; createdAt: string }[];
+  };
+  model: {
+    provider: string;
+    modelId: string;
+    contextWindow: number | null;
+    capacitySource: "plugin" | "builtin-estimate" | "unknown";
+    estTurnShare: number | null;
+  };
+};
+
+/** One-line header for the chat screen, e.g. "~12k ctx • 45k used • 9% of 128k". */
+export function contextLine(info: ChatContextInfo): string {
+  const ctx = info.context.estTokens >= 1000 ? `${Math.round(info.context.estTokens / 100) / 10}k ctx` : `${info.context.estTokens} ctx`;
+  const used = info.usage.totalTokens >= 1000 ? `${Math.round(info.usage.totalTokens / 100) / 10}k used` : `${info.usage.totalTokens} used`;
+  const share = info.model.estTurnShare !== null ? ` • ${Math.max(1, Math.round(info.model.estTurnShare * 100))}% of ${Math.round((info.model.contextWindow ?? 0) / 1000)}k` : "";
+  const untrackedCount = info.usage.runsUntracked + info.usage.delegationsUntracked;
+  const untracked = untrackedCount > 0 ? ` (+${untrackedCount} untracked)` : "";
+  return `${ctx} • ${used}${untracked}${share}`;
+}
+
 export type StreamEvent = {
   type: string;
   message?: RichMessage;
@@ -124,6 +158,7 @@ export type CoreClient = {
   ) => Promise<ProviderSetting>;
   listConversations: (accountId: string) => Promise<{ id: string; kind: string; title: string; ownerAgentId: string }[]>;
   listMembers: (accountId: string, conversationId: string) => Promise<{ agentId: string }[]>;
+  chatContext: (accountId: string, conversationId: string) => Promise<ChatContextInfo>;
   listMessages: (accountId: string, conversationId: string) => Promise<RichMessage[]>;
   blob: (accountId: string, conversationId: string, messageId: string, index: number) => Promise<{
     url?: string;
@@ -195,6 +230,7 @@ export function createCore(
     saveProvider: (accountId, input) => saveProvider(baseUrl, accountId, input, fetchImpl),
     listConversations: (accountId) => listConversations(baseUrl, accountId, fetchImpl),
     listMembers: (accountId, conversationId) => listMembers(baseUrl, accountId, conversationId, fetchImpl),
+    chatContext: (accountId, conversationId) => chatContext(baseUrl, accountId, conversationId, fetchImpl),
     listMessages: (accountId, conversationId) => listMessages(baseUrl, accountId, conversationId, fetchImpl),
     blob: (accountId, conversationId, messageId, index) =>
       fetchBlob(baseUrl, accountId, conversationId, messageId, index, fetchImpl),
@@ -316,6 +352,19 @@ async function listMembers(
   fetchImpl: typeof fetch,
 ): Promise<{ agentId: string }[]> {
   return readJson(fetchImpl, `${baseUrl}/conversations/${conversationId}/members?accountId=${accountId}`);
+}
+
+/**
+ * Loads per-chat context + accurate usage for the chat header.
+ * Input: base URL, account id, conversation id, fetch. Output: ChatContextInfo.
+ */
+async function chatContext(
+  baseUrl: string,
+  accountId: string,
+  conversationId: string,
+  fetchImpl: typeof fetch,
+): Promise<ChatContextInfo> {
+  return readJson(fetchImpl, `${baseUrl}/conversations/${conversationId}/context?accountId=${accountId}`);
 }
 
 /**

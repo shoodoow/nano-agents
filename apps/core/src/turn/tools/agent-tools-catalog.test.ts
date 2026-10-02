@@ -6,7 +6,6 @@ describe("agent-tools catalog", () => {
   it("matches dispatcher registration list", () => {
     expect(dispatcherToolNames()).toEqual([
       "add_to_group",
-      "check_worker",
       "create_group",
       "create_routine",
       "delegate",

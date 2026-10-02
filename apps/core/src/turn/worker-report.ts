@@ -50,7 +50,10 @@ export type WorkerEnding =
  */
 export function classifyWorkerEnding(text: string, ranTools: boolean): WorkerEnding {
   const trimmed = text.trim();
-  if (trimmed && (REPORT_MARKERS.test(trimmed) || ranTools)) {
+  // Tools ran is trust — unless the text promises a next step without
+  // reporting one (narration like "Let me open it in Chromium" with no
+  // Findings). That is a stall even with tool calls behind it.
+  if (trimmed && (REPORT_MARKERS.test(trimmed) || (ranTools && !NEXT_STEP_NARRATION.test(trimmed)))) {
     return { kind: "report", result: trimmed.slice(0, MAX) };
   }
   const stalledOnNarration = !trimmed || (!ranTools && NEXT_STEP_NARRATION.test(trimmed));
@@ -60,7 +63,12 @@ export function classifyWorkerEnding(text: string, ranTools: boolean): WorkerEnd
   if (!trimmed || (!ranTools && NEXT_STEP_NARRATION.test(trimmed))) {
     return { kind: "stall" };
   }
-  // Non-empty, non-narration text with no tools: treat as a plain report.
+  // Narration promising a next step with no reported findings is a stall even
+  // when tools ran behind it — otherwise "Let me open it in Chromium" ships
+  // as a success and the job silently dies. Plain non-narration text stays a report.
+  if (NEXT_STEP_NARRATION.test(trimmed)) {
+    return { kind: "stall" };
+  }
   return { kind: "report", result: trimmed.slice(0, MAX) };
 }
 

@@ -29,9 +29,23 @@ export type RunModelInput = TurnInput & {
   traceSession?: TraceSession;
 };
 
+/**
+ * Accurate usage for one harness call (AI SDK 7: result.usage is already the
+ * sum across all steps — not just the final step — so this is billable-accurate
+ * without summing step callbacks ourselves).
+ */
+export type HarnessUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number | null;
+  cacheWriteTokens: number | null;
+  reasoningTokens: number | null;
+  steps: number;
+};
+
 export async function runModelHarness(
   input: RunModelInput,
-): Promise<{ text: string; cacheReadTokens: number | null; session: TraceSession }> {
+): Promise<{ text: string; cacheReadTokens: number | null; session: TraceSession; usage: HarnessUsage }> {
   const credential = await keyFor(input.db, input.accountId, input.provider);
   const prompt = toModelPrompt(input);
   const traceId = randomUUID();
@@ -121,10 +135,22 @@ export async function runModelHarness(
       steps: stepIndex,
     });
 
+    const details = result.usage.inputTokenDetails as
+      | { cacheReadTokens?: number; cacheWriteTokens?: number }
+      | undefined;
+    const outDetails = result.usage.outputTokenDetails as { reasoningTokens?: number } | undefined;
     return {
       text: result.text,
       cacheReadTokens: result.usage.inputTokenDetails.cacheReadTokens ?? null,
       session,
+      usage: {
+        inputTokens: result.usage.inputTokens ?? 0,
+        outputTokens: result.usage.outputTokens ?? 0,
+        cacheReadTokens: details?.cacheReadTokens ?? null,
+        cacheWriteTokens: details?.cacheWriteTokens ?? null,
+        reasoningTokens: outDetails?.reasoningTokens ?? null,
+        steps: stepIndex,
+      },
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Model failed.";

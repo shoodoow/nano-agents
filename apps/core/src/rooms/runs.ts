@@ -74,8 +74,35 @@ export async function heartbeatRun(store: Store, runId: string): Promise<void> {
  * tells SSE watchers + push policy the thread settled.
  * Input: store, run id. Output: nothing.
  */
-export async function finishRun(store: Store, runId: string): Promise<void> {
-  await store.update(runs).set({ status: "done", heartbeatAt: new Date() }).where(eq(runs.id, runId));
+export type RunUsage = {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number | null;
+  cacheWriteTokens?: number | null;
+  reasoningTokens?: number | null;
+  modelSteps?: number;
+};
+
+export async function finishRun(store: Store, runId: string, usage?: RunUsage): Promise<void> {
+  await store
+    .update(runs)
+    .set({
+      status: "done",
+      heartbeatAt: new Date(),
+      ...(usage?.inputTokens !== undefined ? { inputTokens: usage.inputTokens } : {}),
+      ...(usage?.outputTokens !== undefined ? { outputTokens: usage.outputTokens } : {}),
+      ...(usage?.cacheReadTokens !== undefined && usage.cacheReadTokens !== null
+        ? { cacheReadTokens: usage.cacheReadTokens }
+        : {}),
+      ...(usage?.cacheWriteTokens !== undefined && usage.cacheWriteTokens !== null
+        ? { cacheWriteTokens: usage.cacheWriteTokens }
+        : {}),
+      ...(usage?.reasoningTokens !== undefined && usage.reasoningTokens !== null
+        ? { reasoningTokens: usage.reasoningTokens }
+        : {}),
+      ...(usage?.modelSteps !== undefined ? { modelSteps: usage.modelSteps } : {}),
+    })
+    .where(eq(runs.id, runId));
 }
 
 /**

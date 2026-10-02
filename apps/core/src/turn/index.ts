@@ -16,4 +16,6 @@ export type { TurnInput, TurnOptions, GenerateResult, TurnImagePart, TurnMessage
 export type { TurnEvent } from "../rooms/send-message.js";
 export { blocksToText } from "../rooms/send-message.js";
 export { registerTracePlugin } from "./trace/plugins.js";
+export { registerModelInfoProvider, modelInfoFor } from "./usage/model-info.js";
+export { buildChatContextInfo, type ChatContextInfo } from "./usage/chat-context.js";
 export { registerPluginTool, pluginToolFullName, pluginToolOffers } from "./plugins/registry.js";

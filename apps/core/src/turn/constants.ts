@@ -29,3 +29,10 @@ export const RECENT_WINDOW = 40;
 export const FOLD_BATCH = 20;
 export const SUMMARY_WINDOW = 40;
 export const RECALL_K = 8;
+
+/**
+ * Per-message cap for prompt tails (years-long threads stay sharp AND
+ * bounded). Full bodies stay in the DB and in recall queries — only the
+ * verbatim tail copy is shortened, with an ellipsis marker.
+ */
+export const TAIL_MESSAGE_CHARS = 800;

@@ -30,6 +30,8 @@ export type GroupCreateInput = z.infer<typeof groupCreateInputSchema>;
 
 export const groupConversationInputSchema = z.object({
   conversationId: z.string().uuid(),
+  /** Approval gate: destructive and irreversible — model must ask the person first, then re-call with confirmed:true. */
+  confirmed: z.boolean().optional(),
 });
 
 export type GroupConversationInput = z.infer<typeof groupConversationInputSchema>;

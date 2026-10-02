@@ -70,6 +70,12 @@ describe("classifyWorkerEnding", () => {
     expect(classifyWorkerEnding("", false).kind).toBe("stall");
   });
 
+  it("flags next-step narration as a stall even when tools ran (Jenny/objkt case)", () => {
+    expect(
+      classifyWorkerEnding("The web_fetch returned empty (JS-heavy). Let me open objkt.com in Chromium.", true).kind,
+    ).toBe("stall");
+  });
+
   it("passes an explicit NEEDS_PERSON line straight through as a report", () => {
     const ending = classifyWorkerEnding("NEEDS_PERSON: Sign in to Instagram @getstackbrief", false);
     expect(ending.kind).toBe("report");

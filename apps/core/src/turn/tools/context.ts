@@ -25,4 +25,14 @@ export type ToolContext = {
   delegationDepth?: number;
   traceSession?: TraceSession;
   generate?: (input: TurnInput) => Promise<GenerateResult>;
+  /** Room kind for tool filtering (direct chats get a slim set). Set by speaker. */
+  roomKind?: string;
+  /** Per-turn spawn guard: mutated by executors. Caps retry-burn. */
+  spawnCount?: number;
+  /**
+   * Recent tool calls this turn (name + JSON input), mutated by the registry
+   * wrapper. Powers the generic doom-loop detector: 3 identical calls in a
+   * row never execute — the model gets a stop error instead.
+   */
+  recentCalls?: { name: string; input: string }[];
 };

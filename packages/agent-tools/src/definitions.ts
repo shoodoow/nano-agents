@@ -30,7 +30,7 @@ import {
 } from "./schemas.js";
 
 const WORKER_TASK_HINT =
-  "Task must include Goal, Inputs (exact URLs/paths), Method, Success check, and Return format. Never pass provider or modelId — the worker uses your model. Desktop/browser: put the exact URL in the task; Method starts with computer_screenshot; reuse the existing Chromium window (do not pkill chromium); drive clicks with computer_click, computer_type, and computer_key, never xdotool, CDP, or Playwright from bash; screenshot again and describe what is visible — no OCR unless the person asked. If the screen needs a password, 2FA, captcha, or payment, the worker ends with NEEDS_PERSON.";
+  "Act like the task owner, not a messenger: the worker starts blank, so the task must fully assign the job. Task must include Goal (one sentence, with done-criteria), Inputs (exact URLs/paths/quotes), Method, Success check (how you will verify the result answers the Goal), and Return format with proof. Never pass provider or modelId — the worker uses your model. Proof is mandatory: demand exact numbers, URLs, and quotes observed on screen — never estimates, never invented content. Return format is always three labeled sections: Findings: (evidence), What I did: (steps), Blockers: (what stopped you, or none). Desktop/browser: put the exact URL in the task; explore cheapest-first — web_fetch, then headless DevTools dump-dom for JS pages, visible Chromium only for login-gated pages. Never mention screenshots in the brief — the worker's own manual covers when the camera is allowed, and unmentioned screenshots stay off. Only write screenshots into the task when the person explicitly asked for visual verification. Reuse the existing Chromium window (do not pkill chromium); drive clicks with computer_click, computer_type, and computer_key, never xdotool or Playwright from bash; no OCR unless the person asked. If the screen needs a password, 2FA, captcha, or payment, the worker ends with NEEDS_PERSON: plus one instruction for the person."
 
 export type ToolSurface = "dispatcher" | "worker";
 
@@ -50,13 +50,6 @@ export const allToolDefinitions: ToolDefinition[] = [
       "Add an existing account agent to this group room. Use when the team grows after creation. Never works on a private 1:1.",
     surfaces: ["dispatcher"],
     inputSchema: memberAddInputSchema,
-  },
-  {
-    name: "check_worker",
-    description:
-      "Read a worker by the process id spawn_worker returned. running: keep chatting. done: summarize its result. failed: explain and retry or stop_worker.",
-    surfaces: ["dispatcher"],
-    inputSchema: workerRefInputSchema,
   },
   {
     name: "create_group",
@@ -81,7 +74,7 @@ export const allToolDefinitions: ToolDefinition[] = [
   {
     name: "delete_group",
     description:
-      "Delete a group room you own. Use list_groups for ids. Cannot delete private 1:1 chats or the room you are chatting in right now. Teammates stay on the account; only the group and its chat history are removed.",
+      "Delete a group room you own. Use list_groups for ids. Cannot delete private 1:1 chats or the room you are chatting in right now. Teammates stay on the account; only the group and its chat history are removed. Irreversible: ask the person first, then re-call with confirmed:true.",
     surfaces: ["dispatcher"],
     inputSchema: groupConversationInputSchema,
   },
@@ -157,7 +150,7 @@ export const allToolDefinitions: ToolDefinition[] = [
   },
   {
     name: "spawn_worker",
-    description: `Required for any search, page, file, command, or desktop task. Returns immediately. Do not include provider or modelId. Finished workers become free and are reused on the next spawn (max 10 concurrent hidden worker rows). If the tool returns error with workers, use check_worker or stop_worker on those ids. ${WORKER_TASK_HINT}`,
+    description: `Required for any search, page, file, command, or desktop task. Returns immediately with a worker id, then end your turn — the finished result is delivered to you automatically, never poll for it. Do not include provider or modelId. Finished workers become free and are reused on the next spawn (max 10 concurrent hidden worker rows). If the tool returns error with workers, use stop_worker on the wedged id to free it. ${WORKER_TASK_HINT}`,
     surfaces: ["dispatcher"],
     inputSchema: spawnWorkerToolInputSchema,
   },

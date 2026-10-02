@@ -91,6 +91,8 @@ export async function runTurn(
   (beat as unknown as { unref?: () => void }).unref?.();
 
   const saved: (typeof messages.$inferSelect)[] = [];
+  // Billable usage for this run: every speaker adds its harness total.
+  const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, steps: 0 };
   try {
     const spoken = new Set<string>();
     const queue = options?.speakerId ? [options.speakerId] : speakers(incoming.text, memberRows, room.ownerAgentId);
@@ -113,11 +115,25 @@ export async function runTurn(
         queue,
         spoken,
         cue: options?.cue,
+        usage,
       });
       await heartbeatRun(db, runId).catch(() => {});
     }
     await compactConversation(db, accountId, conversationId);
-    await finishRun(db, runId);
+    await finishRun(
+      db,
+      runId,
+      usage.steps > 0
+        ? {
+            inputTokens: usage.input,
+            outputTokens: usage.output,
+            cacheReadTokens: usage.cacheRead,
+            cacheWriteTokens: usage.cacheWrite,
+            reasoningTokens: usage.reasoning,
+            modelSteps: usage.steps,
+          }
+        : undefined,
+    );
     await emit({ type: "run", run: { id: runId, status: "done" as const, error: null } });
     emitter.emitDone();
     return saved;

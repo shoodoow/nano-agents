@@ -1,146 +1,160 @@
 {
- "version": "7",
- "dialect": "postgresql",
- "entries": [
-  {
-   "idx": 0,
-   "version": "7",
-   "when": 1790602537048,
-   "tag": "0000_nasty_sphinx",
-   "breakpoints": true
-  },
-  {
-   "idx": 1,
-   "version": "7",
-   "when": 1790603974889,
-   "tag": "0001_right_imperial_guard",
-   "breakpoints": true
-  },
-  {
-   "idx": 2,
-   "version": "7",
-   "when": 1790604551714,
-   "tag": "0002_remarkable_kabuki",
-   "breakpoints": true
-  },
-  {
-   "idx": 3,
-   "version": "7",
-   "when": 1790604692889,
-   "tag": "0003_big_synch",
-   "breakpoints": true
-  },
-  {
-   "idx": 4,
-   "version": "7",
-   "when": 1790605077670,
-   "tag": "0004_short_sebastian_shaw",
-   "breakpoints": true
-  },
-  {
-   "idx": 5,
-   "version": "7",
-   "when": 1790605421563,
-   "tag": "0005_amazing_blackheart",
-   "breakpoints": true
-  },
-  {
-   "idx": 6,
-   "version": "7",
-   "when": 1790612500000,
-   "tag": "0006_auth",
-   "breakpoints": true
-  },
-  {
-   "idx": 7,
-   "version": "7",
-   "when": 1790614000000,
-   "tag": "0007_provider_keys",
-   "breakpoints": true
-  },
-  {
-   "idx": 8,
-   "version": "7",
-   "when": 1790677312143,
-   "tag": "0008_rich-turn-subagents",
-   "breakpoints": true
-  },
-  {
-   "idx": 9,
-   "version": "7",
-   "when": 1790690922935,
-   "tag": "0009_runs-events-notify",
-   "breakpoints": true
-  },
-  {
-   "idx": 10,
-   "version": "7",
-   "when": 1790691233562,
-   "tag": "0010_queued-handoff",
-   "breakpoints": true
-  },
-  {
-   "idx": 11,
-   "version": "7",
-   "when": 1790691760203,
-   "tag": "0011_notify-agent",
-   "breakpoints": true
-  },
-  {
-   "idx": 12,
-   "version": "7",
-   "when": 1790699522349,
-   "tag": "0012_phase15",
-   "breakpoints": true
-  },
-  {
-   "idx": 13,
-   "version": "7",
-   "when": 1790699984108,
-   "tag": "0013_phase15b",
-   "breakpoints": true
-  },
-  {
-   "idx": 14,
-   "version": "7",
-   "when": 1790701000000,
-   "tag": "0014_agent-identity",
-   "breakpoints": true
-  },
-  {
-   "idx": 15,
-   "version": "7",
-   "when": 1790702000000,
-   "tag": "0015_worker-delivery",
-   "breakpoints": true
-  },
-  {
-   "idx": 16,
-   "version": "7",
-   "when": 1790703000000,
-   "tag": "0016_account_mcp_servers",
-   "breakpoints": true
-  },
-  {
-   "idx": 17,
-   "version": "7",
-   "when": 1790704000000,
-   "tag": "0017_agent-mark",
-   "breakpoints": true
-  },
-  {
-   "idx": 18,
-   "version": "7",
-   "when": 1790705000000,
-   "tag": "0018_account-secrets",
-   "breakpoints": true
-  },
-  {
-   "idx": 19,
-   "version": "7",
-   "when": 1790706000000,
-   "tag": "0019_semantic_recall",
-   "breakpoints": true
-  }
- ]
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1790602537048,
+      "tag": "0000_nasty_sphinx",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790603974889,
+      "tag": "0001_right_imperial_guard",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790604551714,
+      "tag": "0002_remarkable_kabuki",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790604692889,
+      "tag": "0003_big_synch",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790605077670,
+      "tag": "0004_short_sebastian_shaw",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790605421563,
+      "tag": "0005_amazing_blackheart",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790612500000,
+      "tag": "0006_auth",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790614000000,
+      "tag": "0007_provider_keys",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790677312143,
+      "tag": "0008_rich-turn-subagents",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790690922935,
+      "tag": "0009_runs-events-notify",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790691233562,
+      "tag": "0010_queued-handoff",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790691760203,
+      "tag": "0011_notify-agent",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1790699522349,
+      "tag": "0012_phase15",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1790699984108,
+      "tag": "0013_phase15b",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1790701000000,
+      "tag": "0014_agent-identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1790702000000,
+      "tag": "0015_worker-delivery",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1790703000000,
+      "tag": "0016_account_mcp_servers",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1790704000000,
+      "tag": "0017_agent-mark",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1790705000000,
+      "tag": "0018_account-secrets",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790706000000,
+      "tag": "0019_semantic_recall",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790707000000,
+      "tag": "0020_run-usage",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790708000000,
+      "tag": "0021_delegation-usage",
+      "breakpoints": true
+    }
+  ]
 }
