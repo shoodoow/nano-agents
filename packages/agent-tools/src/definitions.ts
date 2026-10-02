@@ -23,14 +23,18 @@ import {
   typeTextInputSchema,
   urlInputSchema,
   webSearchInputSchema,
+  workerRedirectInputSchema,
   workerRefInputSchema,
   xyInputSchema,
   pathInputSchema,
   readWriteInputSchema,
 } from "./schemas.js";
 
+const WORKER_KIND_HINT =
+  "Pick kind by the work: executor (general), computer (desktop GUI), browser (public web), explore (files/code search), shell (commands), debug (evidence-based bugs), watch_video / video_review (media), vm_setup (project setup), docs (public documentation). If none fit, kind=custom and pass instructions with the standing method for this new specialist. Default kind is computer.";
+
 const WORKER_TASK_HINT =
-  "Act like the task owner, not a messenger: the worker starts blank, so the task must fully assign the job. Task must include Goal (one sentence, with done-criteria), Inputs (exact URLs/paths/quotes), Method, Success check (how you will verify the result answers the Goal), and Return format with proof. Never pass provider or modelId — the worker uses your model. Proof is mandatory: demand exact numbers, URLs, and quotes observed on screen — never estimates, never invented content. Return format is always three labeled sections: Findings: (evidence), What I did: (steps), Blockers: (what stopped you, or none). Desktop/browser: put the exact URL in the task; explore cheapest-first — web_fetch, then headless DevTools dump-dom for JS pages, visible Chromium only for login-gated pages. Never mention screenshots in the brief — the worker's own manual covers when the camera is allowed, and unmentioned screenshots stay off. Only write screenshots into the task when the person explicitly asked for visual verification. Reuse the existing Chromium window (do not pkill chromium); drive clicks with computer_click, computer_type, and computer_key, never xdotool or Playwright from bash; no OCR unless the person asked. If the screen needs a password, 2FA, captcha, or payment, the worker ends with NEEDS_PERSON: plus one instruction for the person."
+  `Act like the task owner, not a messenger: the worker starts blank, so the task must fully assign the job. ${WORKER_KIND_HINT} Task must include Goal (one sentence, with done-criteria), Inputs (exact URLs/paths/quotes), Method, Success check (how you will verify the result answers the Goal), and Return format with proof. Never pass provider or modelId — the worker uses your model. Proof is mandatory: demand exact numbers, URLs, and quotes observed on screen — never estimates, never invented content. Return format is always three labeled sections: Findings: (evidence), What I did: (steps), Blockers: (what stopped you, or none). Desktop/browser: put the exact URL in the task; explore cheapest-first — web_fetch, then headless DevTools dump-dom for JS pages, visible Chromium only for login-gated pages. Never mention screenshots in the brief — the worker's own manual covers when the camera is allowed, and unmentioned screenshots stay off. Only write screenshots into the task when the person explicitly asked for visual verification. Reuse the existing Chromium window (do not pkill chromium); drive clicks with computer_click, computer_type, and computer_key, never xdotool or Playwright from bash; no OCR unless the person asked. If the screen needs a password, 2FA, captcha, or payment, the worker ends with NEEDS_PERSON: plus one instruction for the person. If a skill applies, name read_skill <name> in Method.`;
 
 export type ToolSurface = "dispatcher" | "worker";
 
@@ -162,6 +166,13 @@ export const allToolDefinitions: ToolDefinition[] = [
     inputSchema: workerRefInputSchema,
   },
   {
+    name: "redirect_worker",
+    description:
+      "Steer a running worker without losing its context: stops its current attempt and restarts the same worker with your new instruction appended to its original brief. Use when it is looping, drifting, or the situation changed (user signed in, new constraint). The instruction must say what to do differently, not ask for status. If the worker already finished, you get its result instead.",
+    surfaces: ["dispatcher"],
+    inputSchema: workerRedirectInputSchema,
+  },
+  {
     name: "todo_list",
     description:
       "Read your worklist. Use after a restart, a routine wake, or when picking up a worker's job so you know what is still open.",
@@ -208,7 +219,7 @@ export const allToolDefinitions: ToolDefinition[] = [
   {
     name: "computer_screenshot",
     description:
-      "PNG of your assigned 1280x800 desktop. Call before any click or type so coordinates match the screen.",
+      "PNG of your assigned 1280x800 desktop. Saves to /shared/screenshots/… and returns that path. Call before any click or type so coordinates match the screen. Cite the path in your report — do not send image bytes to the parent.",
     surfaces: ["worker"],
     requiresLinux: true,
     inputSchema: emptyToolInputSchema,

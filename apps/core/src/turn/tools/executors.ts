@@ -14,13 +14,15 @@ import {
   sendMessageInputSchema,
   spawnWorkerToolInputSchema,
   subagentCreateSchema,
+  workerRedirectInputSchema,
 } from "@nano-agents/agent-tools";
 import { and, desc, eq } from "drizzle-orm";
-import { conversations, delegations, members } from "../../db/schema.js";
+import { agents, conversations, delegations, members } from "../../db/schema.js";
 import { readHistory } from "../../memory/memory.js";
 import { todoList, todoWrite } from "../../memory/todos.js";
 import { saveNotification } from "../../notify/notify.js";
 import { createGroupRoom, deleteGroupRoom, listGroupRoomsForAgent } from "../../rooms/rooms.js";
+import { unpackWorkerJobDescription } from "../../rooms/worker-kinds.js";
 import { saveSendMessage, saveReaction } from "../../rooms/send-message.js";
 import {
   addGroupMember,
@@ -326,6 +328,8 @@ export async function executeSpawnWorker(ctx: ToolContext, input: Record<string,
       personality: parsed.personality,
       jobDescription: parsed.jobDescription,
       task: parsed.task,
+      kind: parsed.kind,
+      instructions: parsed.instructions,
     });
   } catch (error) {
     if (error instanceof WorkerCapacityError) {
@@ -333,13 +337,23 @@ export async function executeSpawnWorker(ctx: ToolContext, input: Record<string,
     }
     throw error;
   }
+  launchDetachedWorker(ctx, spawned, parsed.task);
+  return spawned;
+}
+
+/** Starts a spawned worker detached with settle fanout. Shared by spawn + redirect. */
+function launchDetachedWorker(
+  ctx: ToolContext,
+  spawned: { workerId: string; delegationId: string },
+  task: string,
+): void {
   void runWorker(ctx.db, {
     accountId: ctx.accountId,
     conversationId: ctx.conversationId,
     parentAgentId: ctx.agentId,
     childId: spawned.workerId,
     delegationId: spawned.delegationId,
-    task: parsed.task,
+    task,
     skillsRoot: ctx.skillsRoot,
     onSettled: (settled) => {
       void emitTurnBus({
@@ -356,7 +370,88 @@ export async function executeSpawnWorker(ctx: ToolContext, input: Record<string,
       });
     },
   });
-  return spawned;
+}
+
+/**
+ * Steers a running worker without losing its context (pragmatic
+ * MessageSubagent). Stops the current attempt and restarts the same hidden
+ * worker row with the original brief plus the new instruction — no fresh
+ * worker, no re-explaining the job. Finished workers report instead.
+ */
+export async function executeRedirectWorker(ctx: ToolContext, input: Record<string, unknown>) {
+  const parsed = workerRedirectInputSchema.parse(input);
+  const [running] = await ctx.store
+    .select()
+    .from(delegations)
+    .where(
+      and(
+        eq(delegations.childAgentId, parsed.workerId),
+        eq(delegations.accountId, ctx.accountId),
+        eq(delegations.status, "running"),
+      ),
+    )
+    .orderBy(desc(delegations.createdAt))
+    .limit(1);
+  if (!running) {
+    const [latest] = await ctx.store
+      .select({ status: delegations.status, result: delegations.result })
+      .from(delegations)
+      .where(and(eq(delegations.childAgentId, parsed.workerId), eq(delegations.accountId, ctx.accountId)))
+      .orderBy(desc(delegations.createdAt))
+      .limit(1);
+    if (!latest) throw new Error("No work found for that worker id.");
+    return {
+      workerId: parsed.workerId,
+      status: latest.status,
+      result: typeof latest.result === "string" ? latest.result.slice(0, 800) : null,
+      note: "That worker already finished — use what it returned instead of redirecting.",
+    };
+  }
+  if (running.parentAgentId !== ctx.agentId) {
+    throw new Error("That worker does not belong to you.");
+  }
+  ctx.spawnCount = (ctx.spawnCount ?? 0) + 1;
+  if (ctx.spawnCount > MAX_SPAWNS_PER_TURN) {
+    return {
+      error: "Already spawned several workers this turn. send_message what you started, then stop — results arrive on their own.",
+    };
+  }
+  const failed = await failuresSinceLastUser(ctx.store, ctx.accountId, ctx.conversationId, ctx.agentId);
+  if (failed >= 2) {
+    return {
+      error: "Two workers already failed since the person's last message. Do not start another. send_message what failed, in plain words, then stop.",
+    };
+  }
+  const [worker] = await ctx.store
+    .select({
+      label: agents.label,
+      role: agents.role,
+      personality: agents.personality,
+      jobDescription: agents.jobDescription,
+    })
+    .from(agents)
+    .where(and(eq(agents.id, parsed.workerId), eq(agents.accountId, ctx.accountId)));
+  if (!worker) throw new Error("Worker agent is gone.");
+  const brief =
+    `${running.task}\n\nRedirect from parent (previous attempt stopped — continue from here, do not restart what is already done): ${parsed.instruction}`;
+  await stopWorker(ctx.store, ctx.accountId, parsed.workerId);
+  // Stopping frees the same hidden row, so the redirect continues as the same
+  // worker id — context preserved via the carried-over brief.
+  const kindMeta = unpackWorkerJobDescription(worker.jobDescription);
+  const spawned = await spawnWorker(ctx.store, {
+    accountId: ctx.accountId,
+    conversationId: ctx.conversationId,
+    parentAgentId: ctx.agentId,
+    label: worker.label,
+    role: worker.role,
+    personality: worker.personality,
+    jobDescription: kindMeta.jobDescription,
+    kind: kindMeta.kind,
+    instructions: kindMeta.instructions,
+    task: brief,
+  });
+  launchDetachedWorker(ctx, spawned, brief);
+  return { ...spawned, redirected: true };
 }
 
 export const dispatcherExecutors: Record<string, ToolExecutor> = {
@@ -399,6 +494,7 @@ export const dispatcherExecutors: Record<string, ToolExecutor> = {
     return { conversationId: room.id, title: room.title, members: room.members.length };
   },
   spawn_worker: executeSpawnWorker,
+  redirect_worker: executeRedirectWorker,
   stop_worker: (ctx, input) => stopWorker(ctx.store, ctx.accountId, String(input.workerId)),
   create_routine: async (ctx, input) => {
     const routine = await createOwnRoutine(ctx.store, {

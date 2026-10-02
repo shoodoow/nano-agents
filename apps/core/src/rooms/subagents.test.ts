@@ -478,6 +478,91 @@ describe("subagents and teams", () => {
       /1:1/,
     );
   });
+
+  describe('redirect_worker', () => {
+  // NOTE: nested so the shared db client (closed in the outer afterAll)
+  // stays open. Do not move these its to top level.
+  it("steers a running worker keeping its id and brief", async () => {
+    const { executeRedirectWorker } = await import("../turn/tools/executors.js");
+    const account = await createAccount(db, { name: "Redirect" });
+    const parent = await createAgent(db, account.id, agent("Boss"));
+    const [room] = await db
+      .insert(conversations)
+      .values({ accountId: account.id, kind: "direct", ownerAgentId: parent.id, title: "job" })
+      .returning();
+    await db.insert(members).values({ conversationId: room!.id, accountId: account.id, agentId: parent.id });
+    const spawned = await spawnWorker(db, {
+      accountId: account.id,
+      conversationId: room!.id,
+      parentAgentId: parent.id,
+      label: "Scout",
+      role: "Researcher",
+      jobDescription: "Researches sites.",
+      task: "Goal: check the site. Inputs: https://example.com. Method: fetch it. Success: facts found. Return: Findings.",
+    });
+    const ctx = {
+      db,
+      store: db,
+      accountId: account.id,
+      conversationId: room!.id,
+      agentId: parent.id,
+      runId: randomUUID(),
+      nextTime: () => new Date(),
+      emittedMessages: [],
+      emit: async () => {},
+    };
+    const out = (await executeRedirectWorker(ctx as never, {
+      workerId: spawned.workerId,
+      instruction: "The user just signed in on the box, so continue past the login wall now.",
+    })) as { redirected?: boolean; workerId: string; delegationId: string };
+    expect(out.redirected).toBe(true);
+    expect(out.workerId).toBe(spawned.workerId);
+    const rows = await db.select().from(delegations).where(eq(delegations.childAgentId, spawned.workerId));
+    expect(rows.find((row) => row.id === spawned.delegationId)?.status).toBe("failed");
+    const next = rows.find((row) => row.id === out.delegationId);
+    expect(next?.status).toBe("running");
+    expect(next?.task).toContain("Goal: check the site.");
+    expect(next?.task).toContain("The user just signed in");
+  });
+
+  it("reports instead of redirecting a finished worker", async () => {
+    const { executeRedirectWorker } = await import("../turn/tools/executors.js");
+    const account = await createAccount(db, { name: "RedirectDone" });
+    const parent = await createAgent(db, account.id, agent("Boss"));
+    const [room] = await db
+      .insert(conversations)
+      .values({ accountId: account.id, kind: "direct", ownerAgentId: parent.id, title: "job" })
+      .returning();
+    await db.insert(members).values({ conversationId: room!.id, accountId: account.id, agentId: parent.id });
+    const spawned = await spawnWorker(db, {
+      accountId: account.id,
+      conversationId: room!.id,
+      parentAgentId: parent.id,
+      label: "Scout",
+      role: "Researcher",
+      jobDescription: "Researches sites.",
+      task: "Goal: check the site. Inputs: https://example.com. Method: fetch it. Success: facts found. Return: Findings.",
+    });
+    await stopWorker(db, account.id, spawned.workerId);
+    const ctx = {
+      db,
+      store: db,
+      accountId: account.id,
+      conversationId: room!.id,
+      agentId: parent.id,
+      runId: randomUUID(),
+      nextTime: () => new Date(),
+      emittedMessages: [],
+      emit: async () => {},
+    };
+    const out = (await executeRedirectWorker(ctx as never, {
+      workerId: spawned.workerId,
+      instruction: "Also grab the pricing page while you are there please.",
+    })) as { status?: string; note?: string };
+    expect(out.status).toBe("failed");
+    expect(out.note).toMatch(/already finished/);
+  });
+  });
 });
 
 function agent(name: string) {

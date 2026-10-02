@@ -21,6 +21,12 @@ export const workerRefInputSchema = z.object({
   workerId: z.string().uuid(),
 });
 
+export const workerRedirectInputSchema = z.object({
+  workerId: z.string().uuid(),
+  /** New steering instruction. Must be concrete (what to do differently), not a status question. */
+  instruction: z.string().trim().min(20).max(2000),
+});
+
 export const groupCreateInputSchema = z.object({
   title: z.string().trim().min(1).max(200),
   memberIds: z.array(z.string().uuid()).max(19).optional().default([]),
@@ -81,18 +87,63 @@ export const readSkillToolInputSchema = z.object({
   name: z.string().min(1),
 });
 
-export const spawnWorkerInputSchema = z.object({
+export const workerKindNames = [
+  "executor",
+  "computer",
+  "browser",
+  "explore",
+  "shell",
+  "debug",
+  "watch_video",
+  "video_review",
+  "vm_setup",
+  "docs",
+  "custom",
+] as const;
+
+export type WorkerKindName = (typeof workerKindNames)[number];
+
+const spawnWorkerFields = {
   label: z.string().trim().min(1).max(100),
   role: z.string().trim().min(1).max(100),
   personality: z.string().trim().max(500).optional().default(""),
   jobDescription: z.string().trim().min(1).max(10_000),
   task: z.string().trim().min(1).max(20_000),
+  /** Specialist standing method. Default computer (desktop-capable). Use custom + instructions when none fit. */
+  kind: z.enum(workerKindNames).optional().default("computer"),
+  /** Required when kind is custom: the standing method the worker follows. */
+  instructions: z.string().trim().min(1).max(20_000).optional(),
   provider: z.enum(providerNames).optional(),
   modelId: z.string().trim().min(1).max(200).optional(),
-});
+};
+
+function refineCustomWorkerKind(
+  value: { kind?: string; instructions?: string },
+  ctx: z.RefinementCtx,
+) {
+  if (value.kind === "custom" && !(value.instructions && value.instructions.trim())) {
+    ctx.addIssue({
+      code: "custom",
+      message: "kind custom requires instructions (the standing method for this new worker type).",
+      path: ["instructions"],
+    });
+  }
+}
+
+export const spawnWorkerInputSchema = z.object(spawnWorkerFields).superRefine(refineCustomWorkerKind);
 
 /** Tool surface for spawn_worker — workers always inherit the chatting agent's provider/model. */
-export const spawnWorkerToolInputSchema = spawnWorkerInputSchema.omit({ provider: true, modelId: true });
+export const spawnWorkerToolInputSchema = z
+  .object({
+    label: spawnWorkerFields.label,
+    role: spawnWorkerFields.role,
+    personality: spawnWorkerFields.personality,
+    jobDescription: spawnWorkerFields.jobDescription,
+    task: spawnWorkerFields.task,
+    kind: spawnWorkerFields.kind,
+    instructions: spawnWorkerFields.instructions,
+  })
+  .superRefine(refineCustomWorkerKind);
 
 export type SpawnWorkerInput = z.infer<typeof spawnWorkerInputSchema>;
 export type SpawnWorkerToolInput = z.infer<typeof spawnWorkerToolInputSchema>;

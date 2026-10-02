@@ -97,11 +97,46 @@ export function buildWorkerToolSet(workerCtx: WorkerToolBuildContext): ToolSet {
   const set: Record<string, unknown> = {};
   const defs = toolsForSurface("worker", { hasLinux: !!workerCtx.profile });
   for (const def of defs) {
-    set[def.name] = tool({
+    const base = {
       description: descriptionFor(def, "worker"),
       inputSchema: sdkInputSchema(def) as never,
       execute: workerExecute(def, workerCtx) as never,
-    });
+    };
+    if (def.name === "computer_screenshot") {
+      set[def.name] = tool({
+        ...base,
+        toModelOutput: ({ output }) => screenshotToModelOutput(output),
+      });
+      continue;
+    }
+    set[def.name] = tool(base);
   }
   return set as ToolSet;
+}
+
+/** Worker sees the pixels; the model transcript keeps path text, not raw base64 JSON. */
+function screenshotToModelOutput(output: unknown) {
+  if (typeof output === "string") return { type: "text" as const, value: output };
+  if (!output || typeof output !== "object") return { type: "text" as const, value: "Screenshot failed." };
+  const shot = output as { path?: string; pngBase64?: string; width?: number; height?: number; display?: string };
+  if (!shot.pngBase64 || !shot.path) {
+    return { type: "text" as const, value: JSON.stringify({ ...shot, pngBase64: undefined }) };
+  }
+  return {
+    type: "content" as const,
+    value: [
+      {
+        type: "text" as const,
+        text:
+          `Screenshot saved at ${shot.path} (${shot.width ?? "?"}x${shot.height ?? "?"}` +
+          `${shot.display ? `, ${shot.display}` : ""}). Describe what you see. ` +
+          `Cite this path in Findings — never paste image bytes to the parent.`,
+      },
+      {
+        type: "file" as const,
+        mediaType: "image/png",
+        data: { type: "data" as const, data: shot.pngBase64 },
+      },
+    ],
+  };
 }

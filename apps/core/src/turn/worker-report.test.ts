@@ -37,6 +37,31 @@ describe("collectWorkerFallback", () => {
     expect(note).toContain("web_fetch");
     expect(note).toContain("120 posts");
   });
+
+  it("omits screenshot base64 so the parent only sees the path", () => {
+    const note = collectWorkerFallback({
+      text: "",
+      steps: [
+        {
+          text: "",
+          toolResults: [
+            {
+              toolName: "computer_screenshot",
+              output: {
+                path: "/shared/screenshots/ada/shot.png",
+                width: 1280,
+                height: 800,
+                pngBase64: "A".repeat(8_000),
+              },
+            },
+          ],
+        },
+      ],
+    });
+    expect(note).toContain("/shared/screenshots/ada/shot.png");
+    expect(note).not.toContain("AAAA");
+    expect(note).toContain("[omitted");
+  });
 });
 
 describe("isEmptyWorkerReport", () => {

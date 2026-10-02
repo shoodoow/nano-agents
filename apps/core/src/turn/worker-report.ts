@@ -133,8 +133,27 @@ function stringifyOutput(output: unknown): string {
     return stringifyOutput((output as { value: unknown }).value);
   }
   try {
-    return JSON.stringify(output);
+    return JSON.stringify(omitHeavyMedia(output));
   } catch {
     return "";
   }
+}
+
+/** Drop base64 / huge blobs so parent fallback never re-bills screenshot pixels. */
+function omitHeavyMedia(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(omitHeavyMedia);
+  if (!value || typeof value !== "object") return value;
+  const out: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (key === "pngBase64" || key === "base64") {
+      out[key] = "[omitted — use path]";
+      continue;
+    }
+    if (typeof child === "string" && child.length > 4_000 && /^[A-Za-z0-9+/=\s]+$/.test(child.slice(0, 80))) {
+      out[key] = "[omitted — use path]";
+      continue;
+    }
+    out[key] = omitHeavyMedia(child);
+  }
+  return out;
 }

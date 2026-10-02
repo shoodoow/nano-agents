@@ -11,7 +11,7 @@ import {
   DESKTOP_WIDTH,
   DESKTOP_HEIGHT,
 } from "../desktop/desktop.js";
-import { accountHome, accountShared, exec } from "../linux/linux.js";
+import { accountShared, exec, execStdin } from "../linux/linux.js";
 import { assertInside } from "./find.js";
 
 // Why: the agent must work on its assigned desktop — the one the viewer shows
@@ -94,13 +94,37 @@ export async function bash(accountId: string, profile: string, command: string):
 /**
  * Takes a grounded PNG screenshot of the agent's own display.
  * Why: thin wrapper so model tools share one path with the same takeover
- * guard and per-screen serialization as mouse/keyboard. Returns JSON-safe
- * data for vision grounding at native 1280x800.
- * Input: account id + profile. Output: {display, width, height, pngBase64}.
+ * guard and per-screen serialization as mouse/keyboard. Bytes are written to
+ * a path the parent can cite; pngBase64 is only for the worker's vision step
+ * via toModelOutput (never echoed into the parent report).
+ * Input: account id + profile. Output: {path, display, width, height, pngBase64}.
  */
 export async function screenshotImage(accountId: string, profile: string) {
   assertControllable(accountId, profile);
-  return screenshotPng(accountId, profile);
+  const shot = await screenshotPng(accountId, profile);
+  const dir = `${accountShared(accountId)}/screenshots/${profile}`;
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const path = `${dir}/shot-${stamp}.png`;
+  const mkdir = await exec(accountId, ["bash", "-lc", `mkdir -p '${dir}'`], profile);
+  if (mkdir.code !== 0) {
+    throw new Error(mkdir.stdout || "Could not create screenshots directory.");
+  }
+  const written = await execStdin(
+    accountId,
+    ["bash", "-lc", `cat > '${path}'`],
+    Buffer.from(shot.pngBase64, "base64"),
+    profile,
+  );
+  if (written.code !== 0) {
+    throw new Error(written.stdout.toString("utf8").slice(0, 500) || "Could not save screenshot.");
+  }
+  return {
+    path,
+    display: shot.display,
+    width: shot.width,
+    height: shot.height,
+    pngBase64: shot.pngBase64,
+  };
 }
 
 /**

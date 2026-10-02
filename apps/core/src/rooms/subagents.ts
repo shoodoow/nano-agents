@@ -1,5 +1,11 @@
-import { readFileSync } from "node:fs";
 import { delegateSchema, spawnWorkerInputSchema, subagentCreateSchema, workerRefSchema } from "@nano-agents/agent-tools";
+import {
+  packWorkerJobDescription,
+  unpackWorkerJobDescription,
+  workerPreambleFor,
+  type WorkerKind,
+} from "./worker-kinds.js";
+
 import { workerToolNames as agentWorkerToolNames } from "@nano-agents/agent-tools";
 import { generateText, isStepCount } from "ai";
 import { and, count, desc, eq, lt } from "drizzle-orm";
@@ -255,11 +261,6 @@ const WORKER_RESULT_MAX = 20_000;
 const WORKER_STEPS = 10;
 export const WORKER_STALE_MS = 4 * 60 * 60 * 1000;
 
-function workerPreamble(): string {
-  const url = new URL("../../../../prompts/worker.md", import.meta.url);
-  return readFileSync(url, "utf8").trim();
-}
-
 async function latestDelegationStatus(
   store: Store,
   accountId: string,
@@ -391,6 +392,8 @@ export async function spawnWorker(
     personality?: string;
     jobDescription: string;
     task: string;
+    kind?: WorkerKind;
+    instructions?: string;
     provider?: string;
     modelId?: string;
   },
@@ -401,6 +404,8 @@ export async function spawnWorker(
     personality: input.personality,
     jobDescription: input.jobDescription,
     task: input.task,
+    kind: input.kind,
+    instructions: input.instructions,
     provider: input.provider,
     modelId: input.modelId,
   });
@@ -412,11 +417,17 @@ export async function spawnWorker(
   const depth = await teamDepth(store, input.accountId, input.parentAgentId);
   if (depth >= MAX_TEAM_DEPTH) throw new Error("Subagents cannot spawn their own workers beyond depth 2.");
 
+  const packedJob = packWorkerJobDescription({
+    kind: data.kind,
+    jobDescription: data.jobDescription,
+    instructions: data.instructions,
+  });
+
   const workerMeta = {
     label: data.label,
     role: data.role,
     personality: data.personality ?? "",
-    jobDescription: data.jobDescription,
+    jobDescription: packedJob,
     provider: data.provider ?? parent.provider,
     modelId: data.modelId ?? parent.modelId,
   };
@@ -452,7 +463,7 @@ export async function spawnWorker(
       label: data.label,
       role: data.role,
       personality: data.personality ?? "",
-      jobDescription: data.jobDescription,
+      jobDescription: packedJob,
       provider: data.provider ?? parent.provider,
       modelId: data.modelId ?? parent.modelId,
       parentId: input.parentAgentId,
@@ -748,12 +759,77 @@ export async function runWorker(
       skillsRoot: input.skillsRoot,
     });
     const roleLine = `You are ${child.label} — ${child.role}.`;
+    const kindMeta = unpackWorkerJobDescription(child.jobDescription);
+    const standing = workerPreambleFor(kindMeta.kind, kindMeta.instructions);
+    // Worker runs were a black box: dispatcher steps land in the trace log but
+    // worker steps never did. Emit a worker session so failures and loops are
+    // debuggable the same way (and a future transcript view can read them).
+    const { ensureTracePlugins } = await import("../turn/trace/bootstrap.js");
+    const { createTraceSession } = await import("../turn/trace/plugins.js");
+    const { randomUUID: workerTraceUuid } = await import("node:crypto");
+    ensureTracePlugins();
+    const workerTrace = createTraceSession({
+      traceId: workerTraceUuid(),
+      runId: input.delegationId,
+      accountId: input.accountId,
+      conversationId: input.conversationId,
+      agentId: input.childId,
+      mode: "worker",
+      provider: child.provider,
+      modelId: child.modelId,
+      delegationId: input.delegationId,
+    });
+    const workerInstructions = `${standing}\n\n${roleLine}\n\nTask: ${input.task}`;
+    await workerTrace.emit({
+      type: "run.start",
+      prefix: workerInstructions,
+      tail: input.task,
+      promptCacheKey: `${input.accountId}:${input.childId}`,
+      toolNames: Object.keys(tools).sort(),
+      instructions: [{ role: "system" as const, content: workerInstructions }],
+      modelMessages: [{ role: "user", content: input.task }],
+    });
+    let workerSteps = 0;
     const result = await generateText({
       model: getModel(child.provider, child.modelId, credential.apiKey, credential.baseUrl),
-      instructions: [{ role: "system" as const, content: `${workerPreamble()}\n\n${roleLine}\n\nTask: ${input.task}` }],
+      instructions: [{ role: "system" as const, content: workerInstructions }],
       messages: [{ role: "user", content: input.task }],
       tools,
       stopWhen: isStepCount(WORKER_STEPS),
+      onStepFinish: async (step) => {
+        workerSteps += 1;
+        const usage = step.usage
+          ? {
+              inputTokens: step.usage.inputTokens,
+              outputTokens: step.usage.outputTokens,
+              cacheReadTokens: step.usage.inputTokenDetails?.cacheReadTokens,
+              reasoningTokens: step.usage.outputTokenDetails?.reasoningTokens,
+            }
+          : undefined;
+        await workerTrace.emit({
+          type: "model.step.finish",
+          step: workerSteps,
+          text: (step.text ?? "").slice(0, 300),
+          usage,
+          toolCalls: (step.toolCalls ?? []).map((call) => ({
+            toolCallId: (call as { toolCallId?: string }).toolCallId ?? "",
+            name: (call as { toolName?: string }).toolName ?? "unknown",
+            input: ((call as { input?: unknown }).input ?? (call as { args?: unknown }).args ?? null) as unknown,
+          })),
+          toolResults: [],
+        });
+      },
+    });
+    await workerTrace.emit({
+      type: "run.finish",
+      text: result.text,
+      usage: {
+        inputTokens: result.usage.inputTokens,
+        outputTokens: result.usage.outputTokens,
+        cacheReadTokens: result.usage.inputTokenDetails?.cacheReadTokens,
+        reasoningTokens: result.usage.outputTokenDetails?.reasoningTokens,
+      },
+      steps: workerSteps,
     });
     const { classifyWorkerEnding, collectWorkerFallback, collectWorkerText } = await import("../turn/worker-report.js");
     const ranTools =

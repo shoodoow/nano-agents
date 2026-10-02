@@ -21,6 +21,7 @@ describe("dispatcher SDK tools", () => {
       "react_to_message",
       "read_history",
       "read_skill",
+      "redirect_worker",
       "send_message",
       "spawn_worker",
       "stop_worker",
