@@ -14,6 +14,9 @@ import type { getDb } from "../db/client.js";
 import { keyFor } from "../keys/keys.js";
 import { getModel } from "../model/get-model.js";
 import { buildWorkerToolSet } from "../turn/tools/build-tools.js";
+import type { ToolContext } from "../turn/tools/context.js";
+import { appendEvent } from "./events.js";
+import { publish } from "./stream.js";
 import { createProfile } from "../linux/linux.js";
 import { agents, conversations, delegations, members, messages } from "../db/schema.js";
 import { RoomCapacityError } from "./rooms.js";
@@ -612,7 +615,12 @@ export function workerFollowupCue(input: { workerId: string; task: string; resul
  * Input: worker/task/result. Output: cue string (model-only, never saved as user text).
  */
 export function workerSuccessCue(input: { workerId: string; task: string; result: string }): string {
-  return `Worker ${input.workerId} finished its task "${input.task.slice(0, 500)}" with: ${input.result.slice(0, 4000)}. Summarize this for the person in send_message now — findings first, one line of method if it matters. Do not invent anything it did not return.`;
+  return (
+    `Worker ${input.workerId} finished its task "${input.task.slice(0, 500)}" with: ${input.result.slice(0, 4000)}. ` +
+    `Rewrite this for the person in send_message now: 1–3 short sentences in your voice, answer first. ` +
+    `Never paste the worker's Findings / What I did / Blockers labels, shell commands, or internal proof format. ` +
+    `Do not invent anything it did not return.`
+  );
 }
 
 /**
@@ -751,12 +759,38 @@ export async function runWorker(
     // thread history: anything the worker needs must be in the brief. The
     // parent keeps all context and decides with the worker's reported proof.
     const credential = await keyFor(db, input.accountId, child.provider);
+    const review: ToolContext = {
+      db,
+      store: db,
+      accountId: input.accountId,
+      conversationId: input.conversationId,
+      agentId: input.childId,
+      runId: input.delegationId,
+      nextTime: () => new Date(),
+      emittedMessages: [],
+      emit: async (event) => {
+        try {
+          const row = await appendEvent(db, {
+            accountId: input.accountId,
+            conversationId: input.conversationId,
+            runId: null,
+            event,
+          });
+          publish(input.accountId, input.conversationId, { ...event, cursor: row.id });
+        } catch {
+          publish(input.accountId, input.conversationId, event);
+        }
+      },
+      linuxProfile: profile,
+      voiceAgentId: input.parentAgentId,
+    };
     const tools = buildWorkerToolSet({
       db,
       accountId: input.accountId,
       conversationId: input.conversationId,
       profile,
       skillsRoot: input.skillsRoot,
+      review,
     });
     const roleLine = `You are ${child.label} — ${child.role}.`;
     const kindMeta = unpackWorkerJobDescription(child.jobDescription);

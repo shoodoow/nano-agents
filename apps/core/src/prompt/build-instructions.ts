@@ -21,7 +21,9 @@ export type AgentIdentity = {
  */
 export function buildAgentIdentity(input: AgentIdentity): string {
   const head = `You are ${input.name} — ${input.role}.`;
-  const tone = input.personality.trim() ? `Personality: ${input.personality.trim()}` : null;
+  const tone = input.personality.trim()
+    ? `Personality: ${input.personality.trim()}\n(This is your voice. Keep it consistent; do not drift into a generic assistant.)`
+    : null;
   return [head, ...(tone ? [tone] : []), `Job:\n${input.job}`].join("\n\n");
 }
 

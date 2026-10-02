@@ -34,10 +34,17 @@ export const groupCreateInputSchema = z.object({
 
 export type GroupCreateInput = z.infer<typeof groupCreateInputSchema>;
 
+/** Retry fields after Auto-review. Stripped from the input hash so approve-and-retry matches. */
+const autoReviewRetryFields = {
+  requestApproval: z.boolean().optional(),
+  approvalId: z.string().uuid().optional(),
+};
+
 export const groupConversationInputSchema = z.object({
   conversationId: z.string().uuid(),
   /** Approval gate: destructive and irreversible — model must ask the person first, then re-call with confirmed:true. */
   confirmed: z.boolean().optional(),
+  ...autoReviewRetryFields,
 });
 
 export type GroupConversationInput = z.infer<typeof groupConversationInputSchema>;
@@ -169,9 +176,31 @@ export type RoutineUpdateInput = z.infer<typeof routineUpdateInputSchema>;
 
 export const routineIdSchema = z.object({
   routineId: z.string().uuid(),
+  ...autoReviewRetryFields,
 });
 
 export type RoutineId = z.infer<typeof routineIdSchema>;
+
+/**
+ * Batch delete: either all of the caller's routines, or an explicit id list.
+ * Why: one Auto-review card for "clear my schedules", not N single deletes.
+ */
+export const deleteRoutinesInputSchema = z
+  .object({
+    all: z.boolean().optional(),
+    routineIds: z.array(z.string().uuid()).min(1).max(100).optional(),
+    ...autoReviewRetryFields,
+  })
+  .superRefine((value, context) => {
+    if (value.all === true) return;
+    if (value.routineIds && value.routineIds.length > 0) return;
+    context.addIssue({
+      code: "custom",
+      message: 'Pass all:true to clear every routine, or routineIds:[...] for a specific set.',
+    });
+  });
+
+export type DeleteRoutinesInput = z.infer<typeof deleteRoutinesInputSchema>;
 
 export const workerRefSchema = workerRefInputSchema;
 
@@ -203,6 +232,7 @@ export const readWriteInputSchema = z.object({
 
 export const bashInputSchema = z.object({
   command: z.string().min(1),
+  ...autoReviewRetryFields,
 });
 
 export const xyInputSchema = z.object({

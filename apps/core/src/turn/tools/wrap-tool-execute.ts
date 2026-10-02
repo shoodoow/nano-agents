@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentMode } from "../types.js";
 import { DISPATCHER_TOOL_BUDGET_MS } from "../constants.js";
 import { tracePreview } from "../trace/sinks/jsonl.js";
+import { reviewToolCall } from "../auto-review.js";
 import type { ToolContext } from "./context.js";
 
 /** Same tool + byte-identical input this many times in a row = a loop, not work. */
@@ -41,6 +42,24 @@ export function wrapToolExecute(
     }
     await ctx.traceSession?.emit({ type: "tool.call.start", toolCallId, name, input });
     try {
+      const reviewed = await reviewToolCall(ctx, name, input ?? {});
+      if (!reviewed.allow) {
+        const durationMs = Math.round(performance.now() - started);
+        await ctx.traceSession?.emit({
+          type: "tool.call.finish",
+          toolCallId,
+          name,
+          input,
+          outputPreview: tracePreview(reviewed.reason),
+          durationMs,
+          error: "auto_review",
+        });
+        return {
+          blocked: true,
+          approvalId: reviewed.approvalId,
+          error: reviewed.reason,
+        };
+      }
       let result: unknown;
       if (mode === "dispatcher" || mode === "delegate") {
         result = await Promise.race([
@@ -81,3 +100,4 @@ export function wrapToolExecute(
     }
   };
 }
+

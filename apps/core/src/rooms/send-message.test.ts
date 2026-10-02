@@ -82,7 +82,9 @@ describe("send_message protocol", () => {
 
     expect(saved.second.replyTo).toBe(saved.first.id);
     expect(saved.second.body).toContain("Found it.");
-    expect(saved.r1.id).toBe(saved.r2.id);
+    expect(saved.r1.created).toBe(true);
+    expect(saved.r2.created).toBe(false);
+    expect(saved.r1.reaction.id).toBe(saved.r2.reaction.id);
     await expect(
       db.transaction(async (tx) =>
         saveSendMessage(tx as never, {

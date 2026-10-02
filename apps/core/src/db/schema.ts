@@ -7,6 +7,8 @@ export const EMBEDDING_DIMS = 1536;
 export const accounts = pgTable("accounts", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
+  // Auto-review (Grok-style): risky tools wait for a person when true.
+  autoReview: boolean("auto_review").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -231,6 +233,29 @@ export const memories = pgTable(
   ],
 );
 
+export const toolApprovals = pgTable(
+  "tool_approvals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id),
+    tool: text("tool").notNull(),
+    inputHash: text("input_hash").notNull(),
+    summary: text("summary").notNull(),
+    status: text("status").notNull().default("pending"),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [check("tool_approvals_status_check", sql`${table.status} in ('pending', 'approved', 'denied')`)],
+);
+
 export const proposals = pgTable(
   "proposals",
   {
@@ -254,26 +279,38 @@ export const proposals = pgTable(
   ],
 );
 
-export const routines = pgTable("routines", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  accountId: uuid("account_id")
-    .notNull()
-    .references(() => accounts.id),
-  agentId: uuid("agent_id")
-    .notNull()
-    .references(() => agents.id),
-  conversationId: uuid("conversation_id")
-    .notNull()
-    .references(() => conversations.id),
-  body: text("body").notNull(),
-  cron: text("cron").notNull(),
-  nextRunAt: timestamp("next_run_at", { withTimezone: true }).notNull(),
-  // Self-managed routines (Phase 15): agents pause/resume their own jobs.
-  // The scheduler skips paused routines; delete removes them entirely.
-  paused: boolean("paused").notNull().default(false),
-  timezone: text("timezone").notNull().default("UTC"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const routines = pgTable(
+  "routines",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id),
+    body: text("body").notNull(),
+    cron: text("cron").notNull(),
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }).notNull(),
+    // Self-managed routines (Phase 15): agents pause/resume their own jobs.
+    // The scheduler skips paused routines; delete removes them entirely.
+    paused: boolean("paused").notNull().default(false),
+    timezone: text("timezone").notNull().default("UTC"),
+    // Last finished fire (done/failed). Pending/running jobs do not write here.
+    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    lastRunStatus: text("last_run_status"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check(
+      "routines_last_run_status_check",
+      sql`${table.lastRunStatus} is null or ${table.lastRunStatus} in ('done', 'failed')`,
+    ),
+  ],
+);
 
 export const jobs = pgTable(
   "jobs",

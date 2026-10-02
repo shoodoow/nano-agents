@@ -14,7 +14,9 @@ import {
   type RichMessage,
   type RosterAgent,
   type Routine,
+  type ToolApproval,
 } from "./src/api";
+import { blocksFromMaybeWidgetText, expandWidgetMarkupBlocks } from "@nano-agents/shared";
 import { configureForegroundBanners, getPushToken, onPushTap } from "./src/push";
 import { authClient } from "./src/auth";
 import { MenuSheet, type MenuPage, type SignedAccount } from "./src/account/MenuSheet";
@@ -42,8 +44,13 @@ function toBubble(
   roster: RosterAgent[],
 ): Bubble {
   const parent = row.replyTo ? byId.get(row.replyTo) : undefined;
-  const blocks: MessageBlock[] | null =
+  const rawBlocks: MessageBlock[] | null =
     row.kind === "rich" && Array.isArray(row.payload) ? (row.payload as MessageBlock[]) : null;
+  const blocks: MessageBlock[] | null = rawBlocks
+    ? (expandWidgetMarkupBlocks(rawBlocks) as MessageBlock[])
+    : row.body.includes("[widget:")
+      ? blocksFromMaybeWidgetText(row.body)
+      : null;
   return {
     id: row.id,
     author: row.agentId ? (roster.find((agent) => agent.id === row.agentId)?.name ?? "Agent") : "You",
@@ -138,6 +145,7 @@ export default function App() {
   const [attachOpen, setAttachOpen] = useState(false);
   const [note, setNote] = useState("");
   const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [toolApprovals, setToolApprovals] = useState<ToolApproval[]>([]);
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [profile, setProfile] = useState<RosterAgent | null>(null);
   const [conversationId, setConversationId] = useState("");
@@ -183,12 +191,14 @@ export default function App() {
     const next = { id: accountIdFromSession, name: signed.name, email: signed.email };
     setAccounts([next]);
     setAccountId(accountIdFromSession);
-    const [roster, configured] = await Promise.all([
+    const [roster, configured, settings] = await Promise.all([
       core.listAgents(accountIdFromSession),
       core.listProviders(accountIdFromSession),
+      core.getSettings(accountIdFromSession).catch(() => ({ autoReview: true })),
     ]);
     setAgents(roster);
     setProviders(configured);
+    setAutoReview(settings.autoReview);
     setScreen({ name: "inbox" });
     setMenu(null);
     setNote("");
@@ -644,10 +654,50 @@ export default function App() {
     try {
       await core.saveSecret(accountId.trim(), { name, secret });
       setNote("Secret saved.");
+      if (conversationId) {
+        setTyping(true);
+        expectReply.current = true;
+        await core.wakeCue(accountId.trim(), conversationId, {
+          cue: `Person saved secret ${name} to the vault. Continue using that env name — never ask them to paste it again.`,
+        });
+      }
     } catch (error) {
       show(error);
       throw error;
     }
+  }
+
+  /**
+   * Records a question-widget pick without posting a user chat bubble.
+   * Why: taps must stay on the card; waking the agent with a cue keeps the
+   * thread clean (no "b" / "4" bubbles from option values).
+   */
+  async function answerQuestion(
+    conversationId: string,
+    messageId: string,
+    pick: { value: string; label: string },
+  ): Promise<void> {
+    setTyping(true);
+    expectReply.current = true;
+    setNote("");
+    setMessages((current) =>
+      current.map((bubble) => {
+        if (bubble.id !== messageId || !bubble.blocks) return bubble;
+        return {
+          ...bubble,
+          blocks: bubble.blocks.map((block) =>
+            block.kind === "widget" && block.widget === "question"
+              ? { ...block, props: { ...block.props, selected: pick.value } }
+              : block,
+          ),
+        };
+      }),
+    );
+    await core.wakeCue(accountId.trim(), conversationId, {
+      cue: `Person tapped your question and chose "${pick.label}" (value: ${pick.value}). Continue from that choice.`,
+      messageId,
+      selected: pick.value,
+    });
   }
 
   const MAX_IMAGE_BYTES = 5_000_000;
@@ -750,9 +800,14 @@ export default function App() {
     await refreshThread(conversationId, agents);
   }
 
+  async function persistAutoReview(value: boolean): Promise<void> {
+    setAutoReview(value);
+    await core.setAutoReview(accountId.trim(), value);
+  }
+
   /**
-   * Loads pending proposals and replaces the list after each decision.
-   * Input: the proposal id and whether the person accepts it. Omit both to only refresh.
+   * Loads pending proposals and Auto-review rows, replacing the lists after each decision.
+   * Input: optional proposal id and whether the person accepts it. Omit both to only refresh.
    * Output: nothing. The list no longer includes a proposal that was just decided.
    */
   async function refreshProposals(proposalId?: string, accept?: boolean): Promise<void> {
@@ -760,9 +815,30 @@ export default function App() {
       ? await (accept ? core.approve(accountId.trim(), proposalId) : core.reject(accountId.trim(), proposalId))
       : await core.listProposals(accountId.trim());
     setProposals(next);
+    setToolApprovals(await core.listToolApprovals(accountId.trim()).catch(() => []));
     setScreen({ name: "approvals" });
     setMenu(null);
     setNote("");
+  }
+
+  async function decideToolRow(approvalId: string, accept: boolean): Promise<void> {
+    const status = accept ? "approved" : "denied";
+    setMessages((current) =>
+      current.map((bubble) => {
+        if (!bubble.blocks) return bubble;
+        const blocks = bubble.blocks.map((block) => {
+          if (block.kind !== "widget" || block.widget !== "approval") return block;
+          const props = block.props && typeof block.props === "object" ? block.props : {};
+          if ((props as { approvalId?: string }).approvalId !== approvalId) return block;
+          return { ...block, props: { ...props, status } };
+        });
+        return { ...bubble, blocks };
+      }),
+    );
+    const next = accept
+      ? await core.approveTool(accountId.trim(), approvalId)
+      : await core.denyTool(accountId.trim(), approvalId);
+    setToolApprovals(next);
   }
 
   /**
@@ -867,19 +943,6 @@ export default function App() {
   }
 
   /**
-   * Deletes one routine and reloads the group.
-   * Input: the routine. Output: nothing. The detail page falls back to info.
-   */
-  async function removeRoutine(routine: Routine): Promise<void> {
-    if (!profile) {
-      return;
-    }
-    await core.deleteRoutine(accountId.trim(), profile.id, routine.id);
-    await refreshRoutines(profile.id);
-    setNote("Routine deleted.");
-  }
-
-  /**
    * Saves one account-scoped provider credential and refreshes the safe metadata.
    * Input: provider name, a new secret or blank to retain it, and an optional local URL.
    * Output: nothing. The phone never receives the saved secret.
@@ -939,7 +1002,7 @@ export default function App() {
                 onClose={() => setMenu(null)}
                 onPage={setMenu}
                 onNotifications={setNotifications}
-                onAutoReview={setAutoReview}
+                onAutoReview={(value) => void persistAutoReview(value).catch(show)}
                 onAutoTimeZone={setAutoTimeZone}
                 onApprovals={() => void refreshProposals().catch(show)}
                 onComputer={() => {
@@ -1001,10 +1064,19 @@ export default function App() {
           onReply={setReplyTo}
           onClearReply={() => setReplyTo(null)}
           onPollSubmit={(text) => void sendText(screen.conversationId, text).catch(show)}
+          onQuestionPick={(messageId, pick) =>
+            void answerQuestion(screen.conversationId, messageId, pick).catch(show)
+          }
           onSecretSubmit={(name, secret) => saveVaultSecret(name, secret)}
           onReact={(bubble, emoji) => void toggleReaction(screen.conversationId, bubble, emoji).catch(show)}
-          onApprove={() => void refreshProposals().catch(show)}
-          onDeny={() => void refreshProposals().catch(show)}
+          onApprove={(approvalId) => {
+            if (approvalId) void decideToolRow(approvalId, true).catch(show);
+            else void refreshProposals().catch(show);
+          }}
+          onDeny={(approvalId) => {
+            if (approvalId) void decideToolRow(approvalId, false).catch(show);
+            else void refreshProposals().catch(show);
+          }}
           onFetchBlob={(messageId, index) =>
             core.blob(accountId.trim(), screen.conversationId, messageId, index)
           }
@@ -1042,14 +1114,19 @@ export default function App() {
           onApprovals={() => void refreshProposals().catch(show)}
           onPickAvatar={() => void pickAvatar().catch(show)}
           onPauseRoutine={(routine, paused) => void pauseRoutine(routine, paused).catch(show)}
-          onDeleteRoutine={(routine) => void removeRoutine(routine).catch(show)}
+          onLoadRoutineRuns={(routineId) =>
+            core.listRoutineRuns(accountId.trim(), profile.id, routineId)
+          }
         />
       ) : null}
       {screen.name === "approvals" ? (
         <ApprovalsScreen
           proposals={proposals}
+          toolApprovals={toolApprovals}
           onApprove={(id) => void refreshProposals(id, true).catch(show)}
           onReject={(id) => void refreshProposals(id, false).catch(show)}
+          onApproveTool={(id) => void decideToolRow(id, true).catch(show)}
+          onDenyTool={(id) => void decideToolRow(id, false).catch(show)}
           onBack={() => setScreen({ name: "inbox" })}
         />
       ) : null}

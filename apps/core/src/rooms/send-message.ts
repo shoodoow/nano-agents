@@ -122,12 +122,12 @@ export async function saveSendMessage(
  * Why: reactions are Grok-style acknowledgements that must not create message
  * noise; unique per (message, user, emoji) so retries are idempotent.
  * Input: store, account/conversation/agent ids, messageId, emoji.
- * Output: the saved (or existing) reaction row.
+ * Output: { reaction, created } so HTTP can wake the agent only on first tap.
  */
 export async function saveReaction(
   store: Store,
   input: { accountId: string; conversationId: string; agentId: string | null; messageId: string; emoji: string },
-) {
+): Promise<{ reaction: typeof reactions.$inferSelect; created: boolean }> {
   const parsed = reactionSchema.parse({ messageId: input.messageId, emoji: input.emoji });
   const [parent] = await store
     .select({ id: messages.id })
@@ -145,7 +145,7 @@ export async function saveReaction(
     .select()
     .from(reactions)
     .where(and(eq(reactions.messageId, parsed.messageId), eq(reactions.userKey, userKey), eq(reactions.emoji, parsed.emoji)));
-  if (existing) return existing;
+  if (existing) return { reaction: existing, created: false };
   const [saved] = await store
     .insert(reactions)
     .values({
@@ -157,5 +157,5 @@ export async function saveReaction(
     })
     .returning();
   if (!saved) throw new Error("Reaction insert returned no row.");
-  return saved;
+  return { reaction: saved, created: true };
 }

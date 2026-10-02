@@ -1,6 +1,6 @@
 import { routineSchema } from "@nano-agents/shared";
 import { routineCreateInputSchema, routineIdSchema, routineUpdateInputSchema } from "@nano-agents/agent-tools";
-import { and, asc, eq, lte } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lte } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
 import type { Store } from "../db/client.js";
 import { jobs, routines } from "../db/schema.js";
@@ -173,19 +173,36 @@ export async function runDue(
       }
       throw error;
     }
-    const replies = await runTurn(db, routine.accountId, routine.conversationId, routine.body, opts.generate as never, opts.skillsRoot, {
+    // Hidden cue wake — never save routine.body as a user bubble. The owning
+    // agent runs the standing order and send_messages only when the person
+    // should see something (check-in question, email digest, etc.).
+    const cue =
+      `[routine] Standing order for you:\n${routine.body}\n\n` +
+      `Act on this now. send_message only when the person should see something. ` +
+      `Do not quote or answer this wake as if they wrote it. Stay quiet if nothing changed.`;
+    const replies = await runTurn(db, routine.accountId, routine.conversationId, cue, opts.generate as never, opts.skillsRoot, {
       existingRunId: runId,
       kind: "routine",
+      cue,
+      speakerId: routine.agentId,
       onEvent: (event) => {
         if (opts.publish) publish(routine.accountId, routine.conversationId, event);
         opts.onEvent?.(event);
       },
     });
     await db.update(jobs).set({ status: "done" }).where(eq(jobs.id, job.id));
+    await db
+      .update(routines)
+      .set({ lastRunAt: new Date(), lastRunStatus: "done" })
+      .where(eq(routines.id, routine.id));
     await reschedule();
     return replies;
   } catch (error) {
     await db.update(jobs).set({ status: "failed" }).where(eq(jobs.id, job.id));
+    await db
+      .update(routines)
+      .set({ lastRunAt: new Date(), lastRunStatus: "failed" })
+      .where(eq(routines.id, routine.id));
     await reschedule();
     throw error;
   }
@@ -241,14 +258,16 @@ export async function createOwnRoutine(
   return routine;
 }
 
+const RECENT_RUNS_LIMIT = 10;
+
 /**
- * Lists the calling agent's own routines.
- * Why: the model needs ids to update/delete, without dumping the whole
- * account's schedules into the prompt.
+ * Lists the calling agent's own routines, each with up to 10 recent finished fires.
+ * Why: the model needs ids to update/delete; the phone shows run history
+ * (completed/failed) without a second round-trip per routine.
  * Input: store, account + caller ids. Output: own routines, soonest first.
  */
 export async function listOwnRoutines(store: Store, accountId: string, agentId: string) {
-  return store
+  const rows = await store
     .select({
       id: routines.id,
       body: routines.body,
@@ -256,10 +275,76 @@ export async function listOwnRoutines(store: Store, accountId: string, agentId: 
       timezone: routines.timezone,
       paused: routines.paused,
       nextRunAt: routines.nextRunAt,
+      lastRunAt: routines.lastRunAt,
+      lastRunStatus: routines.lastRunStatus,
     })
     .from(routines)
     .where(and(eq(routines.accountId, accountId), eq(routines.agentId, agentId)))
     .orderBy(asc(routines.nextRunAt));
+  if (rows.length === 0) return [];
+  const recentByRoutine = await recentRunsByRoutine(
+    store,
+    accountId,
+    rows.map((row) => row.id),
+    RECENT_RUNS_LIMIT,
+  );
+  return rows.map((row) => ({
+    ...row,
+    recentRuns: recentByRoutine.get(row.id) ?? [],
+  }));
+}
+
+/**
+ * Loads up to `limit` finished jobs per routine (newest first).
+ * Why: jobs keep done/failed history; pending/running are not "last runs".
+ */
+export async function listOwnRoutineRuns(
+  store: Store,
+  accountId: string,
+  agentId: string,
+  routineId: string,
+  limit = RECENT_RUNS_LIMIT,
+) {
+  const [owned] = await store
+    .select({ id: routines.id })
+    .from(routines)
+    .where(and(eq(routines.id, routineId), eq(routines.accountId, accountId), eq(routines.agentId, agentId)));
+  if (!owned) return null;
+  const map = await recentRunsByRoutine(store, accountId, [routineId], limit);
+  return map.get(routineId) ?? [];
+}
+
+async function recentRunsByRoutine(
+  store: Store,
+  accountId: string,
+  routineIds: string[],
+  limit: number,
+): Promise<Map<string, { id: string; status: string; runAt: Date }[]>> {
+  const out = new Map<string, { id: string; status: string; runAt: Date }[]>();
+  if (routineIds.length === 0) return out;
+  const runRows = await store
+    .select({
+      id: jobs.id,
+      routineId: jobs.routineId,
+      status: jobs.status,
+      runAt: jobs.runAt,
+    })
+    .from(jobs)
+    .where(
+      and(
+        eq(jobs.accountId, accountId),
+        inArray(jobs.routineId, routineIds),
+        inArray(jobs.status, ["done", "failed"]),
+      ),
+    )
+    .orderBy(desc(jobs.runAt));
+  for (const run of runRows) {
+    const list = out.get(run.routineId) ?? [];
+    if (list.length >= limit) continue;
+    list.push({ id: run.id, status: run.status, runAt: run.runAt });
+    out.set(run.routineId, list);
+  }
+  return out;
 }
 
 /**
@@ -335,4 +420,32 @@ export async function deleteOwnRoutine(store: Store, accountId: string, agentId:
     .where(and(eq(routines.id, id), eq(routines.accountId, accountId), eq(routines.agentId, agentId)))
     .returning({ id: routines.id });
   return deleted.length > 0;
+}
+
+/**
+ * Deletes many of the calling agent's routines in one shot (or all of them).
+ * Why: "remove everything" must be one Auto-review card, not N single deletes.
+ * Ownership is enforced in the WHERE; unknown ids are skipped, not errors.
+ * Input: store, account/caller, { all } or { routineIds }. Output: deleted count + ids.
+ */
+export async function deleteOwnRoutines(
+  store: Store,
+  accountId: string,
+  agentId: string,
+  input: { all?: boolean; routineIds?: string[] },
+): Promise<{ deleted: number; routineIds: string[] }> {
+  const owned = await store
+    .select({ id: routines.id })
+    .from(routines)
+    .where(and(eq(routines.accountId, accountId), eq(routines.agentId, agentId)));
+  const targets = input.all
+    ? owned.map((row) => row.id)
+    : owned.map((row) => row.id).filter((id) => (input.routineIds ?? []).includes(id));
+  if (targets.length === 0) return { deleted: 0, routineIds: [] };
+  await store.delete(jobs).where(and(eq(jobs.accountId, accountId), inArray(jobs.routineId, targets)));
+  const removed = await store
+    .delete(routines)
+    .where(and(eq(routines.accountId, accountId), eq(routines.agentId, agentId), inArray(routines.id, targets)))
+    .returning({ id: routines.id });
+  return { deleted: removed.length, routineIds: removed.map((row) => row.id) };
 }

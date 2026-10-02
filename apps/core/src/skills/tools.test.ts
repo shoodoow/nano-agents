@@ -13,12 +13,15 @@ describe("dispatcher SDK tools", () => {
       "delegate",
       "delete_group",
       "delete_routine",
+      "glob",
+      "grep",
       "hire_subagent",
       "list_groups",
       "list_routines",
       "list_team",
       "notify_user",
       "react_to_message",
+      "read",
       "read_history",
       "read_skill",
       "redirect_worker",
@@ -28,10 +31,14 @@ describe("dispatcher SDK tools", () => {
       "todo_list",
       "todo_write",
       "update_routine",
+      "web_fetch",
+      "web_search",
     ]);
     expect(dispatcherToolNames()).toEqual(names);
+    const parentCheap = new Set(["glob", "grep", "read", "web_fetch", "web_search"]);
     for (const name of profileToolNames()) {
-      expect(names).not.toContain(name);
+      if (parentCheap.has(name)) expect(names).toContain(name);
+      else expect(names).not.toContain(name);
     }
     expect(workerToolNames(true)).toEqual([...profileToolNames(), "read_history", "read_skill"].sort());
     expect(workerToolNames(true)).toContain("web_search");

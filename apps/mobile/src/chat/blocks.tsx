@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Image, Linking, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import type { MessageBlock } from "../api";
+import { blocksFromMaybeWidgetText } from "@nano-agents/shared";
 import { colors } from "../theme/tokens";
 import { IconClose, IconShield } from "../ui/icons";
 
@@ -19,20 +20,48 @@ const blobCache = new Map<string, string>();
  */
 export function BlockView({
   block,
+  messageId,
   onApprove,
   onDeny,
   onSubmitPoll,
+  onQuestionPick,
   onSubmitSecret,
   fetchBlob,
 }: {
   block: MessageBlock;
-  onApprove?: () => void;
-  onDeny?: () => void;
+  messageId?: string;
+  onApprove?: (approvalId?: string) => void;
+  onDeny?: (approvalId?: string) => void;
   onSubmitPoll?: (text: string) => void;
+  onQuestionPick?: (messageId: string, pick: { value: string; label: string }) => void;
   onSubmitSecret?: (name: string, secret: string) => Promise<void>;
   fetchBlob?: (messageId: string, index: number) => Promise<{ url?: string; previewUrl?: string }>;
 }) {
-  if (block.kind === "text") return <RichText text={block.markdown} />;
+  if (block.kind === "text") {
+    if (/\[widget:/i.test(block.markdown)) {
+      const recovered = blocksFromMaybeWidgetText(block.markdown);
+      if (recovered.some((row) => row.kind === "widget")) {
+        return (
+          <View style={{ gap: 8 }}>
+            {recovered.map((row, index) => (
+              <BlockView
+                key={index}
+                block={row}
+                messageId={messageId}
+                onApprove={onApprove}
+                onDeny={onDeny}
+                onSubmitPoll={onSubmitPoll}
+                onQuestionPick={onQuestionPick}
+                onSubmitSecret={onSubmitSecret}
+                fetchBlob={fetchBlob}
+              />
+            ))}
+          </View>
+        );
+      }
+    }
+    return <RichText text={block.markdown} />;
+  }
   if (block.kind === "image") {
     const inline = block.previewUrl || block.url;
     if (inline) {
@@ -72,9 +101,11 @@ export function BlockView({
     <WidgetView
       widget={block.widget}
       props={block.props}
+      messageId={messageId}
       onApprove={onApprove}
       onDeny={onDeny}
       onSubmitPoll={onSubmitPoll}
+      onQuestionPick={onQuestionPick}
       onSubmitSecret={onSubmitSecret}
     />
   );
@@ -136,25 +167,57 @@ function LazyBlobImage({
 }
 
 /**
- * Renders markdown-lite text with linkified URLs.
- * Why: keeps the text path dependency-free while matching old link behavior.
- * Input: raw markdown-ish text. Output: wrapped text with blue links.
+ * Renders markdown-lite: bold, inline code, and linkified URLs.
+ * Why: agents write **bold** / `code` but the phone only did URLs, so markup showed raw.
+ * Input: raw markdown-ish text. Output: nested Text spans.
  */
 function RichText({ text }: { text: string }) {
-  const parts = text.split(/(https?:\/\/\S+)/g);
-  return (
-    <Text style={styles.body}>
-      {parts.map((part, index) =>
-        part.startsWith("http") ? (
-          <Text key={index} style={styles.link} onPress={() => void Linking.openURL(part)}>
-            {part}
-          </Text>
-        ) : (
-          <Text key={index}>{part}</Text>
-        ),
-      )}
-    </Text>
-  );
+  return <Text style={styles.body}>{renderInlineMarkdown(text)}</Text>;
+}
+
+function renderInlineMarkdown(text: string, keyPrefix = "t"): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  const pattern = /(\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|(https?:\/\/\S+))/g;
+  let last = 0;
+  let match: RegExpExecArray | null;
+  let i = 0;
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > last) {
+      nodes.push(<Text key={`${keyPrefix}-${i++}`}>{text.slice(last, match.index)}</Text>);
+    }
+    if (match[2] !== undefined) {
+      nodes.push(
+        <Text key={`${keyPrefix}-${i++}`} style={styles.mdBold}>
+          {match[2]}
+        </Text>,
+      );
+    } else if (match[3] !== undefined) {
+      nodes.push(
+        <Text key={`${keyPrefix}-${i++}`} style={styles.mdCode}>
+          {match[3]}
+        </Text>,
+      );
+    } else if (match[4] !== undefined && match[5] !== undefined) {
+      const href = match[5];
+      nodes.push(
+        <Text key={`${keyPrefix}-${i++}`} style={styles.link} onPress={() => void Linking.openURL(href)}>
+          {match[4]}
+        </Text>,
+      );
+    } else if (match[6] !== undefined) {
+      const href = match[6];
+      nodes.push(
+        <Text key={`${keyPrefix}-${i++}`} style={styles.link} onPress={() => void Linking.openURL(href)}>
+          {href}
+        </Text>,
+      );
+    }
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) {
+    nodes.push(<Text key={`${keyPrefix}-${i++}`}>{text.slice(last)}</Text>);
+  }
+  return nodes.length > 0 ? nodes : [<Text key={`${keyPrefix}-0`}>{text}</Text>];
 }
 
 /**
@@ -168,16 +231,20 @@ function RichText({ text }: { text: string }) {
 function WidgetView({
   widget,
   props,
+  messageId,
   onApprove,
   onDeny,
   onSubmitPoll,
+  onQuestionPick,
   onSubmitSecret,
 }: {
   widget: string;
   props: Record<string, unknown>;
-  onApprove?: () => void;
-  onDeny?: () => void;
+  messageId?: string;
+  onApprove?: (approvalId?: string) => void;
+  onDeny?: (approvalId?: string) => void;
   onSubmitPoll?: (text: string) => void;
+  onQuestionPick?: (messageId: string, pick: { value: string; label: string }) => void;
   onSubmitSecret?: (name: string, secret: string) => Promise<void>;
 }) {
   if (widget === "checklist") {
@@ -209,18 +276,24 @@ function WidgetView({
     );
   }
   if (widget === "approval") {
+    const approvalId = typeof props.approvalId === "string" ? props.approvalId : undefined;
+    const status = props.status === "approved" || props.status === "denied" ? props.status : null;
     return (
       <View style={styles.card}>
         <Text style={styles.cardTitle}>{String(props.title ?? "Needs approval")}</Text>
         {props.detail ? <Text style={styles.cardLine}>{String(props.detail)}</Text> : null}
-        <View style={styles.approvalRow}>
-          <Pressable style={[styles.choice, styles.allow]} onPress={onApprove}>
-            <Text style={styles.choiceText}>Approve</Text>
-          </Pressable>
-          <Pressable style={[styles.choice, styles.deny]} onPress={onDeny}>
-            <Text style={styles.choiceText}>Deny</Text>
-          </Pressable>
-        </View>
+        {status ? (
+          <Text style={styles.approvalStatus}>{status === "approved" ? "Approved" : "Denied"}</Text>
+        ) : (
+          <View style={styles.approvalRow}>
+            <Pressable style={[styles.choice, styles.allow]} onPress={() => onApprove?.(approvalId)}>
+              <Text style={styles.choiceText}>Approve</Text>
+            </Pressable>
+            <Pressable style={[styles.choice, styles.deny]} onPress={() => onDeny?.(approvalId)}>
+              <Text style={styles.choiceText}>Deny</Text>
+            </Pressable>
+          </View>
+        )}
       </View>
     );
   }
@@ -241,6 +314,20 @@ function WidgetView({
         submitLabel={typeof props.submitLabel === "string" ? props.submitLabel : "Submit"}
         hint={typeof props.hint === "string" ? props.hint : "Or answer in the chat below"}
         onSubmit={onSubmitPoll}
+      />
+    );
+  }
+  if (widget === "question") {
+    return (
+      <QuestionWidget
+        prompt={String(props.prompt ?? props.title ?? "Pick one")}
+        helpText={typeof props.helpText === "string" ? props.helpText : ""}
+        options={parseQuestionOptions(props.options)}
+        allowCustom={props.allowCustom === true}
+        selected={typeof props.selected === "string" ? props.selected : null}
+        onPick={(pick) => {
+          if (messageId && onQuestionPick) onQuestionPick(messageId, pick);
+        }}
       />
     );
   }
@@ -292,6 +379,123 @@ function parsePollOptions(raw: unknown): PollOption[] {
     }
     return [];
   });
+}
+
+type QuestionOption = {
+  label: string;
+  value: string;
+  description: string;
+  style: "default" | "primary" | "danger";
+};
+
+/** Normalizes question options. Input: {label, value?, description?, style?}[]. Output: up to 6 choices. */
+function parseQuestionOptions(raw: unknown): QuestionOption[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.flatMap((item) => {
+    if (typeof item === "string") {
+      const label = item.trim();
+      return label ? [{ label, value: label, description: "", style: "default" as const }] : [];
+    }
+    if (!item || typeof item !== "object" || typeof (item as { label?: unknown }).label !== "string") {
+      return [];
+    }
+    const row = item as { label: string; value?: unknown; description?: unknown; style?: unknown };
+    const label = row.label.trim();
+    if (!label) return [];
+    const style: QuestionOption["style"] = row.style === "primary" || row.style === "danger" ? row.style : "default";
+    const value = typeof row.value === "string" && row.value.trim() ? row.value.trim() : label;
+    const description = typeof row.description === "string" ? row.description : "";
+    return [{ label, value, description, style }];
+  }).slice(0, 6);
+}
+
+/**
+ * Compact single-choice card. Tap stays on the widget — no user chat bubble.
+ */
+function QuestionWidget({
+  prompt,
+  helpText,
+  options,
+  allowCustom,
+  selected,
+  onPick,
+}: {
+  prompt: string;
+  helpText: string;
+  options: QuestionOption[];
+  allowCustom: boolean;
+  selected: string | null;
+  onPick?: (pick: { value: string; label: string }) => void;
+}) {
+  const [picked, setPicked] = useState(selected);
+  const [custom, setCustom] = useState("");
+  const done = picked !== null && picked.length > 0;
+
+  function pick(value: string, label: string): void {
+    if (done || !onPick || !value.trim()) return;
+    setPicked(value.trim());
+    onPick({ value: value.trim(), label: label.trim() || value.trim() });
+  }
+
+  return (
+    <View style={styles.questionCard}>
+      <Text style={styles.questionPrompt}>{prompt}</Text>
+      {helpText ? <Text style={styles.questionHelp}>{helpText}</Text> : null}
+      <View style={styles.questionOptions}>
+        {options.map((option) => {
+          const on = picked === option.value;
+          return (
+            <Pressable
+              key={option.value}
+              accessibilityRole="button"
+              disabled={done}
+              onPress={() => pick(option.value, option.label)}
+              style={[
+                styles.questionBtn,
+                option.style === "primary" ? styles.questionPrimary : null,
+                option.style === "danger" ? styles.questionDanger : null,
+                on ? styles.questionSelected : null,
+                done && !on ? styles.questionDone : null,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.questionLabel,
+                  option.style === "primary" || option.style === "danger" || on ? styles.questionLabelOn : null,
+                ]}
+                numberOfLines={1}
+              >
+                {option.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      {allowCustom && !done ? (
+        <View style={styles.secretRow}>
+          <TextInput
+            value={custom}
+            onChangeText={setCustom}
+            placeholder="Something else"
+            placeholderTextColor={colors.muted}
+            keyboardAppearance="dark"
+            style={styles.questionCustom}
+          />
+          <Pressable
+            accessibilityRole="button"
+            disabled={!custom.trim()}
+            onPress={() => pick(custom, custom)}
+            style={[styles.secretSave, custom.trim() ? styles.secretSaveReady : null]}
+          >
+            <Text style={[styles.secretSaveText, custom.trim() ? styles.secretSaveTextReady : null]}>OK</Text>
+          </Pressable>
+        </View>
+      ) : null}
+      {done ? <Text style={styles.questionPicked}>Selected</Text> : null}
+    </View>
+  );
 }
 
 /** Normalizes a string array prop. Input: unknown. Output: trimmed strings. */
@@ -522,7 +726,7 @@ function SecretWidget({
     <View style={styles.pollCard}>
       <Text style={styles.pollTitle}>{title}</Text>
       {description ? <Text style={styles.pollDesc}>{description}</Text> : null}
-      <View style={styles.secretRow}>
+      <View style={styles.secretStack}>
         <TextInput
           value={value}
           onChangeText={change}
@@ -538,7 +742,7 @@ function SecretWidget({
           accessibilityRole="button"
           disabled={!ready}
           onPress={save}
-          style={[styles.secretSave, ready ? styles.secretSaveReady : null]}
+          style={[styles.secretSave, styles.secretSaveWide, ready ? styles.secretSaveReady : null]}
         >
           <Text style={[styles.secretSaveText, ready ? styles.secretSaveTextReady : null]}>
             {saved ? "Saved" : buttonLabel}
@@ -557,6 +761,13 @@ function SecretWidget({
 
 const styles = StyleSheet.create({
   body: { color: colors.text, fontSize: 16, lineHeight: 24 },
+  mdBold: { fontWeight: "700", color: colors.text },
+  mdCode: {
+    fontFamily: "monospace",
+    fontSize: 14,
+    color: colors.text,
+    backgroundColor: colors.control,
+  },
   link: { color: colors.link },
   mediaWrap: { gap: 6 },
   image: { width: 240, height: 180, borderRadius: 12, backgroundColor: colors.control },
@@ -575,6 +786,7 @@ const styles = StyleSheet.create({
   bar: { height: 10, borderRadius: 5, backgroundColor: colors.link },
   barValue: { color: colors.muted, fontSize: 12, width: 40 },
   approvalRow: { flexDirection: "row", gap: 8, marginTop: 4 },
+  approvalStatus: { color: colors.muted, fontSize: 14, fontWeight: "600", marginTop: 2 },
   choice: { flex: 1, borderRadius: 10, paddingVertical: 10, alignItems: "center" },
   allow: { backgroundColor: "#1d5c2e" },
   deny: { backgroundColor: "#6e2b2b" },
@@ -599,6 +811,32 @@ const styles = StyleSheet.create({
   pollSubmitReady: { backgroundColor: colors.link },
   pollSubmitText: { color: colors.muted, fontSize: 16, fontWeight: "600" },
   pollSubmitTextReady: { color: "#fff" },
+  questionOptions: { gap: 6 },
+  questionCard: { gap: 6, minWidth: 180, maxWidth: 280 },
+  questionPrompt: { color: colors.text, fontSize: 15, fontWeight: "600", lineHeight: 20 },
+  questionHelp: { color: colors.muted, fontSize: 12, lineHeight: 16 },
+  questionBtn: {
+    backgroundColor: colors.bg,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  questionPrimary: { backgroundColor: "#1d5c2e" },
+  questionDanger: { backgroundColor: "#6e2b2b" },
+  questionSelected: { borderWidth: 1, borderColor: colors.link },
+  questionDone: { opacity: 0.4 },
+  questionLabel: { color: colors.text, fontSize: 14, fontWeight: "600" },
+  questionLabelOn: { color: "#fff" },
+  questionCustom: {
+    flex: 1,
+    backgroundColor: colors.bg,
+    color: colors.text,
+    borderRadius: 10,
+    height: 36,
+    paddingHorizontal: 10,
+    fontSize: 14,
+  },
+  questionPicked: { color: colors.muted, fontSize: 12 },
   dismissed: { color: colors.muted, fontSize: 14 },
   tableHead: { flexDirection: "row", paddingBottom: 6, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
   tableHeader: { color: colors.text, fontSize: 14, fontWeight: "700" },
@@ -606,8 +844,18 @@ const styles = StyleSheet.create({
   tableCell: { color: colors.text, fontSize: 14 },
   tableNote: { color: colors.text, fontSize: 16, lineHeight: 24, marginTop: 8 },
   secretRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  secretInput: { flex: 1, backgroundColor: colors.bg, color: colors.text, borderRadius: 12, height: 48, paddingHorizontal: 14, fontSize: 16 },
+  secretStack: { gap: 8 },
+  secretInput: {
+    alignSelf: "stretch",
+    backgroundColor: colors.bg,
+    color: colors.text,
+    borderRadius: 12,
+    height: 48,
+    paddingHorizontal: 14,
+    fontSize: 16,
+  },
   secretSave: { height: 48, borderRadius: 24, backgroundColor: colors.control, alignItems: "center", justifyContent: "center", paddingHorizontal: 18 },
+  secretSaveWide: { alignSelf: "stretch", borderRadius: 12 },
   secretSaveReady: { backgroundColor: colors.text },
   secretSaveText: { color: colors.muted, fontSize: 16, fontWeight: "600" },
   secretSaveTextReady: { color: colors.bg },

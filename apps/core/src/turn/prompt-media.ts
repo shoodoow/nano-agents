@@ -11,6 +11,19 @@ export type TurnImagePart =
 
 export type TurnMessageContent = string | Array<{ type: "text"; text: string } | TurnImagePart>;
 
+export type HistoryRow = {
+  id?: string;
+  agentId: string | null;
+  body: string;
+  payload: unknown;
+  replyTo?: string | null;
+};
+
+export type ReplyParent = {
+  body: string;
+  agentId: string | null;
+};
+
 export function textOf(content: TurnMessageContent): string {
   if (typeof content === "string") return content;
   return content
@@ -34,9 +47,36 @@ export function toImagePart(ref: string): TurnImagePart | null {
   }
 }
 
+/**
+ * Prefixes a reply with who/what it answers so the model sees the thread link.
+ * Why: replyTo is stored on the row but the body alone ("yes" / "b") has no parent.
+ */
+export function formatReplyBody(body: string, parent: ReplyParent | null | undefined): string {
+  if (!parent) {
+    return body.includes("(Replying to") ? body : `(Replying to an earlier message)\n${body}`;
+  }
+  const who = parent.agentId ? "you" : "them";
+  const quote = parent.body.replace(/\s+/g, " ").trim().slice(0, 240);
+  return `(Replying to ${who}: "${quote}")\n${body}`;
+}
+
+/**
+ * Builds model chat messages from recent history, with images and reply context.
+ * Input: history rows (+ optional parent map for replyTo outside the window).
+ * Output: role/content pairs for the model.
+ */
 export function toModelMessages(
-  history: { agentId: string | null; body: string; payload: unknown }[],
+  history: HistoryRow[],
+  parents?: Map<string, ReplyParent>,
 ): { role: "user" | "assistant"; content: TurnMessageContent }[] {
+  const byId = new Map<string, ReplyParent>();
+  for (const row of history) {
+    if (row.id) byId.set(row.id, { body: row.body, agentId: row.agentId });
+  }
+  if (parents) {
+    for (const [id, parent] of parents) byId.set(id, parent);
+  }
+
   const wanted = new Map<number, TurnImagePart[]>();
   let remaining = MAX_VISION_IMAGES;
   for (let index = history.length - 1; index >= 0 && remaining > 0; index -= 1) {
@@ -58,11 +98,12 @@ export function toModelMessages(
   }
   return history.map((row, index) => {
     const role = row.agentId ? "assistant" : "user";
+    const text = row.replyTo ? formatReplyBody(row.body, byId.get(row.replyTo) ?? null) : row.body;
     const parts = wanted.get(index);
-    if (!parts || parts.length === 0) return { role, content: row.body };
+    if (!parts || parts.length === 0) return { role, content: text };
     return {
       role,
-      content: [{ type: "text", text: row.body }, ...parts],
+      content: [{ type: "text", text }, ...parts],
     } as { role: "user" | "assistant"; content: TurnMessageContent };
   });
 }

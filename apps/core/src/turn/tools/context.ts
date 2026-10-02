@@ -35,4 +35,10 @@ export type ToolContext = {
    * row never execute — the model gets a stop error instead.
    */
   recentCalls?: { name: string; input: string }[];
+  /** Linux username for cheap parent tools (read/search/fetch). */
+  linuxProfile?: string | null;
+  /** Stop the model loop after this tool (secret-request). */
+  endTurn?: boolean;
+  /** Agent id that should speak Auto-review cards (parent when a worker is blocked). */
+  voiceAgentId?: string;
 };

@@ -13,6 +13,7 @@ import {
   reactionSchema,
   readHistoryToolInputSchema,
   readSkillToolInputSchema,
+  deleteRoutinesInputSchema,
   routineCreateInputSchema,
   routineIdSchema,
   routineUpdateInputSchema,
@@ -65,7 +66,7 @@ export const allToolDefinitions: ToolDefinition[] = [
   {
     name: "create_routine",
     description:
-      "Schedule your own recurring job in this room. Daily is M H * * *, weekly is M H * * D, in an IANA timezone. Does not run the task now.",
+      "Schedule your own recurring job in this room. Daily is M H * * *, weekly is M H * * D, in the person's IANA timezone. Does not run now. body is a standing order to your future self (goal, method, what to send_message, when to stay quiet) — not a fake user chat line. On fire you wake privately and act; the person only sees what you send_message.",
     surfaces: ["dispatcher"],
     inputSchema: routineCreateInputSchema,
   },
@@ -85,9 +86,16 @@ export const allToolDefinitions: ToolDefinition[] = [
   {
     name: "delete_routine",
     description:
-      "Delete one of your own routines and its pending runs. Call list_routines first if you do not have the id. Cannot delete anyone else's.",
+      "Delete one of your own routines and its pending runs. For clearing many or all, use delete_routines (one approval). Call list_routines first if you need the id.",
     surfaces: ["dispatcher"],
     inputSchema: routineIdSchema,
+  },
+  {
+    name: "delete_routines",
+    description:
+      "Delete many of your routines in one call — prefer this over looping delete_routine. Pass all:true to clear every routine, or routineIds:[...] for a set. One Auto-review approval covers the whole batch.",
+    surfaces: ["dispatcher"],
+    inputSchema: deleteRoutinesInputSchema,
   },
   {
     name: "hire_subagent",
@@ -105,7 +113,8 @@ export const allToolDefinitions: ToolDefinition[] = [
   },
   {
     name: "list_routines",
-    description: "List your own routines with ids, schedules, pause state, and next run. Use before update_routine or delete_routine.",
+    description:
+      "List your own routines with ids, schedules, pause state, next run, last run, and up to 10 recent finished fires (done/failed). Use before update_routine or delete_routines.",
     surfaces: ["dispatcher"],
     inputSchema: emptyToolInputSchema,
   },
@@ -148,13 +157,13 @@ export const allToolDefinitions: ToolDefinition[] = [
   {
     name: "send_message",
     description:
-      'The only channel the person sees. Call first on every user turn. blocks: array of typed objects — kind text (markdown, usual acks), image (url), code (code), file (url+name), widget (widget: checklist|chart|approval|agent-card + props). Up to 10 blocks per send; mix types when useful. Never bare strings or root-level kind without a blocks array. Plain assistant text is invisible.',
+      'The only channel the person sees. Call first on every user turn. blocks: array of typed objects — kind text (short markdown: 1–3 sentences, bold the answer, lists only when listing), image (url), code (code), file (url+name), widget. Widgets MUST be real blocks — never markdown like [widget:secret {…}]. Shape: { "kind": "widget", "widget": "question"|"secret"|…, "props": {…} }. question: single decision with prompt + 1–6 short options {label, value?} (skip long descriptions). poll: multi-select only. secret: envName required, never ask in plain text; ends the turn. Ask rarely; every question option must be a verified choice. Up to 10 blocks per send. Never bare strings. Plain assistant text is invisible.',
     surfaces: ["dispatcher"],
     inputSchema: sendMessageInputSchema,
   },
   {
     name: "spawn_worker",
-    description: `Required for any search, page, file, command, or desktop task. Returns immediately with a worker id, then end your turn — the finished result is delivered to you automatically, never poll for it. Do not include provider or modelId. Finished workers become free and are reused on the next spawn (max 10 concurrent hidden worker rows). If the tool returns error with workers, use stop_worker on the wedged id to free it. ${WORKER_TASK_HINT}`,
+    description: `Required for desktop, bash, long research, or anything that would keep this turn busy. Quick web_search / web_fetch / read / glob / grep you call yourself. Returns immediately with a worker id, then end your turn — the finished result is delivered to you automatically, never poll for it. Do not include provider or modelId. Finished workers become free and are reused on the next spawn (max 10 concurrent hidden worker rows). If the tool returns error with workers, use stop_worker on the wedged id to free it. ${WORKER_TASK_HINT}`,
     surfaces: ["dispatcher"],
     inputSchema: spawnWorkerToolInputSchema,
   },
@@ -193,11 +202,11 @@ export const allToolDefinitions: ToolDefinition[] = [
     surfaces: ["dispatcher"],
     inputSchema: routineUpdateInputSchema,
   },
-  // --- Linux (worker only, when profile exists) ---
+  // --- Linux (worker; parent gets read-only cheap tools when a profile exists) ---
   {
     name: "read",
     description: "Read one file in the agent home or shared directory. Use for a single known path.",
-    surfaces: ["worker"],
+    surfaces: ["dispatcher", "worker"],
     requiresLinux: true,
     inputSchema: pathInputSchema,
   },
@@ -255,8 +264,8 @@ export const allToolDefinitions: ToolDefinition[] = [
   {
     name: "web_fetch",
     description:
-      "Read one public page as text when you already have the URL. JS-heavy pages render automatically. Returns title, text, and outlinks.",
-    surfaces: ["worker"],
+      "Read one public page as text when you already have the URL. JS-heavy pages render automatically. Returns title, text, and outlinks. On the parent this is capped; spawn_worker for a long page.",
+    surfaces: ["dispatcher", "worker"],
     requiresLinux: true,
     inputSchema: urlInputSchema,
   },
@@ -264,21 +273,21 @@ export const allToolDefinitions: ToolDefinition[] = [
     name: "web_search",
     description:
       "Search the public web. Returns title, URL, and snippet, not page text. Use to pick links, then web_fetch the ones worth reading.",
-    surfaces: ["worker"],
+    surfaces: ["dispatcher", "worker"],
     requiresLinux: true,
     inputSchema: webSearchInputSchema,
   },
   {
     name: "glob",
     description: "List files by name pattern (for example **/*.ts) under home or /shared, up to 100 paths.",
-    surfaces: ["worker"],
+    surfaces: ["dispatcher", "worker"],
     requiresLinux: true,
     inputSchema: globInputSchema,
   },
   {
     name: "grep",
     description: "Search file contents for a pattern under home or /shared. Returns file:line hits, up to 100.",
-    surfaces: ["worker"],
+    surfaces: ["dispatcher", "worker"],
     requiresLinux: true,
     inputSchema: grepInputSchema,
   },

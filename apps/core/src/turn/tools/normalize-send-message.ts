@@ -1,7 +1,10 @@
 /**
  * Coerces common model mistakes into send_message input before Zod parse.
- * Why: providers sometimes flatten blocks or stringify the array despite JSON Schema.
+ * Why: providers sometimes flatten blocks, stringify the array, or dump a
+ * `[widget:secret {…}]` line as markdown instead of a real widget block.
  */
+import { expandWidgetMarkupBlocks } from "@nano-agents/shared";
+
 export function normalizeSendMessageInput(input: Record<string, unknown>): { blocks: unknown; replyTo?: unknown } {
   let blocks = input.blocks;
   let replyTo = input.replyTo;
@@ -25,6 +28,10 @@ export function normalizeSendMessageInput(input: Record<string, unknown>): { blo
     if (typeof obj.kind === "string") {
       blocks = [obj];
     }
+  }
+
+  if (Array.isArray(blocks)) {
+    blocks = expandWidgetMarkupBlocks(blocks);
   }
 
   return { blocks, replyTo: replyTo ?? null };

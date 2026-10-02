@@ -158,9 +158,10 @@ export const fileBlockSchema = z.object({
 
 export const widgetBlockSchema = z.object({
   kind: z.literal("widget"),
-  widget: z.enum(["checklist", "chart", "approval", "agent-card", "poll", "table", "secret"]),
-  // Validated per-widget on the client; kept loose on the wire for forward compat.
-  props: z.record(z.string(), z.unknown()),
+  widget: z.enum(["checklist", "chart", "approval", "agent-card", "poll", "table", "secret", "question"]),
+  // Loose bag of widget fields. catchall (not z.record) so OpenAI JSON Schema
+  // never gets propertyNames — OpenAI rejects that keyword and AI SDK warns.
+  props: z.object({}).catchall(z.unknown()),
 });
 
 /** Name rule for vault secrets: env-var shaped, so agents can ask for ENV_NAME. */
@@ -199,6 +200,72 @@ export const sendMessageInputSchema = z
   });
 
 export type SendMessageInput = z.infer<typeof sendMessageInputSchema>;
+
+const WIDGET_MARKUP =
+  /\[widget:([a-z][a-z0-9_-]*)\s*(\{(?:[^{}]|\{[^{}]*\})*\})?\s*\]/gi;
+
+/**
+ * Turns markdown that looks like `[widget:secret {…}]` into real widget blocks.
+ * Why: models sometimes dump the widget as text; the phone then shows code.
+ */
+export function expandWidgetMarkupBlocks(blocks: unknown[]): unknown[] {
+  const out: unknown[] = [];
+  for (const block of blocks) {
+    if (!block || typeof block !== "object") {
+      out.push(block);
+      continue;
+    }
+    const row = block as Record<string, unknown>;
+    if (row.kind === "widget") {
+      out.push(block);
+      continue;
+    }
+    if (row.kind !== "text" || typeof row.markdown !== "string") {
+      out.push(block);
+      continue;
+    }
+    const markdown = row.markdown;
+    if (!/\[widget:/i.test(markdown)) {
+      out.push(block);
+      continue;
+    }
+    let last = 0;
+    let matched = false;
+    WIDGET_MARKUP.lastIndex = 0;
+    let hit: RegExpExecArray | null;
+    while ((hit = WIDGET_MARKUP.exec(markdown)) !== null) {
+      matched = true;
+      const before = markdown.slice(last, hit.index).trim();
+      if (before) out.push({ kind: "text", markdown: before });
+      const widget = hit[1]!.toLowerCase();
+      let props: Record<string, unknown> = {};
+      if (hit[2]) {
+        try {
+          props = JSON.parse(hit[2]) as Record<string, unknown>;
+        } catch {
+          props = {};
+        }
+      }
+      out.push({ kind: "widget", widget, props });
+      last = hit.index + hit[0].length;
+    }
+    if (!matched) {
+      out.push(block);
+      continue;
+    }
+    const after = markdown.slice(last).trim();
+    if (after) out.push({ kind: "text", markdown: after });
+  }
+  return out;
+}
+
+/**
+ * Parses one markdown string that may be a dumped widget into blocks.
+ * Why: already-saved rows still show raw markup until re-expanded on read.
+ */
+export function blocksFromMaybeWidgetText(markdown: string): MessageBlock[] {
+  return expandWidgetMarkupBlocks([{ kind: "text", markdown }]) as MessageBlock[];
+}
 
 export const allowedEmojis = ["👍", "❤️", "👀", "🚀", "😮", "🎉", "✅", "❌"] as const;
 

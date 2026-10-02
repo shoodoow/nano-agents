@@ -3,6 +3,7 @@
  * DB: per tool — messages, delegations, agents, routines, notifications.
  */
 import {
+  deleteRoutinesInputSchema,
   delegateSchema,
   groupConversationInputSchema,
   groupCreateInputSchema,
@@ -36,7 +37,13 @@ import {
   WorkerCapacityError,
 } from "../../rooms/subagents.js";
 import { readSkillForAccount } from "../../skills/skills.js";
-import { createOwnRoutine, deleteOwnRoutine, listOwnRoutines, updateOwnRoutine } from "../../routines/routines.js";
+import {
+  createOwnRoutine,
+  deleteOwnRoutine,
+  deleteOwnRoutines,
+  listOwnRoutines,
+  updateOwnRoutine,
+} from "../../routines/routines.js";
 import { emitTurnBus } from "../events/bus.js";
 import { DELEGATE_SYNC_TIMEOUT_MS, MAX_DELEGATION_DEPTH } from "../constants.js";
 import { normalizeSendMessageInput } from "./normalize-send-message.js";
@@ -63,6 +70,16 @@ export async function executeSendMessage(ctx: ToolContext, input: Record<string,
     }
     throw error;
   }
+  const textChars = parsed.blocks
+    .filter((block) => block.kind === "text")
+    .reduce((sum, block) => sum + block.markdown.length, 0);
+  if (textChars > 1200) {
+    return {
+      error:
+        "That text bubble is too long. Split into 1–3 short sentences (or a second send_message). Lead with the answer. Use markdown (bold, short lists, links) or a widget instead of an essay.",
+    };
+  }
+  const asksSecret = parsed.blocks.some((block) => block.kind === "widget" && block.widget === "secret");
   const saved = await saveSendMessage(ctx.store, {
     accountId: ctx.accountId,
     conversationId: ctx.conversationId,
@@ -75,19 +92,20 @@ export async function executeSendMessage(ctx: ToolContext, input: Record<string,
   });
   ctx.emittedMessages.push(saved);
   await ctx.emit({ type: "message", message: saved });
-  return { messageId: saved.id };
+  if (asksSecret) ctx.endTurn = true;
+  return { messageId: saved.id, ...(asksSecret ? { endedTurn: true } : {}) };
 }
 
 export async function executeReact(ctx: ToolContext, input: Record<string, unknown>) {
   const parsed = reactionSchema.parse(input);
-  const saved = await saveReaction(ctx.store, {
+  const { reaction } = await saveReaction(ctx.store, {
     accountId: ctx.accountId,
     conversationId: ctx.conversationId,
     agentId: ctx.agentId,
     messageId: parsed.messageId,
     emoji: parsed.emoji,
   });
-  await ctx.emit({ type: "reaction", reaction: saved });
+  await ctx.emit({ type: "reaction", reaction });
   return { ok: true };
 }
 
@@ -523,6 +541,13 @@ export const dispatcherExecutors: Record<string, ToolExecutor> = {
     const deleted = await deleteOwnRoutine(ctx.store, ctx.accountId, ctx.agentId, parsed.routineId);
     if (!deleted) throw new Error("No routine of yours with that id.");
     return { deleted: true };
+  },
+  delete_routines: async (ctx, input) => {
+    const parsed = deleteRoutinesInputSchema.parse(input);
+    return deleteOwnRoutines(ctx.store, ctx.accountId, ctx.agentId, {
+      all: parsed.all === true,
+      routineIds: parsed.routineIds,
+    });
   },
   list_routines: (ctx) => listOwnRoutines(ctx.store, ctx.accountId, ctx.agentId),
   list_groups: (ctx) => listGroupRoomsForAgent(ctx.store, ctx.accountId, ctx.agentId),

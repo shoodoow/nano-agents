@@ -42,6 +42,20 @@ describe("attachment pure helpers", () => {
     expect(blocksToText([{ kind: "image", url: tinyPng, alt: "chart" }])).toBe("[image: chart]");
   });
 
+  it("annotates replies with the parent quote for the model", () => {
+    const parentId = "msg-parent";
+    const messages = toModelMessages([
+      { id: parentId, agentId: "agent-1", body: "Pick a or b?", payload: null },
+      { id: "msg-reply", agentId: null, body: "b", payload: null, replyTo: parentId },
+    ]);
+    expect(messages[1]!.content).toBe('(Replying to you: "Pick a or b?")\nb');
+    const missing = toModelMessages(
+      [{ id: "msg-reply", agentId: null, body: "yes", payload: null, replyTo: "gone" }],
+      new Map([["gone", { body: "Want coffee?", agentId: null }]]),
+    );
+    expect(missing[0]!.content).toBe('(Replying to them: "Want coffee?")\nyes');
+  });
+
   it("attaches vision parts for the newest user images only", () => {
     const big = `data:image/png;base64,${"A".repeat(2_000_000)}`;
     const img = (id: string) => ({ agentId: null, body: id, payload: [{ kind: "image", url: tinyPng }] });

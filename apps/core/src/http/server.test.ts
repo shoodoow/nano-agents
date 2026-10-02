@@ -5,6 +5,7 @@ import { getDb } from "../db/client.js";
 import { acquireRun, failRun } from "../rooms/runs.js";
 import { textOf } from "../rooms/turn.js";
 import { startServer } from "./server.js";
+import { toolApprovals } from "../db/schema.js";
 
 const databaseUrl = process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/nano_agents";
 const db = getDb(databaseUrl);
@@ -169,6 +170,46 @@ describe("server", () => {
       body: JSON.stringify({ name: "has space", secret: "x" }),
     });
     expect(badName.status).toBe(400);
+  });
+
+  it("persists Auto-review and approves a pending tool row", async () => {
+    const account = await postJson<{ id: string }>(`${baseUrl}/accounts`, { name: "Review HTTP" });
+    const settings = (await (await fetch(`${baseUrl}/accounts/${account.id}/settings`)).json()) as { autoReview: boolean };
+    expect(settings.autoReview).toBe(true);
+    const patched = await fetch(`${baseUrl}/accounts/${account.id}/settings`, {
+      method: "PATCH",
+      body: JSON.stringify({ autoReview: false }),
+    });
+    expect(((await patched.json()) as { autoReview: boolean }).autoReview).toBe(false);
+
+    const ada = await postJson<{ id: string }>(`${baseUrl}/accounts/${account.id}/agents`, agent("Ada"));
+    const room = await postJson<{ id: string }>(`${baseUrl}/accounts/${account.id}/conversations`, {
+      kind: "direct",
+      title: "desk",
+      ownerAgentId: ada.id,
+      memberAgentIds: [ada.id],
+    });
+    const [row] = await db
+      .insert(toolApprovals)
+      .values({
+        accountId: account.id,
+        agentId: ada.id,
+        conversationId: room.id,
+        tool: "bash",
+        inputHash: "abc",
+        summary: "rm -rf /tmp/x",
+      })
+      .returning();
+    const listed = (await (
+      await fetch(`${baseUrl}/accounts/${account.id}/tool-approvals`)
+    ).json()) as { id: string; status: string }[];
+    expect(listed.map((item) => item.id)).toEqual([row!.id]);
+    const approved = await fetch(`${baseUrl}/accounts/${account.id}/tool-approvals/${row!.id}/approve`, {
+      method: "POST",
+    });
+    expect(((await approved.json()) as { status: string }).status).toBe("approved");
+    const empty = (await (await fetch(`${baseUrl}/accounts/${account.id}/tool-approvals`)).json()) as unknown[];
+    expect(empty).toEqual([]);
   });
 
   it("stores a mentioned reply and the agent that reply mentions, in order", async () => {

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Image } from "expo-image";
 import {
   Alert,
@@ -11,11 +11,11 @@ import {
   TextInput,
   View,
 } from "react-native";
-import type { ProviderSetting, RosterAgent, Routine } from "../api";
-import { formatSchedule, routineTitle } from "../api";
+import type { ProviderSetting, RosterAgent, Routine, RoutineRun } from "../api";
+import { formatLastRun, formatSchedule, routineTitle } from "../api";
 import { colors } from "../theme/tokens";
 import { CircleButton } from "../ui/CircleButton";
-import { IconBack, IconCheck, IconChevron, IconClock, IconDoc, IconMore, IconShare, IconTrash } from "../ui/icons";
+import { IconBack, IconCheck, IconChevron, IconClock, IconDoc, IconMore, IconShare } from "../ui/icons";
 import { MARK_COLORS, MARK_DEFAULT, MARK_SHAPES, Mark, type MarkShape } from "../ui/Mark";
 
 type Page = "info" | "instructions" | "provider" | "routine";
@@ -49,7 +49,7 @@ export function BotInfoScreen({
   onApprovals,
   onPickAvatar,
   onPauseRoutine,
-  onDeleteRoutine,
+  onLoadRoutineRuns,
 }: {
   profile: RosterAgent;
   providers: ProviderSetting[];
@@ -61,7 +61,7 @@ export function BotInfoScreen({
   onApprovals: () => void;
   onPickAvatar: () => void;
   onPauseRoutine: (routine: Routine, paused: boolean) => void;
-  onDeleteRoutine: (routine: Routine) => void;
+  onLoadRoutineRuns: (routineId: string) => Promise<RoutineRun[]>;
 }) {
   const [page, setPage] = useState<Page>("info");
   const [tab, setTab] = useState<Tab>("info");
@@ -120,7 +120,7 @@ export function BotInfoScreen({
       <RoutineDetailPage
         routine={selected}
         onPause={(paused) => onPauseRoutine(selected, paused)}
-        onDelete={() => onDeleteRoutine(selected)}
+        onLoadRuns={() => onLoadRoutineRuns(selected.id)}
         onBack={() => setPage("info")}
       />
     );
@@ -335,6 +335,15 @@ function InfoPage({
                     {formatSchedule(routine.cron)}
                     {routine.paused ? " · Paused" : ""}
                   </Text>
+                  <Text
+                    style={[
+                      styles.routineSub,
+                      routine.lastRunStatus === "failed" ? styles.routineFailed : null,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    Last run · {formatLastRun(routine.lastRunAt, routine.lastRunStatus, routine.timezone)}
+                  </Text>
                 </View>
                 <IconChevron />
               </Pressable>
@@ -511,28 +520,38 @@ function ProviderPage({
 }
 
 /**
- * Shows one routine with its schedule, next run, and pause/delete.
- * Input: the routine and actions. Output: the routine detail page.
+ * Shows one routine: full standing order, schedule, next run, pause, and recent fires.
+ * Why: detail must show the whole body (list rows stay truncated); delete stays
+ * with the agent tools / Auto-review, not this screen.
  */
 function RoutineDetailPage({
   routine,
   onPause,
-  onDelete,
+  onLoadRuns,
   onBack,
 }: {
   routine: Routine;
   onPause: (paused: boolean) => void;
-  onDelete: () => void;
+  onLoadRuns: () => Promise<RoutineRun[]>;
   onBack: () => void;
 }) {
-  const lines = routine.body.split("\n");
-  const details = lines.slice(1).join("\n").trim();
-  function confirmDelete(): void {
-    Alert.alert("Delete routine?", "Its pending runs stop too. This can't be undone.", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Delete", style: "destructive", onPress: onDelete },
-    ]);
-  }
+  const [runs, setRuns] = useState<RoutineRun[]>(routine.recentRuns ?? []);
+  useEffect(() => {
+    setRuns(routine.recentRuns ?? []);
+    let cancelled = false;
+    void onLoadRuns()
+      .then((next) => {
+        if (!cancelled) setRuns(next);
+      })
+      .catch(() => {
+        // Keep the list snapshot if refresh fails.
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Refresh when opening this routine; avoid looping on unstable callbacks.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routine.id]);
   return (
     <View style={styles.screen}>
       <View style={styles.pageHeader}>
@@ -542,42 +561,76 @@ function RoutineDetailPage({
         <Text style={styles.pageTitle}>Routine</Text>
         <View style={styles.spacer} />
       </View>
-      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-        <View style={styles.card}>
-          <View style={styles.routineHead}>
+      <ScrollView contentContainerStyle={styles.routineScroll} showsVerticalScrollIndicator={false}>
+        <View style={styles.routineHero}>
+          <View style={styles.routineHeroIcon}>
             <IconClock />
-            <View style={styles.routineBody}>
-              <Text style={styles.routineTitle}>{routineTitle(routine.body)}</Text>
-              <Text style={styles.routineSub}>{formatSchedule(routine.cron)}</Text>
-            </View>
           </View>
-          <View style={styles.resetDivider} />
+          <Text style={styles.routineSchedule}>{formatSchedule(routine.cron)}</Text>
+          {routine.paused ? <Text style={styles.routinePausedBadge}>Paused</Text> : null}
+        </View>
+
+        <Text style={styles.routineSection}>Standing order</Text>
+        <View style={styles.card}>
+          <Text style={styles.routineFullBody} selectable>
+            {routine.body.trim()}
+          </Text>
+        </View>
+
+        <Text style={styles.routineSection}>Schedule</Text>
+        <View style={styles.card}>
           <View style={styles.metaRow}>
             <Text style={styles.metaLabel}>Next run</Text>
-            <Text style={styles.metaValue}>{formatNextRun(routine.nextRunAt, routine.timezone)}</Text>
+            <Text style={styles.metaValue}>
+              {routine.paused ? "—" : formatNextRun(routine.nextRunAt, routine.timezone)}
+            </Text>
           </View>
           <View style={styles.metaRow}>
             <Text style={styles.metaLabel}>Timezone</Text>
             <Text style={styles.metaValue}>{routine.timezone}</Text>
           </View>
-        </View>
-        {details ? (
-          <View style={styles.card}>
-            <Text style={styles.advancedLabel}>Instructions</Text>
-            <Text style={styles.detailsText}>{details}</Text>
+          <View style={[styles.metaRow, styles.metaRowLast]}>
+            <View style={styles.cardBody}>
+              <Text style={styles.rowLabel}>Paused</Text>
+              <Text style={styles.hint}>Paused routines never fire.</Text>
+            </View>
+            <Switch
+              value={routine.paused}
+              onValueChange={onPause}
+              trackColor={{ true: colors.green, false: colors.line }}
+            />
           </View>
-        ) : null}
-        <View style={styles.notifyCard}>
-          <View style={styles.cardBody}>
-            <Text style={styles.rowLabel}>Paused</Text>
-            <Text style={styles.hint}>Paused routines never fire.</Text>
-          </View>
-          <Switch value={routine.paused} onValueChange={onPause} trackColor={{ true: colors.green, false: colors.line }} />
         </View>
-        <Pressable accessibilityRole="button" onPress={confirmDelete} style={styles.dangerButton}>
-          <IconTrash />
-          <Text style={styles.dangerText}>Delete routine</Text>
-        </Pressable>
+
+        <Text style={styles.routineSection}>Recent runs</Text>
+        <View style={styles.card}>
+          {runs.length === 0 ? (
+            <Text style={styles.hint}>No finished runs yet.</Text>
+          ) : (
+            runs.map((run, index) => (
+              <View
+                key={run.id}
+                style={[styles.runRow, index === runs.length - 1 ? styles.runRowLast : null]}
+              >
+                <View
+                  style={[
+                    styles.runDot,
+                    run.status === "failed" ? styles.runDotFail : styles.runDotOk,
+                  ]}
+                />
+                <Text
+                  style={[
+                    styles.runStatus,
+                    run.status === "failed" ? styles.routineFailed : styles.runOk,
+                  ]}
+                >
+                  {run.status === "failed" ? "Failed" : "Completed"}
+                </Text>
+                <Text style={styles.runWhen}>{formatNextRun(run.runAt, routine.timezone)}</Text>
+              </View>
+            ))
+          )}
+        </View>
       </ScrollView>
     </View>
   );
@@ -648,6 +701,47 @@ const styles = StyleSheet.create({
   routineBody: { flex: 1, gap: 2 },
   routineTitle: { color: colors.text, fontSize: 17 },
   routineSub: { color: colors.muted, fontSize: 14 },
+  routineFailed: { color: colors.danger },
+  routineScroll: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 48, gap: 8 },
+  routineHero: { alignItems: "center", gap: 10, paddingVertical: 12 },
+  routineHeroIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 18,
+    borderCurve: "continuous",
+    backgroundColor: colors.bubble,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  routineSchedule: { color: colors.text, fontSize: 20, fontWeight: "700", textAlign: "center" },
+  routinePausedBadge: {
+    color: colors.muted,
+    fontSize: 13,
+    fontWeight: "600",
+    overflow: "hidden",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: colors.control,
+  },
+  routineSection: { color: colors.muted, fontSize: 13, fontWeight: "600", marginTop: 10, marginLeft: 4 },
+  routineFullBody: { color: colors.text, fontSize: 16, lineHeight: 24 },
+  metaRowLast: { paddingTop: 14, marginTop: 4, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.line },
+  runRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.line,
+  },
+  runRowLast: { borderBottomWidth: 0, paddingBottom: 0 },
+  runDot: { width: 8, height: 8, borderRadius: 4 },
+  runDotOk: { backgroundColor: colors.green },
+  runDotFail: { backgroundColor: colors.danger },
+  runStatus: { fontSize: 15, fontWeight: "600", flex: 1 },
+  runOk: { color: colors.text },
+  runWhen: { color: colors.muted, fontSize: 14, flexShrink: 1, textAlign: "right" },
   emptyRow: { paddingHorizontal: 16, paddingVertical: 14 },
   emptyText: { color: colors.muted, fontSize: 14 },
   notifyCard: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: colors.bubble, borderRadius: 20, borderCurve: "continuous", paddingHorizontal: 16, paddingVertical: 14 },
@@ -666,8 +760,6 @@ const styles = StyleSheet.create({
   save: { marginTop: 24, backgroundColor: colors.text, borderRadius: 22, borderCurve: "continuous", height: 48, alignItems: "center", justifyContent: "center" },
   saveDisabled: { opacity: 0.4 },
   saveText: { color: colors.bg, fontSize: 16, fontWeight: "600" },
-  dangerButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: colors.bubble, borderRadius: 16, borderCurve: "continuous", height: 52 },
-  dangerText: { color: colors.danger, fontSize: 16, fontWeight: "600" },
   tabEmpty: { flex: 1, alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: 48 },
   tabEmptyTitle: { color: colors.text, fontSize: 17, fontWeight: "600" },
   tabEmptyHint: { color: colors.muted, fontSize: 14, textAlign: "center" },

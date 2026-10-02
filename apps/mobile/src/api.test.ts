@@ -1,6 +1,36 @@
 import { expect, test } from "vitest";
 import { buildCron, createCore, formatSchedule, routineTitle } from "./api";
 
+test("auto-review settings and tool approvals round-trip", async () => {
+  const pending = [
+    { id: "t1", agentId: "a", conversationId: "c", tool: "bash", summary: "rm -rf /tmp", status: "pending" },
+  ];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/accounts/account/settings") && init?.method === "PATCH") {
+      expect(JSON.parse(String(init.body))).toEqual({ autoReview: false });
+      return new Response(JSON.stringify({ autoReview: false }), { status: 200 });
+    }
+    if (url.endsWith("/accounts/account/settings")) {
+      return new Response(JSON.stringify({ autoReview: true }), { status: 200 });
+    }
+    if (url.includes("/tool-approvals/t1/approve") && init?.method === "POST") {
+      pending.splice(0, pending.length);
+      return new Response(JSON.stringify({ id: "t1", status: "approved" }), { status: 200 });
+    }
+    if (url.endsWith("/accounts/account/tool-approvals")) {
+      return new Response(JSON.stringify(pending), { status: 200 });
+    }
+    return new Response("missing", { status: 404 });
+  };
+  const core = createCore("http://core.example", fetchImpl);
+  expect(await core.getSettings("account")).toEqual({ autoReview: true });
+  expect(await core.setAutoReview("account", false)).toEqual({ autoReview: false });
+  expect(await core.listToolApprovals("account")).toHaveLength(1);
+  const after = await core.approveTool("account", "t1");
+  expect(after).toEqual([]);
+});
+
 test("approve refreshes the list without the decided proposal", async () => {
   const pending = [{ id: "p1", agentId: "a", kind: "memory", body: "Remember the gate.", status: "pending" }];
   const fetchImpl: typeof fetch = async (input, init) => {

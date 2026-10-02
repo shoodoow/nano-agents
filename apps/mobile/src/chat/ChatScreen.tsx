@@ -124,6 +124,7 @@ export function ChatScreen({
   onReply,
   onClearReply,
   onPollSubmit,
+  onQuestionPick,
   onSecretSubmit,
   onReact,
   onApprove,
@@ -157,10 +158,11 @@ export function ChatScreen({
   onReply: (bubble: Bubble) => void;
   onClearReply: () => void;
   onPollSubmit: (text: string) => void;
+  onQuestionPick: (messageId: string, pick: { value: string; label: string }) => void;
   onSecretSubmit: (name: string, secret: string) => Promise<void>;
   onReact: (bubble: Bubble, emoji: string) => void;
-  onApprove: () => void;
-  onDeny: () => void;
+  onApprove: (approvalId?: string) => void;
+  onDeny: (approvalId?: string) => void;
   onFetchBlob: (messageId: string, index: number) => Promise<{ url?: string; previewUrl?: string }>;
   onBack: () => void;
   onDesktop: () => void;
@@ -281,9 +283,11 @@ export function ChatScreen({
                         <BlockView
                           key={blockIndex}
                           block={block}
+                          messageId={item.id}
                           onApprove={onApprove}
                           onDeny={onDeny}
                           onSubmitPoll={onPollSubmit}
+                          onQuestionPick={onQuestionPick}
                           onSubmitSecret={onSecretSubmit}
                           fetchBlob={onFetchBlob}
                         />

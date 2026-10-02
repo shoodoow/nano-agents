@@ -60,6 +60,25 @@ export type Proposal = {
   status: string;
 };
 
+export type ToolApproval = {
+  id: string;
+  agentId: string;
+  conversationId: string;
+  tool: string;
+  summary: string;
+  status: string;
+};
+
+export type AccountSettings = {
+  autoReview: boolean;
+};
+
+export type RoutineRun = {
+  id: string;
+  status: "done" | "failed" | string;
+  runAt: string;
+};
+
 export type Routine = {
   id: string;
   body: string;
@@ -67,6 +86,9 @@ export type Routine = {
   timezone: string;
   paused: boolean;
   nextRunAt: string;
+  lastRunAt?: string | null;
+  lastRunStatus?: "done" | "failed" | null;
+  recentRuns?: RoutineRun[];
 };
 
 export type RoutineInput = {
@@ -187,9 +209,20 @@ export type CoreClient = {
   listProposals: (accountId: string) => Promise<Proposal[]>;
   approve: (accountId: string, proposalId: string) => Promise<Proposal[]>;
   reject: (accountId: string, proposalId: string) => Promise<Proposal[]>;
+  getSettings: (accountId: string) => Promise<AccountSettings>;
+  setAutoReview: (accountId: string, autoReview: boolean) => Promise<AccountSettings>;
+  listToolApprovals: (accountId: string) => Promise<ToolApproval[]>;
+  approveTool: (accountId: string, approvalId: string) => Promise<ToolApproval[]>;
+  denyTool: (accountId: string, approvalId: string) => Promise<ToolApproval[]>;
   saveProfile: (accountId: string, agentId: string, profile: AgentProfile) => Promise<RosterAgent>;
   saveSecret: (accountId: string, input: { name: string; secret: string }) => Promise<{ name: string; configured: boolean }>;
+  wakeCue: (
+    accountId: string,
+    conversationId: string,
+    input: { cue: string; messageId?: string; selected?: string },
+  ) => Promise<{ accepted: boolean }>;
   listRoutines: (accountId: string, agentId: string) => Promise<Routine[]>;
+  listRoutineRuns: (accountId: string, agentId: string, routineId: string) => Promise<RoutineRun[]>;
   createRoutine: (accountId: string, agentId: string, input: RoutineInput) => Promise<Routine>;
   updateRoutine: (accountId: string, agentId: string, routineId: string, input: RoutinePatch) => Promise<Routine>;
   deleteRoutine: (accountId: string, agentId: string, routineId: string) => Promise<void>;
@@ -250,9 +283,17 @@ export function createCore(
     listProposals: (accountId) => listProposals(baseUrl, accountId, fetchImpl),
     approve: (accountId, proposalId) => decide(baseUrl, accountId, proposalId, "approve", fetchImpl),
     reject: (accountId, proposalId) => decide(baseUrl, accountId, proposalId, "reject", fetchImpl),
+    getSettings: (accountId) => getSettings(baseUrl, accountId, fetchImpl),
+    setAutoReview: (accountId, autoReview) => setAutoReview(baseUrl, accountId, autoReview, fetchImpl),
+    listToolApprovals: (accountId) => listToolApprovals(baseUrl, accountId, fetchImpl),
+    approveTool: (accountId, approvalId) => decideTool(baseUrl, accountId, approvalId, "approve", fetchImpl),
+    denyTool: (accountId, approvalId) => decideTool(baseUrl, accountId, approvalId, "deny", fetchImpl),
     saveProfile: (accountId, agentId, profile) => saveProfile(baseUrl, accountId, agentId, profile, fetchImpl),
     saveSecret: (accountId, input) => saveSecret(baseUrl, accountId, input, fetchImpl),
+    wakeCue: (accountId, conversationId, input) => wakeCue(baseUrl, accountId, conversationId, input, fetchImpl),
     listRoutines: (accountId, agentId) => listRoutines(baseUrl, accountId, agentId, fetchImpl),
+    listRoutineRuns: (accountId, agentId, routineId) =>
+      listRoutineRuns(baseUrl, accountId, agentId, routineId, fetchImpl),
     createRoutine: (accountId, agentId, input) => createRoutine(baseUrl, accountId, agentId, input, fetchImpl),
     updateRoutine: (accountId, agentId, routineId, input) =>
       updateRoutine(baseUrl, accountId, agentId, routineId, input, fetchImpl),
@@ -553,9 +594,14 @@ async function sendMessage(
   rich: { blocks?: MessageBlock[]; replyTo?: string | null } | undefined,
   fetchImpl: typeof fetch,
 ): Promise<{ accepted: boolean; message: RichMessage; replies?: { id: string; body: string }[] }> {
+  // Prefer rich shape whenever blocks or a reply target exist — plain {body}
+  // drops replyTo, which left the agent unaware of swipe-replies.
   const payload =
-    rich?.blocks && rich.blocks.length > 0
-      ? { blocks: rich.blocks, replyTo: rich.replyTo ?? null }
+    rich && ((rich.blocks && rich.blocks.length > 0) || rich.replyTo)
+      ? {
+          blocks: rich.blocks && rich.blocks.length > 0 ? rich.blocks : [{ kind: "text" as const, markdown: body }],
+          replyTo: rich.replyTo ?? null,
+        }
       : messageCreateSchema.parse({ body });
   const saved = await readJson<{ accepted?: boolean; message: RichMessage; replies?: { id: string; body: string }[] }>(
     fetchImpl,
@@ -710,6 +756,41 @@ async function decide(
   return listProposals(baseUrl, accountId, fetchImpl);
 }
 
+async function getSettings(baseUrl: string, accountId: string, fetchImpl: typeof fetch): Promise<AccountSettings> {
+  return readJson<AccountSettings>(fetchImpl, `${baseUrl}/accounts/${accountId}/settings`);
+}
+
+async function setAutoReview(
+  baseUrl: string,
+  accountId: string,
+  autoReview: boolean,
+  fetchImpl: typeof fetch,
+): Promise<AccountSettings> {
+  return readJson<AccountSettings>(fetchImpl, `${baseUrl}/accounts/${accountId}/settings`, {
+    method: "PATCH",
+    body: JSON.stringify({ autoReview }),
+  });
+}
+
+async function listToolApprovals(baseUrl: string, accountId: string, fetchImpl: typeof fetch): Promise<ToolApproval[]> {
+  return readJson<ToolApproval[]>(fetchImpl, `${baseUrl}/accounts/${accountId}/tool-approvals`);
+}
+
+async function decideTool(
+  baseUrl: string,
+  accountId: string,
+  approvalId: string,
+  action: "approve" | "deny",
+  fetchImpl: typeof fetch,
+): Promise<ToolApproval[]> {
+  await readJson<unknown>(
+    fetchImpl,
+    `${baseUrl}/accounts/${accountId}/tool-approvals/${approvalId}/${action}`,
+    { method: "POST" },
+  );
+  return listToolApprovals(baseUrl, accountId, fetchImpl);
+}
+
 /**
  * Saves the agent's profile on the core.
  * Input: the core base URL, the account id, the agent id, the profile fields, and fetch.
@@ -741,6 +822,23 @@ async function listRoutines(
   fetchImpl: typeof fetch,
 ): Promise<Routine[]> {
   return readJson<Routine[]>(fetchImpl, `${baseUrl}/agents/${agentId}/routines?accountId=${accountId}`);
+}
+
+/**
+ * Loads up to 10 finished fires for one routine (newest first).
+ * Why: the detail page shows Completed/Failed history beyond the one-line last run.
+ */
+async function listRoutineRuns(
+  baseUrl: string,
+  accountId: string,
+  agentId: string,
+  routineId: string,
+  fetchImpl: typeof fetch,
+): Promise<RoutineRun[]> {
+  return readJson<RoutineRun[]>(
+    fetchImpl,
+    `${baseUrl}/agents/${agentId}/routines/${routineId}/runs?accountId=${accountId}`,
+  );
 }
 
 /**
@@ -911,6 +1009,35 @@ export function routineTitle(body: string): string {
 }
 
 /**
+ * Short last-run line for the routines list/detail.
+ * Why: people need to see whether the last fire completed or failed.
+ * Input: lastRunAt ISO + status. Output: "Never run" or "Completed · …" / "Failed · …".
+ */
+export function formatLastRun(
+  lastRunAt: string | null | undefined,
+  lastRunStatus: "done" | "failed" | null | undefined,
+  timeZone: string,
+): string {
+  if (!lastRunAt || !lastRunStatus) return "Never run";
+  const label = lastRunStatus === "failed" ? "Failed" : "Completed";
+  const date = new Date(lastRunAt);
+  if (Number.isNaN(date.getTime())) return label;
+  try {
+    const when = new Intl.DateTimeFormat("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone: timeZone || "UTC",
+    }).format(date);
+    return `${label} · ${when}`;
+  } catch {
+    return label;
+  }
+}
+
+/**
  * Saves one vault secret for the account. Write-only: the name echoes back,
  * the value never does, and it never appears in chat.
  * Input: the core base URL, account id, env name + secret, fetch.
@@ -926,6 +1053,25 @@ async function saveSecret(
     method: "POST",
     body: JSON.stringify(input),
   });
+}
+
+/**
+ * Wakes the room agent with a hidden cue (no user chat bubble).
+ * Why: question taps and secret saves must continue the turn without looking
+ * like the person typed the option into chat.
+ */
+async function wakeCue(
+  baseUrl: string,
+  accountId: string,
+  conversationId: string,
+  input: { cue: string; messageId?: string; selected?: string },
+  fetchImpl: typeof fetch,
+): Promise<{ accepted: boolean }> {
+  return readJson<{ accepted: boolean }>(
+    fetchImpl,
+    `${baseUrl}/conversations/${conversationId}/cues?accountId=${accountId}`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
 }
 
 /**

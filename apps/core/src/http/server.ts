@@ -11,7 +11,7 @@ import { createAuth, localBrowserOrigins } from "../auth/auth.js";
 import { handBack, profileOnAccount, startDesktop, takeOver } from "../desktop/desktop.js";
 import { novncAssets, novncClientPage } from "./screen-client.js";
 import type { getDb } from "../db/client.js";
-import { devices, notifications } from "../db/schema.js";
+import { devices, notifications, conversations as conversationsTable, messages } from "../db/schema.js";
 import { and, desc, eq } from "drizzle-orm";
 import { deleteMcpServer, listMcpServers, saveMcpServer } from "../mcp/store.js";
 import { listProviderKeys, saveProviderKey } from "../keys/keys.js";
@@ -40,8 +40,22 @@ import { saveReaction } from "../rooms/send-message.js";
 import type { TurnEvent } from "../rooms/send-message.js";
 import { createAccount, createAgent, getAgent, listAgents, updateAgentFlags, AgentNameError } from "../roster/roster.js";
 import { hireSubagent, listTeam } from "../rooms/subagents.js";
-import { createOwnRoutine, deleteOwnRoutine, listOwnRoutines, updateOwnRoutine } from "../routines/routines.js";
+import {
+  createOwnRoutine,
+  deleteOwnRoutine,
+  listOwnRoutineRuns,
+  listOwnRoutines,
+  updateOwnRoutine,
+} from "../routines/routines.js";
 import { approve, listProposals, reject } from "../skills/proposals.js";
+import {
+  approvalDecisionCue,
+  decideToolApproval,
+  getAutoReview,
+  listToolApprovals,
+  markApprovalWidget,
+  setAutoReview,
+} from "../turn/auto-review.js";
 
 type Database = ReturnType<typeof getDb>;
 type Auth = ReturnType<typeof createAuth>;
@@ -219,6 +233,31 @@ function mountRoutes(app: Express, ctx: AppContext): void {
   accounts.get("/:accountId/proposals", guard, async (req, res) => {
     res.json(await listProposals(ctx.db, pathParam(req, "accountId")));
   });
+  accounts.get("/:accountId/settings", guard, async (req, res) => {
+    res.json({ autoReview: await getAutoReview(ctx.db, pathParam(req, "accountId")) });
+  });
+  accounts.patch("/:accountId/settings", guard, async (req, res) => {
+    const autoReview = (req.body ?? {}).autoReview;
+    if (typeof autoReview !== "boolean") {
+      res.status(400).json({ error: "autoReview must be a boolean." });
+      return;
+    }
+    const updated = await setAutoReview(ctx.db, pathParam(req, "accountId"), autoReview);
+    if (!updated) {
+      res.status(404).json({ error: "Account not found." });
+      return;
+    }
+    res.json({ autoReview: updated.autoReview });
+  });
+  accounts.get("/:accountId/tool-approvals", guard, async (req, res) => {
+    res.json(await listToolApprovals(ctx.db, pathParam(req, "accountId")));
+  });
+  accounts.post("/:accountId/tool-approvals/:approvalId/approve", guard, async (req, res) => {
+    await decideToolApprovalHttp(ctx, pathParam(req, "accountId"), pathParam(req, "approvalId"), "approved", res);
+  });
+  accounts.post("/:accountId/tool-approvals/:approvalId/deny", guard, async (req, res) => {
+    await decideToolApprovalHttp(ctx, pathParam(req, "accountId"), pathParam(req, "approvalId"), "denied", res);
+  });
   accounts.post("/:accountId/screens/:profile/takeover", guard, (req, res) => setScreen(ctx.db, req, res, "takeover"));
   accounts.post("/:accountId/screens/:profile/handback", guard, (req, res) => setScreen(ctx.db, req, res, "handback"));
   accounts.get("/:accountId/screens/:profile/client", novncClientPage);
@@ -287,13 +326,21 @@ function mountRoutes(app: Express, ctx: AppContext): void {
   conversations.post("/:conversationId/reactions", guard, async (req, res) => {
     const accountId = queryAccountId(req);
     const conversationId = pathParam(req, "conversationId");
-    const room = await listMessages(ctx.db, accountId, conversationId);
+    const [room] = await ctx.db
+      .select({ id: conversationsTable.id })
+      .from(conversationsTable)
+      .where(and(eq(conversationsTable.id, conversationId), eq(conversationsTable.accountId, accountId)));
     if (!room) {
       res.status(404).json({ error: "Room not found." });
       return;
     }
     const parsed = reactionSchema.parse(req.body);
-    const saved = await ctx.db.transaction(async (tx) =>
+    const target = await getMessage(ctx.db, accountId, conversationId, parsed.messageId);
+    if (!target) {
+      res.status(404).json({ error: "Reaction target is not in this room." });
+      return;
+    }
+    const { reaction, created } = await ctx.db.transaction(async (tx) =>
       saveReaction(tx as never, {
         accountId,
         conversationId,
@@ -302,8 +349,87 @@ function mountRoutes(app: Express, ctx: AppContext): void {
         emoji: parsed.emoji,
       }),
     );
-    publish(accountId, conversationId, { type: "reaction", reaction: saved as never });
-    res.status(201).json(saved);
+    publish(accountId, conversationId, { type: "reaction", reaction: reaction as never });
+    // First user tapback on an agent message wakes that agent via cue (no chat bubble).
+    // Why: reactions never became chat text, so without a cue turn the model never sees them.
+    if (created && target.agentId) {
+      const snippet = target.body.replace(/\s+/g, " ").trim().slice(0, 240);
+      const cue = `[system] The user reacted ${parsed.emoji} to this message: "${snippet}"`;
+      const onEvent = (event: StreamEvent) => publish(accountId, conversationId, event);
+      try {
+        const run = await acquireRun(ctx.db, accountId, conversationId, "turn", 0);
+        void runTurn(ctx.db, accountId, conversationId, cue, ctx.generate as never, process.env.SKILLS_DIR, {
+          cue,
+          speakerId: target.agentId,
+          existingRunId: run.id,
+          onEvent,
+        }).catch((error: unknown) => {
+          logger.error({ err: error, conversationId }, "reaction turn failed");
+        });
+      } catch (error: unknown) {
+        logger.error({ err: error, conversationId }, "reaction turn acquire failed");
+      }
+    }
+    res.status(201).json(reaction);
+  });
+  conversations.post("/:conversationId/cues", guard, async (req, res) => {
+    // Widget picks / secret-saved wakes: cue-only turns (no user chat bubble).
+    const accountId = queryAccountId(req);
+    const conversationId = pathParam(req, "conversationId");
+    const cue = typeof (req.body ?? {}).cue === "string" ? String((req.body as { cue: string }).cue).trim() : "";
+    if (!cue || cue.length > 2_000) {
+      res.status(400).json({ error: "cue is required (1–2000 chars)." });
+      return;
+    }
+    const [room] = await ctx.db
+      .select({ id: conversationsTable.id, ownerAgentId: conversationsTable.ownerAgentId })
+      .from(conversationsTable)
+      .where(and(eq(conversationsTable.id, conversationId), eq(conversationsTable.accountId, accountId)));
+    if (!room) {
+      res.status(404).json({ error: "Room not found." });
+      return;
+    }
+    const messageId = typeof (req.body ?? {}).messageId === "string" ? String((req.body as { messageId: string }).messageId) : "";
+    const selected = typeof (req.body ?? {}).selected === "string" ? String((req.body as { selected: string }).selected) : "";
+    if (messageId && selected) {
+      const row = await getMessage(ctx.db, accountId, conversationId, messageId);
+      const payload = Array.isArray(row?.payload) ? (row!.payload as Record<string, unknown>[]) : null;
+      if (payload) {
+        const next = payload.map((block) => {
+          if (block.kind !== "widget" || block.widget !== "question") return block;
+          const props =
+            block.props && typeof block.props === "object" ? { ...(block.props as Record<string, unknown>), selected } : { selected };
+          return { ...block, props };
+        });
+        const [updated] = await ctx.db
+          .update(messages)
+          .set({ payload: next as never })
+          .where(and(eq(messages.id, messageId), eq(messages.accountId, accountId), eq(messages.conversationId, conversationId)))
+          .returning();
+        if (updated) {
+          publish(accountId, conversationId, { type: "message", message: updated as never });
+        }
+      }
+    }
+    const onEvent = (event: StreamEvent) => publish(accountId, conversationId, event);
+    try {
+      const run = await acquireRun(ctx.db, accountId, conversationId, "turn", 0);
+      void runTurn(ctx.db, accountId, conversationId, cue, ctx.generate as never, process.env.SKILLS_DIR, {
+        cue,
+        speakerId: room.ownerAgentId,
+        existingRunId: run.id,
+        onEvent,
+      }).catch((error: unknown) => {
+        logger.error({ err: error, conversationId }, "cue turn failed");
+      });
+      res.status(202).json({ accepted: true });
+    } catch (error) {
+      if (error instanceof Error && /busy/.test(error.message)) {
+        res.status(409).json({ error: "Room is busy. Try again in a moment." });
+        return;
+      }
+      throw error;
+    }
   });
   conversations.get("/:conversationId/stream", guard, async (req, res) => {
     const accountId = queryAccountId(req);
@@ -486,6 +612,19 @@ function mountRoutes(app: Express, ctx: AppContext): void {
   });
   agents.get("/:agentId/routines", guard, async (req, res) => {
     res.json(await listOwnRoutines(ctx.db, queryAccountId(req), pathParam(req, "agentId")));
+  });
+  agents.get("/:agentId/routines/:routineId/runs", guard, async (req, res) => {
+    const runs = await listOwnRoutineRuns(
+      ctx.db,
+      queryAccountId(req),
+      pathParam(req, "agentId"),
+      pathParam(req, "routineId"),
+    );
+    if (!runs) {
+      res.status(404).json({ error: "Routine not found." });
+      return;
+    }
+    res.json(runs);
   });
   agents.post("/:agentId/routines", guard, async (req, res) => {
     const accountId = queryAccountId(req);
@@ -680,6 +819,51 @@ function mountRoutes(app: Express, ctx: AppContext): void {
  * Input: the database, the request, the response, and takeover or handback.
  * Output: nothing. A profile outside the account is a 404.
  */
+/**
+ * Decides one Auto-review card, updates the chat widget, and cue-wakes the room agent.
+ * Why: approve must not 404 on a second tap, and the model only retries after a wake.
+ */
+async function decideToolApprovalHttp(
+  ctx: AppContext,
+  accountId: string,
+  approvalId: string,
+  decision: "approved" | "denied",
+  res: Response,
+): Promise<void> {
+  const updated = await decideToolApproval(ctx.db, accountId, approvalId, decision);
+  if (!updated) {
+    res.status(404).json({ error: "Approval not found." });
+    return;
+  }
+  const marked = await markApprovalWidget(ctx.db, accountId, updated.conversationId, updated.id, decision);
+  if (marked) {
+    publish(accountId, updated.conversationId, { type: "message", message: marked as never });
+  }
+  res.json(updated);
+  const [room] = await ctx.db
+    .select({ ownerAgentId: conversationsTable.ownerAgentId })
+    .from(conversationsTable)
+    .where(and(eq(conversationsTable.id, updated.conversationId), eq(conversationsTable.accountId, accountId)));
+  if (!room) return;
+  const cue = approvalDecisionCue(updated, decision);
+  try {
+    const run = await acquireRun(ctx.db, accountId, updated.conversationId, "turn", 0);
+    const onEvent = (event: StreamEvent) => publish(accountId, updated.conversationId, event);
+    void runTurn(ctx.db, accountId, updated.conversationId, cue, ctx.generate as never, process.env.SKILLS_DIR, {
+      cue,
+      speakerId: room.ownerAgentId,
+      existingRunId: run.id,
+      onEvent,
+    }).catch((error: unknown) => {
+      logger.error({ err: error, conversationId: updated.conversationId }, "approval wake failed");
+    });
+  } catch (error) {
+    if (!(error instanceof Error && /busy/.test(error.message))) {
+      logger.error({ err: error, conversationId: updated.conversationId }, "approval wake acquire failed");
+    }
+  }
+}
+
 async function setScreen(db: Database, req: Request, res: Response, action: "takeover" | "handback"): Promise<void> {
   const accountId = pathParam(req, "accountId");
   const profile = pathParam(req, "profile");

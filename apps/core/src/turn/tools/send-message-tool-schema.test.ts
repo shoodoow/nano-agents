@@ -20,4 +20,23 @@ describe("send_message tool shape", () => {
     expect(sendMessageInputSchema.safeParse({ blocks: [{ kind: "text", text: "hi" }] }).success).toBe(false);
     expect(sendMessageInputSchema.safeParse({ blocks: [{ text: "hi" }] }).success).toBe(false);
   });
+
+  it("accepts a question widget", () => {
+    const parsed = sendMessageInputSchema.safeParse({
+      blocks: [
+        {
+          kind: "widget",
+          widget: "question",
+          props: {
+            prompt: "Ship it?",
+            options: [
+              { label: "Yes", value: "yes", style: "primary" },
+              { label: "No", value: "no", style: "danger" },
+            ],
+          },
+        },
+      ],
+    });
+    expect(parsed.success).toBe(true);
+  });
 });

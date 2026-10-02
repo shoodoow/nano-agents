@@ -3,7 +3,7 @@ import { toolsForSurface, type ToolDefinition } from "@nano-agents/agent-tools";
 import type { getDb } from "../../db/client.js";
 import { readHistory } from "../../memory/memory.js";
 import { readSkillForAccount } from "../../skills/skills.js";
-import { linuxToolExecutes } from "../../computer/linux-tool-executes.js";
+import { linuxToolExecutes, DISPATCHER_FETCH_CHARS } from "../../computer/linux-tool-executes.js";
 import type { AgentMode } from "../types.js";
 import type { ToolContext } from "./context.js";
 import { dispatcherExecutors, executeDelegate } from "./executors.js";
@@ -29,6 +29,8 @@ export type WorkerToolBuildContext = {
   conversationId: string;
   profile: string | null;
   skillsRoot?: string;
+  /** When set (live workers), Auto-review wraps bash and posts cards as the parent. */
+  review?: ToolContext;
 };
 
 function descriptionFor(def: ToolDefinition, surface: "dispatcher" | "worker"): string {
@@ -81,8 +83,20 @@ function dispatcherExecute(name: string, ctx: ToolContext): (input: Record<strin
 
 export function buildDispatcherToolSet(mode: AgentMode, ctx: ToolContext): ToolSet {
   const set: Record<string, unknown> = {};
+  const linux = ctx.linuxProfile
+    ? linuxToolExecutes(ctx.db, ctx.accountId, ctx.linuxProfile, { fetchChars: DISPATCHER_FETCH_CHARS })
+    : {};
   for (const def of toolsForSurface("dispatcher")) {
     if (def.name === "spawn_worker" && mode !== "dispatcher") continue;
+    const linuxFn = linux[def.name];
+    if (linuxFn) {
+      set[def.name] = tool({
+        description: descriptionFor(def, "dispatcher"),
+        inputSchema: sdkInputSchema(def) as never,
+        execute: wrapToolExecute(ctx, mode, def.name, linuxFn) as never,
+      });
+      continue;
+    }
     if (!dispatcherExecutors[def.name] && def.name !== "delegate") continue;
     set[def.name] = tool({
       description: descriptionFor(def, "dispatcher"),
@@ -97,10 +111,14 @@ export function buildWorkerToolSet(workerCtx: WorkerToolBuildContext): ToolSet {
   const set: Record<string, unknown> = {};
   const defs = toolsForSurface("worker", { hasLinux: !!workerCtx.profile });
   for (const def of defs) {
+    const raw = workerExecute(def, workerCtx);
+    const execute = workerCtx.review
+      ? wrapToolExecute(workerCtx.review, "worker", def.name, raw)
+      : raw;
     const base = {
       description: descriptionFor(def, "worker"),
       inputSchema: sdkInputSchema(def) as never,
-      execute: workerExecute(def, workerCtx) as never,
+      execute: execute as never,
     };
     if (def.name === "computer_screenshot") {
       set[def.name] = tool({

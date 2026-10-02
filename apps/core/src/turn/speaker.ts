@@ -2,7 +2,7 @@
  * One agent speaks in a turn (context load → model loop → mention chain).
  * DB: reads messages/summary; writes messages via tools or stub path.
  */
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
 import { agents, messages, summaryItems } from "../db/schema.js";
 import { buildContext } from "../memory/context.js";
@@ -15,7 +15,7 @@ import { skillCatalogForAccount } from "../skills/skills.js";
 import type { TurnEvent } from "../rooms/send-message.js";
 import { runAgentLoop } from "./agent-loop.js";
 import { mentionedAgents } from "./mentions.js";
-import { toModelMessages } from "./prompt-media.js";
+import { toModelMessages, type ReplyParent } from "./prompt-media.js";
 import type { GenerateResult, TurnInput } from "./types.js";
 import { tailSlice, unwrapGenerateResult } from "./util.js";
 import { createTraceSession } from "./trace/plugins.js";
@@ -120,7 +120,8 @@ export async function speakOnce(
     },
   });
   const emittedMessages: (typeof messages.$inferSelect)[] = [];
-  const modelMessages = toModelMessages(recent);
+  const replyParents = await loadReplyParents(db, accountId, conversationId, recent);
+  const modelMessages = toModelMessages(recent, replyParents);
   if (cue) modelMessages.push({ role: "user", content: cue });
   const useStub = typeof generate === "function";
   const traceSession = createTraceSession({
@@ -239,4 +240,38 @@ export async function speakOnce(
   for (const next of mentionedAgents(result.text, memberRows, true)) {
     if (!spoken.has(next)) queue.push(next);
   }
+}
+
+/**
+ * Loads reply parents missing from the recent window.
+ * Why: a short reply like "yes" needs the quoted parent even if that parent scrolled out of recent.
+ */
+async function loadReplyParents(
+  db: ReturnType<typeof getDb>,
+  accountId: string,
+  conversationId: string,
+  recent: { id?: string; replyTo?: string | null }[],
+): Promise<Map<string, ReplyParent>> {
+  const known = new Set(recent.map((row) => row.id).filter((id): id is string => Boolean(id)));
+  const missing = [
+    ...new Set(
+      recent
+        .map((row) => row.replyTo)
+        .filter((id): id is string => typeof id === "string" && id.length > 0 && !known.has(id)),
+    ),
+  ];
+  const parents = new Map<string, ReplyParent>();
+  if (missing.length === 0) return parents;
+  const rows = await db
+    .select({ id: messages.id, body: messages.body, agentId: messages.agentId })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.accountId, accountId),
+        eq(messages.conversationId, conversationId),
+        inArray(messages.id, missing),
+      ),
+    );
+  for (const row of rows) parents.set(row.id, { body: row.body, agentId: row.agentId });
+  return parents;
 }

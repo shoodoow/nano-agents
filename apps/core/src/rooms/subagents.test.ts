@@ -432,7 +432,7 @@ describe("subagents and teams", () => {
         result: "Found three rows in the ledger for March.",
       }),
     ).toBe(true);
-    expect(workerSuccessCue({ workerId: "w", task: "t", result: "r" })).toContain("Summarize this for the person");
+    expect(workerSuccessCue({ workerId: "w", task: "t", result: "r" })).toContain("Never paste the worker's Findings");
   });
 
   it("hires a social manager with identity, grows the group, and keeps 1:1 shut", async () => {

@@ -7,6 +7,9 @@ import { webFetch } from "./web.js";
 
 type Database = ReturnType<typeof getDb>;
 
+/** Parent web_fetch budget: enough for a snippet, not a research dump. */
+export const DISPATCHER_FETCH_CHARS = 10_000;
+
 export type LinuxToolExecute = (input: Record<string, unknown>) => Promise<unknown>;
 
 /**
@@ -15,8 +18,14 @@ export type LinuxToolExecute = (input: Record<string, unknown>) => Promise<unkno
  * with the run. Screenshots compound in model context — each one re-bills
  * every later step — so the camera stops after the budget and the worker
  * continues with DOM/text methods instead of burning millions of tokens.
+ * Parent cheap tools pass fetchChars so a dispatcher fetch cannot dump a novel.
  */
-export function linuxToolExecutes(db: Database, accountId: string, profile: string): Record<string, LinuxToolExecute> {
+export function linuxToolExecutes(
+  db: Database,
+  accountId: string,
+  profile: string,
+  opts?: { fetchChars?: number },
+): Record<string, LinuxToolExecute> {
   /** Screenshots this worker has taken. Reset per run by construction. */
   let screenshots = 0;
   const SCREENSHOT_BUDGET = 8;
@@ -45,12 +54,17 @@ export function linuxToolExecutes(db: Database, accountId: string, profile: stri
     web_fetch: async (input) => {
       const page = await webFetch(accountId, profile, String(input.url));
       const byline = [page.siteName, page.byline].filter((part) => part.length > 0).join(" · ");
-      return [
+      const body = [
         `# ${page.title || "(no title)"}${byline ? `\n${byline}` : ""}`,
         `Source: ${page.url}${page.rendered ? " (JS-rendered)" : ""}${page.truncated ? " [truncated]" : ""}`,
         "",
         page.markdown,
       ].join("\n");
+      const cap = opts?.fetchChars;
+      if (cap && body.length > cap) {
+        return `${body.slice(0, cap)}\n\n[truncated to ${cap} chars — spawn_worker for the rest]`;
+      }
+      return body;
     },
     web_search: async (input) => {
       const query = String(input.query);

@@ -1,25 +1,32 @@
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import type { Proposal } from "../api";
+import type { Proposal, ToolApproval } from "../api";
 import { colors } from "../theme/tokens";
 import { CircleButton } from "../ui/CircleButton";
 import { IconBack } from "../ui/icons";
 
 /**
- * Lists pending proposals and approves or rejects one.
- * Input: the proposals and the decision handlers.
+ * Lists pending skill proposals and Auto-review tool rows.
+ * Input: the pending lists and the decision handlers.
  * Output: the approvals screen.
  */
 export function ApprovalsScreen({
   proposals,
+  toolApprovals,
   onApprove,
   onReject,
+  onApproveTool,
+  onDenyTool,
   onBack,
 }: {
   proposals: Proposal[];
+  toolApprovals: ToolApproval[];
   onApprove: (id: string) => void;
   onReject: (id: string) => void;
+  onApproveTool: (id: string) => void;
+  onDenyTool: (id: string) => void;
   onBack: () => void;
 }) {
+  const empty = proposals.length === 0 && toolApprovals.length === 0;
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
@@ -30,7 +37,21 @@ export function ApprovalsScreen({
         <View style={styles.spacer} />
       </View>
       <ScrollView contentContainerStyle={styles.list}>
-        {proposals.length === 0 ? <Text style={styles.empty}>No pending proposals.</Text> : null}
+        {empty ? <Text style={styles.empty}>Nothing to review.</Text> : null}
+        {toolApprovals.map((row) => (
+          <View key={row.id} style={styles.card}>
+            <Text style={styles.kind}>{row.tool}</Text>
+            <Text style={styles.body}>{row.summary}</Text>
+            <View style={styles.actions}>
+              <Pressable accessibilityRole="button" onPress={() => onApproveTool(row.id)} style={styles.action}>
+                <Text style={styles.actionText}>Approve</Text>
+              </Pressable>
+              <Pressable accessibilityRole="button" onPress={() => onDenyTool(row.id)} style={styles.action}>
+                <Text style={styles.rejectText}>Deny</Text>
+              </Pressable>
+            </View>
+          </View>
+        ))}
         {proposals.map((proposal) => (
           <View key={proposal.id} style={styles.card}>
             <Text style={styles.kind}>{proposal.kind}</Text>

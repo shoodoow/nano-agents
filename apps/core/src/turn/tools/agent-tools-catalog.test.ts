@@ -11,12 +11,16 @@ describe("agent-tools catalog", () => {
       "delegate",
       "delete_group",
       "delete_routine",
+      "delete_routines",
+      "glob",
+      "grep",
       "hire_subagent",
       "list_groups",
       "list_routines",
       "list_team",
       "notify_user",
       "react_to_message",
+      "read",
       "read_history",
       "read_skill",
       "redirect_worker",
@@ -26,6 +30,8 @@ describe("agent-tools catalog", () => {
       "todo_list",
       "todo_write",
       "update_routine",
+      "web_fetch",
+      "web_search",
     ]);
   });
 
@@ -35,6 +41,9 @@ describe("agent-tools catalog", () => {
       expect(workerToolNames(true)).toContain(name);
     }
     expect(toolsForSurface("dispatcher").map((d) => d.name)).not.toContain("bash");
+    expect(toolsForSurface("dispatcher").map((d) => d.name)).toEqual(
+      expect.arrayContaining(["web_search", "web_fetch", "read", "glob", "grep"]),
+    );
   });
 
   it("accepts title-only create_group", () => {

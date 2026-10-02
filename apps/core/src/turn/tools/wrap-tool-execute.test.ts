@@ -45,6 +45,16 @@ describe("doom-loop detector", () => {
     await call({ text: "two" });
     expect(runs).toBe(3);
   });
+
+  it("registers cheap linux tools on the dispatcher only when a profile exists", async () => {
+    const { buildDispatcherToolSet } = await import("./build-tools.js");
+    const base = ctx();
+    const without = buildDispatcherToolSet("dispatcher", base);
+    expect(Object.keys(without)).not.toContain("web_search");
+    const withLinux = buildDispatcherToolSet("dispatcher", { ...base, linuxProfile: "ada" });
+    expect(Object.keys(withLinux)).toEqual(expect.arrayContaining(["web_search", "web_fetch", "read", "glob", "grep"]));
+    expect(Object.keys(withLinux)).not.toContain("bash");
+  });
 });
 
 describe("tailSlice", () => {

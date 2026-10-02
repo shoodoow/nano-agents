@@ -27,6 +27,8 @@ export type RunModelInput = TurnInput & {
   maxSteps?: number;
   /** When set, harness reuses this session (tools emit into the same trace). */
   traceSession?: TraceSession;
+  /** Extra stop (secret widget): harness ends the loop after the current step. */
+  shouldStop?: () => boolean;
 };
 
 /**
@@ -81,7 +83,10 @@ export async function runModelHarness(
       instructions: prompt.instructions,
       messages: prompt.messages,
       tools: input.tools,
-      stopWhen: isStepCount(input.maxSteps ?? MAX_MODEL_STEPS_DISPATCHER),
+      stopWhen: [
+        isStepCount(input.maxSteps ?? MAX_MODEL_STEPS_DISPATCHER),
+        () => Boolean(input.shouldStop?.()),
+      ],
       providerOptions: usesOfficialOpenAiEndpoint(input.provider, credential.baseUrl)
         ? { openai: { promptCacheKey: input.promptCacheKey, promptCacheRetention: "24h" } }
         : undefined,

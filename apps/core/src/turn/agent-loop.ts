@@ -58,6 +58,8 @@ export async function runAgentLoop(
     delegationDepth: input.delegationDepth,
     generate: input.generate,
     traceSession,
+    linuxProfile: input.linuxProfile,
+    voiceAgentId: input.agentId,
   };
   const tools = await buildFullToolSet(mode, toolCtx);
   const { text, cacheReadTokens, usage } = await runModelHarness({
@@ -66,6 +68,7 @@ export async function runAgentLoop(
     mode,
     tools,
     traceSession,
+    shouldStop: () => Boolean(toolCtx.endTurn),
   });
   return { text, cacheReadTokens, usage };
 }
