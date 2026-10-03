@@ -223,7 +223,15 @@ export function ChatScreen({
           onPress={onAgentMenu}
           style={styles.pill}
         >
-          <Avatar id={agent.id} size={22} round shape={agent.markShape} color={agent.markColor} photo={agent.avatarUrl} />
+          <Avatar
+            id={agent.id}
+            size={22}
+            round
+            shape={agent.markShape}
+            color={agent.markColor}
+            photo={agent.avatarUrl}
+            mood={typing ? "working" : "idle"}
+          />
           <View style={styles.titles}>
             <Text style={styles.pillName} numberOfLines={1}>
               {title}

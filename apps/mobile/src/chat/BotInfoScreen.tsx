@@ -15,8 +15,11 @@ import type { ProviderSetting, RosterAgent, Routine, RoutineRun } from "../api";
 import { formatLastRun, formatNextRunRelative, formatRunHistoryWhen, formatSchedule, routineTitle } from "../api";
 import { colors } from "../theme/tokens";
 import { CircleButton } from "../ui/CircleButton";
+import { Feather } from "@expo/vector-icons";
 import { IconBack, IconCheck, IconChevron, IconClock, IconDoc, IconMore, IconShare } from "../ui/icons";
-import { MARK_COLORS, MARK_DEFAULT, MARK_SHAPES, Mark, type MarkShape } from "../ui/Mark";
+import type { MarkShape } from "@nano-agents/shared";
+import { markShapes } from "@nano-agents/shared";
+import { LivingMark, MARK_COLORS, MARK_DEFAULT, MARK_SHAPES, Mark } from "../ui/Mark";
 
 type Page = "info" | "instructions" | "provider" | "routine";
 type Tab = "info" | "links" | "media" | "files";
@@ -69,10 +72,10 @@ export function BotInfoScreen({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = routines.find((row) => row.id === selectedId) ?? null;
 
-  /** Stages one mark pick in the preview and the profile draft. */
+  /** Stages one mark pick in the preview and the profile draft (clears photo). */
   function pickMark(next: { shape: MarkShape; color: string }): void {
     setMark(next);
-    onChange({ ...profile, markShape: next.shape, markColor: next.color });
+    onChange({ ...profile, markShape: next.shape, markColor: next.color, avatarUrl: null });
   }
 
   /** Restores the default mark and clears the photo. */
@@ -154,7 +157,10 @@ export function BotInfoScreen({
 
 /** Reads the saved mark, falling back to the default for legacy agents. */
 function initialMark(profile: RosterAgent): { shape: MarkShape; color: string } {
-  const shape = MARK_SHAPES.some((entry) => entry.id === profile.markShape) ? (profile.markShape as MarkShape) : MARK_DEFAULT.shape;
+  // Accept any saved shape (including retired picker options); only fall back when unknown.
+  const shape = markShapes.includes(profile.markShape as MarkShape)
+    ? (profile.markShape as MarkShape)
+    : MARK_DEFAULT.shape;
   return { shape, color: profile.markColor ?? MARK_DEFAULT.color };
 }
 
@@ -230,11 +236,16 @@ function InfoPage({
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        <Pressable accessibilityRole="button" accessibilityLabel="Change bot photo" onPress={onPickAvatar} style={styles.markWrap}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Change bot photo"
+          onPress={onPickAvatar}
+          style={styles.markWrap}
+        >
           {profile.avatarUrl ? (
             <Image source={{ uri: profile.avatarUrl }} contentFit="cover" style={styles.markPhoto} />
           ) : (
-            <Mark shape={mark.shape} color={mark.color} size={128} />
+            <LivingMark shape={mark.shape} color={mark.color} size={128} mood="idle" />
           )}
         </Pressable>
         <View style={styles.nameCard}>
@@ -280,15 +291,35 @@ function InfoPage({
                     key={entry.id}
                     accessibilityRole="button"
                     accessibilityLabel={entry.label}
-                    accessibilityState={{ selected: mark.shape === entry.id }}
+                    accessibilityState={{ selected: !profile.avatarUrl && mark.shape === entry.id }}
                     onPress={() => onPickMark({ ...mark, shape: entry.id })}
                     style={styles.shapeCell}
                   >
-                    <View style={[styles.shapeRing, mark.shape === entry.id ? styles.ringOn : null]}>
+                    <View
+                      style={[
+                        styles.shapeRing,
+                        !profile.avatarUrl && mark.shape === entry.id ? styles.ringOn : null,
+                      ]}
+                    >
                       <Mark shape={entry.id} color={mark.color} size={30} />
                     </View>
                   </Pressable>
                 ))}
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Upload photo"
+                  accessibilityState={{ selected: Boolean(profile.avatarUrl) }}
+                  onPress={onPickAvatar}
+                  style={styles.shapeCell}
+                >
+                  <View style={[styles.shapeRing, styles.photoRing, profile.avatarUrl ? styles.ringOn : null]}>
+                    {profile.avatarUrl ? (
+                      <Image source={{ uri: profile.avatarUrl }} contentFit="cover" style={styles.photoThumb} />
+                    ) : (
+                      <Feather name="image" size={22} color={colors.muted} />
+                    )}
+                  </View>
+                </Pressable>
               </View>
               <View style={styles.colorGrid}>
                 {MARK_COLORS.map((color) => (
@@ -299,8 +330,15 @@ function InfoPage({
                     accessibilityState={{ selected: mark.color === color }}
                     onPress={() => onPickMark({ ...mark, color })}
                     style={styles.colorCell}
+                    disabled={Boolean(profile.avatarUrl)}
                   >
-                    <View style={[styles.colorRing, mark.color === color ? styles.ringOn : null]}>
+                    <View
+                      style={[
+                        styles.colorRing,
+                        mark.color === color && !profile.avatarUrl ? styles.ringOn : null,
+                        profile.avatarUrl ? styles.colorDim : null,
+                      ]}
+                    >
                       <View style={[styles.dot, { backgroundColor: color }]} />
                     </View>
                   </Pressable>
@@ -311,7 +349,7 @@ function InfoPage({
                 <Text style={styles.resetText}>Reset to default</Text>
               </Pressable>
             </View>
-            <Text style={styles.caption}>How this Bot's mark looks everywhere</Text>
+            <Text style={styles.caption}>Pick a shape or upload a photo — used everywhere</Text>
             <Pressable accessibilityRole="button" onPress={onInstructions} style={styles.rowCard}>
               <IconDoc />
               <Text style={styles.rowLabel}>Instructions</Text>
@@ -717,19 +755,22 @@ const styles = StyleSheet.create({
     paddingBottom: 4,
   },
   cardBody: { flex: 1, gap: 2 },
+  // 3×2 grid: five shapes + photo upload — balanced, nothing missing.
   shapeGrid: { flexDirection: "row", flexWrap: "wrap" },
-  shapeCell: { width: "25%", alignItems: "center", paddingVertical: 6 },
+  shapeCell: { width: "33.33%", alignItems: "center", paddingVertical: 8 },
   shapeRing: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     borderWidth: 1.5,
     borderColor: "transparent",
     alignItems: "center",
     justifyContent: "center",
   },
+  photoRing: { backgroundColor: colors.control, overflow: "hidden" },
+  photoThumb: { width: 56, height: 56, borderRadius: 28 },
   ringOn: { borderColor: "#636366" },
-  colorGrid: { flexDirection: "row", flexWrap: "wrap", marginTop: 2 },
+  colorGrid: { flexDirection: "row", flexWrap: "wrap", marginTop: 4 },
   colorCell: { width: "16.66%", alignItems: "center", paddingVertical: 5 },
   colorRing: {
     width: 44,
@@ -740,8 +781,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  colorDim: { opacity: 0.35 },
   dot: { width: 30, height: 30, borderRadius: 15 },
-  resetDivider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.line, marginTop: 6, marginHorizontal: 6 },
+  resetDivider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.line, marginTop: 8, marginHorizontal: 6 },
   resetRow: { paddingVertical: 12, paddingHorizontal: 6 },
   resetText: { color: colors.link, fontSize: 16 },
   caption: { color: colors.muted, fontSize: 12, marginHorizontal: 4, marginTop: -2, marginBottom: 4 },

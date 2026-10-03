@@ -21,8 +21,8 @@ export type WorkerKind = (typeof WORKER_KINDS)[number];
 
 export const WORKER_KIND_HINTS: Record<Exclude<WorkerKind, "custom">, string> = {
   executor: "General background work: search, fetch, files, light shell. Default when unsure.",
-  computer: "Desktop GUI: screenshot, click, type, visible Chromium, login-gated sites.",
-  browser: "Public web via web_search/web_fetch first; desktop only if fetch cannot read.",
+  computer: "Desktop GUI apps / login-gated screen: read_skill computer-use-linux (text-first; screenshots rare).",
+  browser: "Public web via web_search/web_fetch first; chrome-devtools for live pages; desktop only if needed.",
   explore: "Find files and code: glob, grep, read. No desktop unless the task demands it.",
   shell: "Commands, installs, scripts, long-running processes on the Linux box.",
   debug: "Hypothesis-driven debugging with evidence from logs, files, and commands.",

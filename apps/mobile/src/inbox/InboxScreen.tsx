@@ -84,7 +84,14 @@ export function InboxScreen({
         ListHeaderComponent={
           featured ? (
             <Pressable accessibilityRole="button" onPress={() => onOpen(featured)} style={styles.featured}>
-              <Avatar id={featured.id} size={92} shape={featured.markShape} color={featured.markColor} photo={featured.avatarUrl} />
+              <Avatar
+                id={featured.id}
+                size={92}
+                shape={featured.markShape}
+                color={featured.markColor}
+                photo={featured.avatarUrl}
+                mood="idle"
+              />
               <View style={styles.featuredName}>
                 <Text style={styles.featuredLabel}>{featured.name}</Text>
                 {featured.notify ? <View style={styles.online} accessibilityLabel="Notifications on" /> : null}

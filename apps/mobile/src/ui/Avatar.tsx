@@ -1,7 +1,8 @@
 import { Image } from "expo-image";
 import { View } from "react-native";
 import { palette } from "../theme/tokens";
-import { MARK_SHAPES, Mark, type MarkShape } from "./Mark";
+import { markShapes, type MarkShape } from "@nano-agents/shared";
+import { LivingMark, Mark, type MarkMood } from "./Mark";
 
 /**
  * Picks a stable face color for one agent.
@@ -20,9 +21,9 @@ export function colorFor(id: string): string {
 /**
  * Draws the rounded face used on the roster and in chat.
  * Input: the agent id, the pixel size, circle vs squircle, the person flag,
- * and the saved mark (shape id, hex color, photo URL — all nullable).
- * Output: the uploaded photo, the saved character mark, or the legacy
- * hash-colored face when the agent never customized its mark.
+ * the saved mark, and optional living mood (idle/working).
+ * Output: photo, living/static character mark, or legacy hash face.
+ * Photos never get fake eyes; shape marks animate when alive (default on).
  */
 export function Avatar({
   id,
@@ -32,6 +33,9 @@ export function Avatar({
   shape = null,
   color = null,
   photo = null,
+  mood = "idle",
+  alive = true,
+  interactive = false,
 }: {
   id: string;
   size: number;
@@ -40,6 +44,9 @@ export function Avatar({
   shape?: string | null;
   color?: string | null;
   photo?: string | null;
+  mood?: MarkMood;
+  alive?: boolean;
+  interactive?: boolean;
 }) {
   if (!person && photo) {
     return (
@@ -51,8 +58,22 @@ export function Avatar({
     );
   }
   if (!person && (shape ?? color)) {
-    const known = MARK_SHAPES.some((entry) => entry.id === shape);
-    return <Mark shape={known ? (shape as MarkShape) : "square"} color={color ?? colorFor(id)} size={size * 0.72} />;
+    const known = markShapes.includes(shape as MarkShape);
+    const markShape = known ? (shape as MarkShape) : "square";
+    const markColor = color ?? colorFor(id);
+    const markSize = size * 0.72;
+    if (alive) {
+      return (
+        <LivingMark
+          shape={markShape}
+          color={markColor}
+          size={markSize}
+          mood={mood}
+          interactive={interactive}
+        />
+      );
+    }
+    return <Mark shape={markShape} color={markColor} size={markSize} />;
   }
   const backgroundColor = person ? "#3A3A3C" : colorFor(id);
   const ink = backgroundColor === "#F2F2F7" ? "#111111" : "#FFFFFF";

@@ -10,7 +10,7 @@ DISPLAY is already set for this agent's desktop. Never start Xvfb, never overrid
 
 A missing program is `sudo apt-get install`, not a reason to stop. Report exit codes and relevant stdout/stderr. Do not invent command output.
 
-Do not drive the GUI from bash (no xdotool / Playwright). If the task needs clicks, say so in Blockers so the parent can spawn a `computer` worker.
+Do not drive the GUI from bash (no xdotool / Playwright). If the task needs clicks, say so in Blockers so the parent can spawn a `computer` worker with `read_skill computer-use-linux`.
 
 Never type a password, 2FA code, or payment. If a CLI needs the person (`gh auth login`, device code), stop with `NEEDS_PERSON: <one instruction>`.
 

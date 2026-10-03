@@ -3,8 +3,8 @@
 Legacy default. Built-in specialists live in `prompts/workers/`:
 
 - `executor` — general work
-- `computer` — desktop GUI (this file's former content)
-- `browser` — public web first
+- `computer` — desktop GUI (standing prompt loads `computer-use-linux` skill)
+- `browser` — public web first (`chrome-devtools` skill for live pages)
 - `explore` — files/code search
 - `shell` — commands
 - `debug` — evidence-based debugging

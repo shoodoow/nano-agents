@@ -48,7 +48,7 @@ export function validateWorkerTask(task: string): { ok: true; task: string } | {
   if (/\bocr\b|tesseract/.test(lower) && !/\bocr required\b|must ocr/.test(lower)) {
     return {
       ok: false,
-      hint: "Prefer computer_screenshot and a plain description of what is on screen. Drop OCR/tesseract unless the person explicitly asked for OCR.",
+      hint: "Prefer text/snapshot (web_fetch, dump-dom, chrome-devtools) or a plain screen description. Drop OCR/tesseract unless the person explicitly asked for OCR.",
     };
   }
 
