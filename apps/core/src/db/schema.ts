@@ -159,6 +159,10 @@ export const delegations = pgTable(
     // Worker result (Phase 15): final text the background worker produced
     // (truncated), or the failure reason. Delivery reads this on settle.
     result: text("result"),
+    // Compact live checkpoint for the manager/UI. Raw verbose tool traces stay
+    // in the trace sink and never enter the manager's prompt automatically.
+    progress: text("progress"),
+    heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }).notNull().defaultNow(),
     // Billable usage for the worker's own generateText (up to 10 steps with
     // screenshots — the dominant cost; the dispatcher run row never sees it).
     // Null until the worker settles; stub-generate test workers stay null.
@@ -327,6 +331,9 @@ export const jobs = pgTable(
       .references(() => routines.id),
     status: text("status").notNull().default("pending"),
     runAt: timestamp("run_at", { withTimezone: true }).notNull(),
+    // Concise outcome from this fire. The next fire receives it as continuity
+    // context, while the full room transcript remains the audit source.
+    result: text("result"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [check("jobs_status_check", sql`${table.status} in ('pending', 'running', 'done', 'failed')`)],

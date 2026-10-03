@@ -90,6 +90,19 @@ export const readHistoryToolInputSchema = z.object({
   search: z.string().optional(),
 });
 
+export const rememberFactToolInputSchema = z.object({
+  scope: z.enum(["agent", "user"]),
+  body: z.string().trim().min(3).max(1000),
+  messageId: z.string().uuid(),
+});
+
+export const correctMemoryToolInputSchema = z.object({
+  scope: z.enum(["agent", "user"]),
+  oldBody: z.string().trim().min(3).max(1000),
+  body: z.string().trim().min(3).max(1000),
+  messageId: z.string().uuid(),
+});
+
 export const readSkillToolInputSchema = z.object({
   name: z.string().min(1),
 });

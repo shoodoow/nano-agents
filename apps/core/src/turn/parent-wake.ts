@@ -16,7 +16,9 @@ export async function resumeParentAfterWorker(
     conversationId: string;
     parentAgentId: string;
     skillsRoot?: string;
-    settled: { workerId: string; task: string; result: string };
+    settled:
+      | { workerId: string; task: string; result: string }
+      | Array<{ workerId: string; task: string; result: string }>;
   },
   runTurn: (
     db: Db,
@@ -29,10 +31,12 @@ export async function resumeParentAfterWorker(
   ) => Promise<unknown>,
 ): Promise<void> {
   const failures = await failuresSinceLastUser(db, input.accountId, input.conversationId, input.parentAgentId);
+  const settledList = Array.isArray(input.settled) ? input.settled : [input.settled];
   const cue = workerFollowupCue({
-    workerId: input.settled.workerId,
-    task: input.settled.task,
-    result: input.settled.result,
+    workerId: settledList[0]?.workerId ?? "",
+    task: settledList[0]?.task ?? "",
+    result: settledList[0]?.result ?? "",
+    settled: settledList,
     retry: failures <= 1,
   });
   await runTurn(db, input.accountId, input.conversationId, cue, undefined, input.skillsRoot, {

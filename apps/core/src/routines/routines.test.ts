@@ -78,6 +78,8 @@ describe("routines", () => {
     expect(replies?.map((reply) => reply.agentId)).toEqual([ada.id]);
     const stored = await db.select().from(messages).where(eq(messages.conversationId, room!.id));
     expect(stored.some((message) => message.body === "checked" && message.agentId === ada.id)).toBe(true);
+    const completed = await db.select().from(jobs).where(eq(jobs.status, "done"));
+    expect(completed.some((job) => job.result === "checked")).toBe(true);
     // Routine body must never land as a user bubble.
     expect(stored.some((message) => message.agentId === null && message.body.includes("check the ledger"))).toBe(false);
 

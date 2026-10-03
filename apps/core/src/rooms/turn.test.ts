@@ -72,8 +72,8 @@ describe("runTurn", () => {
       .returning();
     await db.insert(members).values({ conversationId: room!.id, accountId: account.id, agentId: ada.id });
     const seen: string[] = [];
-    await runTurn(db, account.id, room!.id, "first", async ({ tail }) => {
-      seen.push(tail);
+    await runTurn(db, account.id, room!.id, "first", async ({ messages: modelMessages }) => {
+      seen.push(JSON.stringify(modelMessages));
       if (seen.length === 1) {
         await saveUserMessage(db, account.id, room!.id, { text: "second", queued: true });
       }

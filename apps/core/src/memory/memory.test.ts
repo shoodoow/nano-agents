@@ -44,6 +44,12 @@ describe("memory", () => {
       body: "I draft the letters.",
       messageId: source.id,
     });
+    await remember(db, room.accountId, {
+      scope: "agent",
+      agentId: room.agentId,
+      body: "I draft the letters.",
+      messageId: source.id,
+    });
 
     const other = await createAgent(db, room.accountId, agent("Bea"));
     const shared = await memoriesFor(db, room.accountId, other.id);

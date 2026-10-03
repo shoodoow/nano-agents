@@ -177,8 +177,24 @@ export async function runDue(
     // Hidden cue wake — never save routine.instructions as a user bubble. The owning
     // agent runs the standing order and send_messages only when the person
     // should see something (check-in question, email digest, etc.).
+    const [previous] = await db
+      .select({ status: jobs.status, result: jobs.result, runAt: jobs.runAt })
+      .from(jobs)
+      .where(
+        and(
+          eq(jobs.accountId, routine.accountId),
+          eq(jobs.routineId, routine.id),
+          inArray(jobs.status, ["done", "failed"]),
+        ),
+      )
+      .orderBy(desc(jobs.runAt))
+      .limit(1);
+    const continuity = previous
+      ? `\nPrevious run (${previous.runAt.toISOString()}, ${previous.status}): ${previous.result?.slice(0, 1200) || "No visible outcome was recorded."}\n`
+      : "";
     const cue =
       `[routine] Standing order for you (${routine.title}):\n${routine.instructions}\n\n` +
+      continuity +
       `Act on this now. send_message only when the person should see something. ` +
       `Do not quote or answer this wake as if they wrote it. Stay quiet if nothing changed.`;
     const replies = await runTurn(db, routine.accountId, routine.conversationId, cue, opts.generate as never, opts.skillsRoot, {
@@ -191,7 +207,13 @@ export async function runDue(
         opts.onEvent?.(event);
       },
     });
-    await db.update(jobs).set({ status: "done" }).where(eq(jobs.id, job.id));
+    const outcome =
+      replies
+        .map((reply) => reply.body.trim())
+        .filter(Boolean)
+        .join("\n")
+        .slice(0, 4000) || "Completed with no user-facing message.";
+    await db.update(jobs).set({ status: "done", result: outcome }).where(eq(jobs.id, job.id));
     await db
       .update(routines)
       .set({ lastRunAt: new Date(), lastRunStatus: "done" })
@@ -199,7 +221,8 @@ export async function runDue(
     await reschedule();
     return replies;
   } catch (error) {
-    await db.update(jobs).set({ status: "failed" }).where(eq(jobs.id, job.id));
+    const failure = error instanceof Error ? error.message : "Routine failed.";
+    await db.update(jobs).set({ status: "failed", result: failure.slice(0, 4000) }).where(eq(jobs.id, job.id));
     await db
       .update(routines)
       .set({ lastRunAt: new Date(), lastRunStatus: "failed" })
@@ -332,8 +355,8 @@ async function recentRunsByRoutine(
   accountId: string,
   routineIds: string[],
   limit: number,
-): Promise<Map<string, { id: string; status: string; runAt: Date }[]>> {
-  const out = new Map<string, { id: string; status: string; runAt: Date }[]>();
+): Promise<Map<string, { id: string; status: string; runAt: Date; result: string | null }[]>> {
+  const out = new Map<string, { id: string; status: string; runAt: Date; result: string | null }[]>();
   if (routineIds.length === 0) return out;
   const runRows = await store
     .select({
@@ -341,6 +364,7 @@ async function recentRunsByRoutine(
       routineId: jobs.routineId,
       status: jobs.status,
       runAt: jobs.runAt,
+      result: jobs.result,
     })
     .from(jobs)
     .where(
@@ -354,7 +378,7 @@ async function recentRunsByRoutine(
   for (const run of runRows) {
     const list = out.get(run.routineId) ?? [];
     if (list.length >= limit) continue;
-    list.push({ id: run.id, status: run.status, runAt: run.runAt });
+    list.push({ id: run.id, status: run.status, runAt: run.runAt, result: run.result });
     out.set(run.routineId, list);
   }
   return out;

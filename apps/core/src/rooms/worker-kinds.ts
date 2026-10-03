@@ -41,6 +41,13 @@ function readKindPrompt(kind: Exclude<WorkerKind, "custom">): string {
   return readFileSync(join(promptsRoot, `${kind}.md`), "utf8").trim();
 }
 
+const EARLY_EXIT_RULE = `
+## Early exit on unrecoverable blocker
+If an action or command fails with a clear, unrecoverable blocker (e.g. permission denied, sudo requires password, command not found with no install path, missing credentials, unreachable network):
+- Stop immediately. Do NOT run futile diagnostic loops, endless searches, or repeat the failed action.
+- Write your final report with Findings and Blockers explaining what failed and what is needed from the user or parent agent.
+`.trim();
+
 /**
  * Standing method for one worker run.
  * Built-ins load prompts/workers/<kind>.md; custom uses the parent-supplied instructions
@@ -66,9 +73,11 @@ export function workerPreambleFor(kind: WorkerKind, customInstructions?: string)
       "## Standing method (from parent)",
       "",
       body,
+      "",
+      EARLY_EXIT_RULE,
     ].join("\n");
   }
-  return readKindPrompt(kind);
+  return [readKindPrompt(kind), "", EARLY_EXIT_RULE].join("\n");
 }
 
 /** Persist kind (+ optional custom prompt) inside job_description without a schema migration. */

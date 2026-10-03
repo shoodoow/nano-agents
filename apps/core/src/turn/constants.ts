@@ -25,14 +25,14 @@ export const MAX_VISION_CHARS = 1_000_000;
  * ones are reached by semantic recall, not dumped into every tail.
  * RECALL_K: top semantically-relevant durable items pulled back per turn.
  */
-export const RECENT_WINDOW = 40;
+export const RECENT_WINDOW = 24;
 export const FOLD_BATCH = 20;
-export const SUMMARY_WINDOW = 40;
+export const SUMMARY_WINDOW = 24;
 export const RECALL_K = 8;
 
 /**
- * Per-message cap for prompt tails (years-long threads stay sharp AND
- * bounded). Full bodies stay in the DB and in recall queries — only the
- * verbatim tail copy is shortened, with an ellipsis marker.
+ * Per-message cap for recent model messages (years-long threads stay sharp
+ * and bounded). Full bodies stay in the DB and read_history; only the
+ * prompt copy is shortened, with an ellipsis marker.
  */
-export const TAIL_MESSAGE_CHARS = 800;
+export const TAIL_MESSAGE_CHARS = 600;

@@ -8,6 +8,7 @@ import { agents } from "../db/schema.js";
 const image = "nano-agents-linux:1";
 const memoryBytes = 10 * 1024 * 1024 * 1024;
 const storageSize = "50G";
+const toolchainRepairs = new Map<string, Promise<void>>();
 
 const docker = new Dockerode({
   socketPath: process.env.DOCKER_SOCKET ?? "/var/run/docker.sock",
@@ -58,6 +59,7 @@ export async function createLinux(accountId: string): Promise<string> {
       await existing.start();
     }
     await ensureMemory(existing, info.HostConfig?.Memory ?? 0);
+    await ensureBaseToolchain(accountId);
     return info.Id;
   } catch (error) {
     const status = (error as { statusCode?: number }).statusCode;
@@ -91,6 +93,7 @@ export async function createLinux(accountId: string): Promise<string> {
     }
     return winner.Id;
   }
+  await ensureBaseToolchain(accountId);
   const made = await exec(accountId, ["sh", "-c", "mkdir -p /shared && chmod 1777 /shared"]);
   if (made.code !== 0) {
     throw new Error(made.stdout || "The shared directory was not created.");
@@ -226,25 +229,47 @@ export async function createProfile(store: Store, accountId: string, agentId: st
   if (!agent) {
     throw new Error("Agent not found.");
   }
-  if (agent.linuxProfile) {
-    return agent.linuxProfile;
-  }
   await createLinux(accountId);
-  const username = `u${agentId.replaceAll("-", "").slice(0, 16)}`;
+  const username = agent.linuxProfile ?? `u${agentId.replaceAll("-", "").slice(0, 16)}`;
+  await ensureProfile(accountId, username);
+  if (!agent.linuxProfile) {
+    await store
+      .update(agents)
+      .set({ linuxProfile: username })
+      .where(and(eq(agents.id, agentId), eq(agents.accountId, accountId)));
+  }
+  return username;
+}
+
+/**
+ * Makes one agent profile ready for autonomous work inside its account container.
+ * Why: shell-only jobs may run before a desktop is opened, so user creation and
+ * container-local admin rights cannot depend on desktop boot. Re-running this
+ * repairs profiles after a container recreation and is safe for existing users.
+ * Input: account id and generated Linux username. Output: nothing; throws when
+ * the profile or sudo policy cannot be established.
+ */
+async function ensureProfile(accountId: string, username: string): Promise<void> {
   const home = accountHome(accountId, username);
-  const added = await exec(accountId, ["useradd", "-m", "-d", home, "-s", "/bin/bash", username]);
-  if (added.code !== 0 && !added.stdout.includes("already exists")) {
-    throw new Error(added.stdout || "The Linux user was not created.");
+  const exists = await exec(accountId, ["id", "-u", username]);
+  if (exists.code !== 0) {
+    const added = await exec(accountId, ["useradd", "-m", "-d", home, "-s", "/bin/bash", username]);
+    if (added.code !== 0) {
+      throw new Error(added.stdout || "The Linux user was not created.");
+    }
   }
   const locked = await exec(accountId, ["chmod", "700", home]);
   if (locked.code !== 0) {
     throw new Error(locked.stdout || "The home directory was not locked.");
   }
-  await store
-    .update(agents)
-    .set({ linuxProfile: username })
-    .where(and(eq(agents.id, agentId), eq(agents.accountId, accountId)));
-  return username;
+  const sudoers = await exec(accountId, [
+    "sh",
+    "-c",
+    `printf '%s ALL=(ALL) NOPASSWD:ALL\\n' '${username}' > '/etc/sudoers.d/nano-${username}' && chmod 440 '/etc/sudoers.d/nano-${username}'`,
+  ]);
+  if (sudoers.code !== 0) {
+    throw new Error(sudoers.stdout || "The Linux admin policy was not created.");
+  }
 }
 
 /**
@@ -281,6 +306,43 @@ async function ensureMemory(container: Dockerode.Container, current: number): Pr
     return;
   }
   await container.update({ Memory: memoryBytes, MemorySwap: memoryBytes });
+}
+
+/**
+ * Repairs older account containers to the current autonomous-work baseline.
+ * Why: account computers are durable and are not recreated when the image
+ * changes; this idempotent check gives existing employees Node, Python, and
+ * build tools without deleting their homes, browser sessions, or files.
+ */
+async function ensureBaseToolchain(accountId: string): Promise<void> {
+  const active = toolchainRepairs.get(accountId);
+  if (active) return active;
+  const repair = repairBaseToolchain(accountId).finally(() => {
+    if (toolchainRepairs.get(accountId) === repair) toolchainRepairs.delete(accountId);
+  });
+  toolchainRepairs.set(accountId, repair);
+  return repair;
+}
+
+/**
+ * Performs the actual toolchain probe/install behind the per-account
+ * single-flight guard, preventing concurrent first-use apt/dpkg lock races.
+ */
+async function repairBaseToolchain(accountId: string): Promise<void> {
+  const ready = await exec(accountId, [
+    "sh",
+    "-c",
+    "command -v node >/dev/null && command -v npm >/dev/null && command -v python3 >/dev/null && python3 -m pip --version >/dev/null 2>&1",
+  ]);
+  if (ready.code === 0) return;
+  const installed = await exec(accountId, [
+    "sh",
+    "-c",
+    "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git build-essential nodejs npm python3 python3-pip python3-venv && rm -rf /var/lib/apt/lists/*",
+  ]);
+  if (installed.code !== 0) {
+    throw new Error(installed.stdout || "The Linux Node/Python toolchain was not installed.");
+  }
 }
 
 async function ensureImage(): Promise<void> {

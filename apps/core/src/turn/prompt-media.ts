@@ -4,6 +4,7 @@
  */
 import { parseDataUri } from "../rooms/uploads.js";
 import { MAX_VISION_CHARS, MAX_VISION_IMAGES } from "./constants.js";
+import { tailSlice } from "./util.js";
 
 export type TurnImagePart =
   | { type: "file"; data: string; mediaType: string }
@@ -98,7 +99,9 @@ export function toModelMessages(
   }
   return history.map((row, index) => {
     const role = row.agentId ? "assistant" : "user";
-    const text = row.replyTo ? formatReplyBody(row.body, byId.get(row.replyTo) ?? null) : row.body;
+    const body = tailSlice(row.body);
+    const linked = row.replyTo ? formatReplyBody(body, byId.get(row.replyTo) ?? null) : body;
+    const text = row.id ? `[msg:${row.id}]\n${linked}` : linked;
     const parts = wanted.get(index);
     if (!parts || parts.length === 0) return { role, content: text };
     return {

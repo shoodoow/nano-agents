@@ -423,8 +423,6 @@ function bootDesktop(display: number, profile: string): string {
     "    sleep 10",
     "  done",
     "fi",
-    `printf '%s ALL=(ALL) NOPASSWD:ALL\\n' ${shellQuote(profile)} > /etc/sudoers.d/nano-${profile}`,
-    `chmod 440 /etc/sudoers.d/nano-${profile} || true`,
     `su -s /bin/sh ${shellQuote(profile)} -c ${shellQuote(inner)}`,
     "if ! command -v chromium >/dev/null; then DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends chromium pcmanfm || true; fi",
   ].join("\n");

@@ -11,7 +11,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { embed, embedMany, type EmbeddingModel } from "ai";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
-import { memories, summaryItems } from "../db/schema.js";
+import { members, memories, summaryItems } from "../db/schema.js";
 import { keyFor } from "../keys/keys.js";
 import { isOpenAiCompatibleProvider } from "../model/get-model.js";
 import { RECALL_K } from "../turn/constants.js";
@@ -83,8 +83,8 @@ async function embedRows(
 /**
  * Pulls the durable memory most relevant to the current moment.
  * Input: db, ids, the query text (usually the latest user message), and k.
- * Output: distinct bodies (folded summary from this room + this agent's facts),
- * nearest first, or [] when embeddings are unavailable.
+ * Output: distinct bodies (folded summaries from rooms this employee belongs
+ * to + this agent's facts), nearest first, or [] when embeddings are unavailable.
  */
 export async function recallRelevant(
   db: Db,
@@ -101,10 +101,17 @@ export async function recallRelevant(
   const summaryHits = await db
     .select({ body: summaryItems.body, distance: sql<number>`${summaryItems.embedding} <=> ${literal}::vector` })
     .from(summaryItems)
+    .innerJoin(
+      members,
+      and(
+        eq(members.conversationId, summaryItems.conversationId),
+        eq(members.accountId, summaryItems.accountId),
+        eq(members.agentId, input.agentId),
+      ),
+    )
     .where(
       and(
         eq(summaryItems.accountId, input.accountId),
-        eq(summaryItems.conversationId, input.conversationId),
         sql`${summaryItems.embedding} is not null`,
       ),
     )

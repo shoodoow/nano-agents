@@ -12,7 +12,7 @@ import { saveSendMessage } from "../rooms/send-message.js";
 import { publish } from "../rooms/stream.js";
 import { alreadyDelivered, claimDelivery } from "../rooms/subagents.js";
 import type { GenerateResult, TurnInput } from "./types.js";
-import { isEmptyWorkerReport } from "./worker-report.js";
+import { isEmptyWorkerReport, workerResultForPerson } from "./worker-report.js";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -43,10 +43,11 @@ export async function deliverWorkerResult(
   if (!(await claimDelivery(db, input.delegationId))) {
     return "skipped";
   }
-  const needs = raw.match(/NEEDS_PERSON:\s*(.+)/i);
+  const presentable = workerResultForPerson(raw);
+  const needs = presentable.match(/NEEDS_PERSON:\s*(.+)/i);
   const text = needs
     ? `I need you on my computer. ${needs[1].trim()} Tell me when you're done and I'll continue.`
-    : raw;
+    : presentable;
   if (needs) {
     const [parent] = await db
       .select({ linuxProfile: agents.linuxProfile })

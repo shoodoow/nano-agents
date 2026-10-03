@@ -20,7 +20,6 @@ import {
   spawnWorker,
   stopWorker,
   WorkerCapacityError,
-  workerSuccessCue,
 } from "./subagents.js";
 
 const databaseUrl = process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/nano_agents";
@@ -249,7 +248,7 @@ describe("subagents and teams", () => {
     });
     await db
       .update(delegations)
-      .set({ createdAt: new Date(Date.now() - 10_000) })
+      .set({ heartbeatAt: new Date(Date.now() - 10_000) })
       .where(eq(delegations.id, stale.delegationId));
     const reclaimed = await reclaimStaleDelegations(db, 1_000);
     expect(reclaimed.map((row) => row.id)).toContain(stale.delegationId);
@@ -299,6 +298,57 @@ describe("subagents and teams", () => {
     expect(workerRows?.value).toBe(1);
     expect(again.workerId).toBe(first.workerId);
     expect((await checkWorker(db, account.id, again.workerId)).status).toBe("running");
+  });
+
+  it("does not let a stopped execution overwrite or deliver a stale result", async () => {
+    const account = await createAccount(db, { name: "Stop guard" });
+    const chief = await createAgent(db, account.id, agent("Chief"));
+    const [room] = await db
+      .insert(conversations)
+      .values({ accountId: account.id, kind: "direct", ownerAgentId: chief.id, title: "dm" })
+      .returning();
+    await db.insert(members).values({ conversationId: room!.id, accountId: account.id, agentId: chief.id });
+    const spawned = await spawnWorker(db, {
+      accountId: account.id,
+      conversationId: room!.id,
+      parentAgentId: chief.id,
+      label: "Slow",
+      role: "Worker",
+      jobDescription: "Runs slowly.",
+      task: "Complete a slow operation.",
+    });
+    let release!: (value: string) => void;
+    let started!: () => void;
+    const began = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const generated = new Promise<string>((resolve) => {
+      release = resolve;
+    });
+    let settled = 0;
+    const running = runWorker(db, {
+      accountId: account.id,
+      conversationId: room!.id,
+      parentAgentId: chief.id,
+      childId: spawned.workerId,
+      delegationId: spawned.delegationId,
+      task: "Complete a slow operation.",
+      generate: async () => {
+        started();
+        return generated;
+      },
+      onSettled: () => {
+        settled += 1;
+      },
+    });
+    await began;
+    expect(await stopWorker(db, account.id, spawned.workerId)).toEqual({ stopped: true });
+    release("A stale success.");
+    await running;
+    const final = await checkWorker(db, account.id, spawned.workerId);
+    expect(final.status).toBe("failed");
+    expect(final.result).toBe("Stopped by the parent agent.");
+    expect(settled).toBe(0);
   });
 
   it("throws WorkerCapacityError when every hidden worker is still running", async () => {
@@ -432,7 +482,6 @@ describe("subagents and teams", () => {
         result: "Found three rows in the ledger for March.",
       }),
     ).toBe(true);
-    expect(workerSuccessCue({ workerId: "w", task: "t", result: "r" })).toContain("Never paste the worker's Findings");
   });
 
   it("hires a social manager with identity, grows the group, and keeps 1:1 shut", async () => {

@@ -11,6 +11,8 @@ import {
   memberAddInputSchema,
   notifyInputSchema,
   reactionSchema,
+  rememberFactToolInputSchema,
+  correctMemoryToolInputSchema,
   readHistoryToolInputSchema,
   readSkillToolInputSchema,
   deleteRoutinesInputSchema,
@@ -146,6 +148,20 @@ export const allToolDefinitions: ToolDefinition[] = [
     inputSchema: readHistoryToolInputSchema,
     descriptionWorker:
       "Read one cited message by id, or search a short slice (max 5), when the task depends on something said in the room.",
+  },
+  {
+    name: "remember_fact",
+    description:
+      "Save a durable sourced fact so it survives long chats. scope=agent for your work preferences/behavior/decisions; scope=user for account-wide facts. Cite the message id. Never store secrets, guesses, or temporary status.",
+    surfaces: ["dispatcher"],
+    inputSchema: rememberFactToolInputSchema,
+  },
+  {
+    name: "correct_memory",
+    description:
+      "Replace one exact durable fact when the person corrects it. Supply the old text exactly, the replacement, its scope, and the correcting message id.",
+    surfaces: ["dispatcher"],
+    inputSchema: correctMemoryToolInputSchema,
   },
   {
     name: "read_skill",

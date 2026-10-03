@@ -71,7 +71,7 @@ describe("run ledger", () => {
     expect(after.getTime()).toBeGreaterThanOrEqual(before.getTime());
 
     // Fresh heartbeat: not reclaimed. Ancient heartbeat: reclaimed as failed.
-    expect(await reclaimStaleRuns(db, 60_000)).toHaveLength(0);
+    expect((await reclaimStaleRuns(db, 60_000)).map((row) => row.id)).not.toContain(run.id);
     await db.update(runs).set({ heartbeatAt: new Date(Date.now() - 3600_000) }).where(eq(runs.id, run.id));
     const reclaimed = await reclaimStaleRuns(db, 60_000);
     expect(reclaimed.map((row) => row.id)).toContain(run.id);

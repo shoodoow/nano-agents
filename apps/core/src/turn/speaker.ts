@@ -4,7 +4,7 @@
  */
 import { and, desc, eq, inArray } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
-import { agents, messages, summaryItems } from "../db/schema.js";
+import { agents, delegations, jobs, messages, routines, summaryItems } from "../db/schema.js";
 import { buildContext } from "../memory/context.js";
 import { memoriesFor } from "../memory/memory.js";
 import { recallRelevant } from "../memory/recall.js";
@@ -97,6 +97,73 @@ export async function speakOnce(
         .map((skill) => `${skill.name}: ${skill.description}`)
         .join("\n")
     : "";
+  // Query active background workers running for this parent agent in this room.
+  // This gives the dispatcher full visibility over background tasks so it:
+  // 1) Remains available to converse with the user while tasks run.
+  // 2) Knows what's in-flight to report status.
+  // 3) Can redirect or stop active workers rather than spawning duplicates.
+  const activeWorkers = await db
+    .select({
+      childAgentId: delegations.childAgentId,
+      label: agents.label,
+      task: delegations.task,
+      progress: delegations.progress,
+      createdAt: delegations.createdAt,
+    })
+    .from(delegations)
+    .innerJoin(agents, eq(agents.id, delegations.childAgentId))
+    .where(
+      and(
+        eq(delegations.accountId, accountId),
+        eq(delegations.conversationId, conversationId),
+        eq(delegations.parentAgentId, agentId),
+        eq(delegations.status, "running"),
+      ),
+    )
+    .orderBy(desc(delegations.createdAt))
+    .limit(5);
+  const recentWorkers = await db
+    .select({
+      title: delegations.task,
+      outcome: delegations.result,
+      status: delegations.status,
+      createdAt: delegations.createdAt,
+    })
+    .from(delegations)
+    .where(
+      and(
+        eq(delegations.accountId, accountId),
+        eq(delegations.parentAgentId, agentId),
+        inArray(delegations.status, ["done", "failed"]),
+      ),
+    )
+    .orderBy(desc(delegations.createdAt))
+    .limit(5);
+  const recentRoutines = await db
+    .select({
+      title: routines.title,
+      outcome: jobs.result,
+      status: jobs.status,
+      createdAt: jobs.runAt,
+    })
+    .from(jobs)
+    .innerJoin(routines, eq(jobs.routineId, routines.id))
+    .where(
+      and(
+        eq(jobs.accountId, accountId),
+        eq(routines.agentId, agentId),
+        inArray(jobs.status, ["done", "failed"]),
+      ),
+    )
+    .orderBy(desc(jobs.runAt))
+    .limit(5);
+  const workHistory = [
+    ...recentWorkers.map((item) => ({ ...item, kind: "worker" as const, outcome: item.outcome ?? "" })),
+    ...recentRoutines.map((item) => ({ ...item, kind: "routine" as const, outcome: item.outcome ?? "" })),
+  ]
+    .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
+    .slice(0, 8);
+
   const context = buildContext({
     accountId,
     agentId: agent.id,
@@ -107,7 +174,7 @@ export async function speakOnce(
       personality: agent.personality,
       job: agent.jobDescription,
     },
-    summary: summary.map((item) => ({ key: item.key, body: item.body })),
+    summary: summary.map((item) => ({ key: item.key, body: item.body, messageId: item.messageId })),
     messages: recent.map((message) => ({ body: tailSlice(message.body) })),
     memories: facts.map((fact) => ({ body: fact.body })),
     recall,
@@ -118,6 +185,8 @@ export async function speakOnce(
       members: memberRows.map((member) => member.name),
       selfName: agent.name,
     },
+    activeWorkers,
+    workHistory,
   });
   const emittedMessages: (typeof messages.$inferSelect)[] = [];
   const replyParents = await loadReplyParents(db, accountId, conversationId, recent);

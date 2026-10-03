@@ -9,6 +9,7 @@ type Database = ReturnType<typeof getDb>;
 
 /** Parent web_fetch budget: enough for a snippet, not a research dump. */
 export const DISPATCHER_FETCH_CHARS = 10_000;
+const WORKER_OUTPUT_CHARS = 8_000;
 
 export type LinuxToolExecute = (input: Record<string, unknown>) => Promise<unknown>;
 
@@ -28,14 +29,14 @@ export function linuxToolExecutes(
 ): Record<string, LinuxToolExecute> {
   /** Screenshots this worker has taken. Reset per run by construction. */
   let screenshots = 0;
-  const SCREENSHOT_BUDGET = 8;
+  const SCREENSHOT_BUDGET = 4;
   return {
-    read: async (input) => readFile(accountId, profile, String(input.path)),
+    read: async (input) => conciseOutput(await readFile(accountId, profile, String(input.path))),
     write: async (input) => {
       await writeFile(accountId, profile, String(input.path), String(input.body));
       return "Wrote the file.";
     },
-    bash: async (input) => bash(accountId, profile, String(input.command)),
+    bash: async (input) => conciseOutput(await bash(accountId, profile, String(input.command))),
     computer_screenshot: async () => {
       screenshots += 1;
       if (screenshots > SCREENSHOT_BUDGET) {
@@ -60,9 +61,9 @@ export function linuxToolExecutes(
         "",
         page.markdown,
       ].join("\n");
-      const cap = opts?.fetchChars;
-      if (cap && body.length > cap) {
-        return `${body.slice(0, cap)}\n\n[truncated to ${cap} chars — spawn_worker for the rest]`;
+      const cap = opts?.fetchChars ?? WORKER_OUTPUT_CHARS;
+      if (body.length > cap) {
+        return `${body.slice(0, cap)}\n\n[truncated to ${cap} chars — fetch a more specific page or use a focused search]`;
       }
       return body;
     },
@@ -87,4 +88,15 @@ export function linuxToolExecutes(
         include: typeof input.include === "string" ? input.include : undefined,
       }),
   };
+}
+
+/**
+ * Bounds one raw text result before it becomes multi-step model history.
+ * Why: command/file output is resent on every later model step; retaining a
+ * focused prefix and an explicit narrowing instruction keeps context useful
+ * without ending the task or imposing a total-token cutoff.
+ */
+function conciseOutput(text: string, limit = WORKER_OUTPUT_CHARS): string {
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit)}\n\n[truncated to ${limit} chars — rerun with a narrower command, range, or filter]`;
 }

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { classifyWorkerEnding, collectWorkerFallback, collectWorkerText, isEmptyWorkerReport } from "./worker-report.js";
+import {
+  classifyWorkerEnding,
+  collectWorkerFallback,
+  collectWorkerText,
+  isEmptyWorkerReport,
+  workerResultForPerson,
+} from "./worker-report.js";
 
 describe("collectWorkerText", () => {
   it("uses an earlier step when the final step is only a tool call", () => {
@@ -69,6 +75,16 @@ describe("isEmptyWorkerReport", () => {
     expect(isEmptyWorkerReport("The worker finished with no output.")).toBe(true);
     expect(isEmptyWorkerReport("Findings: (no output)\nWhat I did: nothing")).toBe(true);
     expect(isEmptyWorkerReport("Findings: 120 followers")).toBe(false);
+  });
+});
+
+describe("workerResultForPerson", () => {
+  it("delivers the finding and useful blocker without internal process labels", () => {
+    const text = workerResultForPerson(
+      "Findings: htop 3.2.2 is installed.\nWhat I did: ran apt and checked the version.\nBlockers: none",
+    );
+    expect(text).toBe("htop 3.2.2 is installed.");
+    expect(text).not.toContain("What I did");
   });
 });
 

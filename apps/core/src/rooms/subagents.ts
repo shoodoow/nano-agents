@@ -8,7 +8,7 @@ import {
 
 import { workerToolNames as agentWorkerToolNames } from "@nano-agents/agent-tools";
 import { generateText, isStepCount } from "ai";
-import { and, count, desc, eq, lt } from "drizzle-orm";
+import { and, count, desc, eq, inArray, lt } from "drizzle-orm";
 import type { Store } from "../db/client.js";
 import type { getDb } from "../db/client.js";
 import { keyFor } from "../keys/keys.js";
@@ -29,6 +29,9 @@ export const MAX_WORKERS_PER_PARENT = 10;
 export const MAX_CHILDREN_PER_PARENT = MAX_TEAMMATES_PER_PARENT;
 export const MAX_TEAM_DEPTH = 2;
 export const MAX_ROOM_MEMBERS = 20;
+
+/** Live model calls keyed by delegation so stop/redirect can cancel immediately. */
+const activeWorkerRuns = new Map<string, AbortController>();
 
 /** Returned when spawn_worker cannot insert or reuse a worker; tool layer maps this to { error }. */
 export class WorkerCapacityError extends Error {
@@ -372,6 +375,7 @@ async function startWorkerDelegation(
       conversationId: input.conversationId,
       task: input.task,
       status: "running",
+      progress: "Queued.",
     })
     .returning();
   if (!row) throw new Error("Delegation insert returned no row.");
@@ -521,10 +525,13 @@ export async function stopWorker(store: Store, accountId: string, workerId: stri
     .orderBy(desc(delegations.createdAt))
     .limit(1);
   if (!row) return { stopped: false };
-  await store
+  const stopped = await store
     .update(delegations)
-    .set({ status: "failed", result: "Stopped by the parent agent." })
-    .where(eq(delegations.id, row.id));
+    .set({ status: "failed", result: "Stopped by the parent agent.", progress: "Stopped by manager." })
+    .where(and(eq(delegations.id, row.id), eq(delegations.status, "running")))
+    .returning({ id: delegations.id });
+  if (stopped.length === 0) return { stopped: false };
+  activeWorkerRuns.get(row.id)?.abort("Worker stopped by parent.");
   return { stopped: true };
 }
 
@@ -540,12 +547,18 @@ export async function reclaimStaleDelegations(store: Store, staleMs = WORKER_STA
   const stale = await store
     .select()
     .from(delegations)
-    .where(and(eq(delegations.status, "running"), lt(delegations.createdAt, cutoff)));
+    .where(and(eq(delegations.status, "running"), lt(delegations.heartbeatAt, cutoff)));
   for (const row of stale) {
-    await store
+    const reclaimed = await store
       .update(delegations)
-      .set({ status: "failed", result: "Worker lost (core restarted or hung) and was reclaimed." })
-      .where(eq(delegations.id, row.id));
+      .set({
+        status: "failed",
+        result: "Worker lost (core restarted or hung) and was reclaimed.",
+        progress: "Reclaimed after its heartbeat stopped.",
+      })
+      .where(and(eq(delegations.id, row.id), eq(delegations.status, "running")))
+      .returning({ id: delegations.id });
+    if (reclaimed.length > 0) activeWorkerRuns.get(row.id)?.abort("Worker heartbeat expired.");
   }
   return stale;
 }
@@ -555,10 +568,13 @@ export type WorkerGenerate = () => Promise<string>;
 export type WorkerSettled = { workerId: string; task: string; result: string; status: "done" | "failed" };
 
 /**
- * Counts this parent's failed workers since the person's last message.
+ * Counts this parent's failed workers.
  * Why: spawn_worker retries must stop after 2 failures — otherwise the model
- * loops workers forever on a wedged task. Scoped to parent+room so one
- * agent's failures never block another.
+ * loops workers forever on a wedged task. We check failures within a recent time window
+ * (e.g. 5 minutes) as well as since the last human message.
+ * This prevents a situation where a quick user correction ("I mean htop")
+ * resets the failure counter to 0 and gives the agent 2 fresh attempts when the
+ * underlying environment (e.g. no root/sudo password required) hasn't changed.
  * Input: store, account/room/parent ids. Output: failed delegation count.
  */
 export async function failuresSinceLastUser(
@@ -566,10 +582,9 @@ export async function failuresSinceLastUser(
   accountId: string,
   conversationId: string,
   parentAgentId: string,
+  windowMs = 5 * 60 * 1000,
 ): Promise<number> {
-  // Find the newest human message among the recent slice (agentId null = human).
-  // Full-table scan avoided: 50 latest rows is enough — a failure older than
-  // that predates any recent human turn and should not block new work.
+  const cutoff = new Date(Date.now() - windowMs);
   const full = await store
     .select({ agentId: messages.agentId, createdAt: messages.createdAt })
     .from(messages)
@@ -588,18 +603,43 @@ export async function failuresSinceLastUser(
         eq(delegations.status, "failed"),
       ),
     );
-  if (!lastHuman) return failed.length;
-  return failed.filter((row) => row.createdAt && row.createdAt.getTime() > lastHuman.getTime()).length;
+  const recentWindowFailures = failed.filter(
+    (row) => row.createdAt && row.createdAt.getTime() > cutoff.getTime(),
+  ).length;
+  const sinceHuman = lastHuman
+    ? failed.filter((row) => row.createdAt && row.createdAt.getTime() > lastHuman.getTime()).length
+    : failed.length;
+
+  return Math.max(recentWindowFailures, sinceHuman);
 }
 
 /**
  * Builds the hidden cue that rewakes the parent after a worker settles failed.
  * Why: the parent turn already ended, so nobody watches the delegation. Retry
  * once with a rewritten task; after 2 failures tell the person and stop.
- * Input: worker/task/result + retry flag. Output: cue string (model-only, never saved as user text).
+ * Supports batched settled workers to wake the parent once instead of per-worker cascades.
+ * Input: worker/task/result or array + retry flag. Output: cue string.
  */
-export function workerFollowupCue(input: { workerId: string; task: string; result: string; retry: boolean }): string {
-  const head = `Worker ${input.workerId} did not finish "${input.task.slice(0, 500)}". Result: ${input.result.slice(0, 1000)}.`;
+export function workerFollowupCue(input: {
+  workerId?: string;
+  task?: string;
+  result?: string;
+  retry: boolean;
+  settled?: Array<{ workerId: string; task: string; result: string }>;
+}): string {
+  if (input.settled && input.settled.length > 1) {
+    const list = input.settled
+      .map((s) => `Worker ${s.workerId} did not finish "${s.task.slice(0, 200)}". Result: ${s.result.slice(0, 400)}.`)
+      .join("\n");
+    if (input.retry) {
+      return `${list}\n\nsend_message one short sentence about what happened and the next step you are taking, then spawn_worker once with a narrower task. Do not stop after the failure, and never send an internal line like "The worker finished with no output."`;
+    }
+    return `${list}\n\nsend_message what went wrong and what the person can do next. Do not spawn another worker. Never send an internal status line.`;
+  }
+  const workerId = input.workerId ?? input.settled?.[0]?.workerId ?? "worker";
+  const task = input.task ?? input.settled?.[0]?.task ?? "task";
+  const result = input.result ?? input.settled?.[0]?.result ?? "failed";
+  const head = `Worker ${workerId} did not finish "${task.slice(0, 500)}". Result: ${result.slice(0, 1000)}.`;
   if (input.retry) {
     return `${head} send_message one short sentence about what happened and the next step you are taking, then spawn_worker once with a narrower task. Do not stop after the failure, and never send an internal line like "The worker finished with no output."`;
   }
@@ -607,24 +647,7 @@ export function workerFollowupCue(input: { workerId: string; task: string; resul
 }
 
 /**
- * Builds the hidden cue that rewakes the parent after a worker settles done.
- * Why: the parent's "I'll let you know" promise is kept by delivery, not
- * polling — good results would otherwise rot in the delegation row. The
- * cue carries the result so the parent summarizes it in send_message now,
- * inventing nothing beyond what the worker returned.
- * Input: worker/task/result. Output: cue string (model-only, never saved as user text).
- */
-export function workerSuccessCue(input: { workerId: string; task: string; result: string }): string {
-  return (
-    `Worker ${input.workerId} finished its task "${input.task.slice(0, 500)}" with: ${input.result.slice(0, 4000)}. ` +
-    `Rewrite this for the person in send_message now: 1–3 short sentences in your voice, answer first. ` +
-    `Never paste the worker's Findings / What I did / Blockers labels, shell commands, or internal proof format. ` +
-    `Do not invent anything it did not return.`
-  );
-}
-
-/**
- * Claims a delegation's one auto-delivery (done only, exactly once).
+ * Claims a delegation's one terminal auto-delivery exactly once.
  * Why: the spawn path schedules a delayed re-wake, and restarts or retries
  * could schedule another — without a guard the room gets the same summary
  * twice. Single atomic UPDATE ... WHERE delivered=false: exactly one claimer
@@ -635,7 +658,13 @@ export async function claimDelivery(store: Store, delegationId: string): Promise
   const claimed = await store
     .update(delegations)
     .set({ delivered: true })
-    .where(and(eq(delegations.id, delegationId), eq(delegations.status, "done"), eq(delegations.delivered, false)))
+    .where(
+      and(
+        eq(delegations.id, delegationId),
+        inArray(delegations.status, ["done", "failed"]),
+        eq(delegations.delivered, false),
+      ),
+    )
     .returning({ id: delegations.id });
   return claimed.length > 0;
 }
@@ -696,6 +725,8 @@ export async function runWorker(
     onSettled?: (settled: WorkerSettled) => void;
   },
 ): Promise<void> {
+  const controller = new AbortController();
+  activeWorkerRuns.set(input.delegationId, controller);
   type Usage = {
     inputTokens?: number | null;
     outputTokens?: number | null;
@@ -707,11 +738,13 @@ export async function runWorker(
   const finish = async (status: "done" | "failed", result: string, usage?: Usage): Promise<void> => {
     const { formatWorkerReport } = await import("../turn/worker-report.js");
     const report = formatWorkerReport(result, status);
-    await db
+    const updated = await db
       .update(delegations)
       .set({
         status,
         result: report.slice(0, WORKER_RESULT_MAX),
+        progress: status === "done" ? "Completed." : "Stopped with a blocker.",
+        heartbeatAt: new Date(),
         ...(usage?.inputTokens ? { inputTokens: usage.inputTokens } : {}),
         ...(usage?.outputTokens ? { outputTokens: usage.outputTokens } : {}),
         ...(usage?.cacheReadTokens ? { cacheReadTokens: usage.cacheReadTokens } : {}),
@@ -719,8 +752,10 @@ export async function runWorker(
         ...(usage?.reasoningTokens ? { reasoningTokens: usage.reasoningTokens } : {}),
         ...(usage?.modelSteps ? { modelSteps: usage.modelSteps } : {}),
       })
-      .where(eq(delegations.id, input.delegationId))
+      .where(and(eq(delegations.id, input.delegationId), eq(delegations.status, "running")))
+      .returning({ id: delegations.id })
       .catch(() => {});
+    if (!Array.isArray(updated) || updated.length === 0) return;
     try {
       input.onSettled?.({ workerId: input.childId, task: input.task, result: report, status });
     } catch {
@@ -728,6 +763,11 @@ export async function runWorker(
     }
   };
   try {
+    const [delegation] = await db
+      .select({ status: delegations.status })
+      .from(delegations)
+      .where(and(eq(delegations.id, input.delegationId), eq(delegations.accountId, input.accountId)));
+    if (!delegation || delegation.status !== "running") return;
     const [child] = await db
       .select()
       .from(agents)
@@ -747,12 +787,12 @@ export async function runWorker(
       .from(agents)
       .where(and(eq(agents.id, input.parentAgentId), eq(agents.accountId, input.accountId)));
     let profile: string | null = parent?.linuxProfile ?? null;
-    if (!profile) {
-      try {
-        profile = await createProfile(db, input.accountId, input.parentAgentId);
-      } catch {
-        profile = null;
-      }
+    try {
+      // Always re-ensure the profile: durable accounts may still be running an
+      // older container created before toolchain/admin provisioning existed.
+      profile = await createProfile(db, input.accountId, input.parentAgentId);
+    } catch {
+      // Read/search-only workers can still proceed if computer repair failed.
     }
     // Isolated brief: the worker gets its standing method (preamble), a
     // one-line role, and the task — nothing else. No parent identity, no
@@ -814,6 +854,10 @@ export async function runWorker(
       delegationId: input.delegationId,
     });
     const workerInstructions = `${standing}\n\n${roleLine}\n\nTask: ${input.task}`;
+    await db
+      .update(delegations)
+      .set({ progress: "Working.", heartbeatAt: new Date() })
+      .where(and(eq(delegations.id, input.delegationId), eq(delegations.status, "running")));
     await workerTrace.emit({
       type: "run.start",
       prefix: workerInstructions,
@@ -824,14 +868,59 @@ export async function runWorker(
       modelMessages: [{ role: "user", content: input.task }],
     });
     let workerSteps = 0;
+    let shouldEarlyStop = false;
+    let lastToolCallSignature = "";
+    let duplicateCallCount = 0;
+    // Shell workers do focused commands/installs — 5 steps is plenty; other kinds get WORKER_STEPS (10).
+    const maxSteps = kindMeta.kind === "shell" ? 5 : WORKER_STEPS;
     const result = await generateText({
       model: getModel(child.provider, child.modelId, credential.apiKey, credential.baseUrl),
+      abortSignal: controller.signal,
       instructions: [{ role: "system" as const, content: workerInstructions }],
       messages: [{ role: "user", content: input.task }],
       tools,
-      stopWhen: isStepCount(WORKER_STEPS),
-      onStepFinish: async (step) => {
+      stopWhen: [
+        isStepCount(maxSteps),
+        () => shouldEarlyStop,
+      ],
+      onStepEnd: async (step) => {
         workerSteps += 1;
+        // Loop detection: if identical tool call repeats consecutively
+        const currentCalls = (step.toolCalls ?? []).map((call) => ({
+          name: (call as { toolName?: string }).toolName,
+          input: (call as { input?: unknown }).input ?? (call as { args?: unknown }).args,
+        }));
+        const callSig = JSON.stringify(currentCalls);
+        if (callSig.length > 2 && callSig === lastToolCallSignature) {
+          duplicateCallCount += 1;
+          if (duplicateCallCount >= 2) {
+            shouldEarlyStop = true;
+          }
+        } else {
+          lastToolCallSignature = callSig;
+          duplicateCallCount = 0;
+        }
+        const toolNames = currentCalls.map((call) => call.name).filter(Boolean).join(", ");
+        const checkpoint = toolNames
+          ? `Step ${workerSteps}: ${toolNames}`
+          : `Step ${workerSteps}: ${(step.text ?? "reasoning").replace(/\s+/g, " ").trim().slice(0, 180)}`;
+        await db
+          .update(delegations)
+          .set({ progress: checkpoint, heartbeatAt: new Date() })
+          .where(and(eq(delegations.id, input.delegationId), eq(delegations.status, "running")))
+          .catch(() => {});
+
+        // Fatal blocker detection: stop early if unrecoverable permission/sudo error occurs
+        for (const tr of (step as { toolResults?: unknown[] }).toolResults ?? []) {
+          const res =
+            (tr as { result?: unknown; output?: unknown }).result ??
+            (tr as { result?: unknown; output?: unknown }).output;
+          const textRes = typeof res === "string" ? res : JSON.stringify(res ?? "");
+          if (/permission denied|sudo:\s*a password is required|is not in the sudoers file/i.test(textRes)) {
+            shouldEarlyStop = true;
+          }
+        }
+
         const usage = step.usage
           ? {
               inputTokens: step.usage.inputTokens,
@@ -903,6 +992,10 @@ export async function runWorker(
     await finish("done", ending.result, usage);
   } catch (error) {
     await finish("failed", error instanceof Error ? error.message : "The worker failed.");
+  } finally {
+    if (activeWorkerRuns.get(input.delegationId) === controller) {
+      activeWorkerRuns.delete(input.delegationId);
+    }
   }
 }
 

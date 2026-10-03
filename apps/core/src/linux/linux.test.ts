@@ -44,6 +44,23 @@ describe("linux", () => {
     expect(hidden.code).not.toBe(0);
   });
 
+  it("provisions the standard toolchain and container-local admin access before desktop use", async () => {
+    const account = await createAccount(db, { name: "Toolchain" });
+    const ada = await createAgent(db, account.id, hired("Ada"));
+    const profile = await createProfile(db, account.id, ada.id);
+
+    const tools = await exec(
+      account.id,
+      ["sh", "-c", "command -v node && command -v npm && command -v python3 && python3 -m pip --version"],
+      profile,
+    );
+    expect(tools.code).toBe(0);
+
+    const admin = await exec(account.id, ["sudo", "-n", "id", "-u"], profile);
+    expect(admin.code).toBe(0);
+    expect(admin.stdout.trim()).toBe("0");
+  });
+
   it("creates one profile per member when a group is opened", async () => {    const account = await createAccount(db, { name: "Group" });
     const ada = await createAgent(db, account.id, hired("Ada"));
     const bea = await createAgent(db, account.id, hired("Bea"));

@@ -8,11 +8,13 @@ describe("dispatcher SDK tools", () => {
     const names = dispatcherToolNames();
     expect(names).toEqual([
       "add_to_group",
+      "correct_memory",
       "create_group",
       "create_routine",
       "delegate",
       "delete_group",
       "delete_routine",
+      "delete_routines",
       "glob",
       "grep",
       "hire_subagent",
@@ -25,6 +27,7 @@ describe("dispatcher SDK tools", () => {
       "read_history",
       "read_skill",
       "redirect_worker",
+      "remember_fact",
       "send_message",
       "spawn_worker",
       "stop_worker",

@@ -176,6 +176,20 @@
       "when": 1790711000000,
       "tag": "0024_routine-title-instructions",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1790712000000,
+      "tag": "0025_routine-run-result",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1790713000000,
+      "tag": "0026_worker-progress",
+      "breakpoints": true
     }
   ]
 }

@@ -22,7 +22,8 @@ export type BuiltContext = {
  * for provider caching; tool names/schemas live on the AI SDK tools argument,
  * not duplicated here. The tail (room line, summary, messages) changes every turn.
  * Input: account/agent ids, prompt version, identity, summary items, recent
- * messages, optional skills catalog/room.
+ * work history, optional skills catalog/room. Recent chat messages are sent
+ * through the model message channel and are deliberately not duplicated here.
  * Output: prefix + tail plus provider cache hints.
  */
 export function buildContext(input: {
@@ -30,12 +31,20 @@ export function buildContext(input: {
   agentId: string;
   promptVersion: number;
   identity: AgentIdentity;
-  summary: { key: string; body: string }[];
+  summary: { key: string; body: string; messageId?: string }[];
   messages: { body: string }[];
   memories?: { body: string }[];
   recall?: string[];
   catalog?: string;
   room?: { title: string; kind: string; members: string[]; selfName: string };
+  activeWorkers?: {
+    childAgentId: string;
+    label?: string | null;
+    task: string;
+    progress?: string | null;
+    createdAt?: Date | null;
+  }[];
+  workHistory?: { kind: "worker" | "routine"; title: string; outcome: string; status: string; createdAt: Date }[];
 }): BuiltContext {
   const extras = [...(input.catalog ? [input.catalog] : [])];
   const prefix = [buildInstructions(input.identity), ...extras].join("\n\n");
@@ -44,12 +53,15 @@ export function buildContext(input: {
   );
   const memoryBlock = memorySection(input.memories ?? []);
   const recallBlock = recallSection(input.recall ?? []);
+  const workersBlock = activeWorkersSection(input.activeWorkers ?? []);
+  const workBlock = workHistorySection(input.workHistory ?? []);
   const tail = [
     ...(input.room ? [roomLine(input.room)] : []),
     ...(memoryBlock ? [memoryBlock] : []),
     ...(recallBlock ? [recallBlock] : []),
-    ...summaryLines.map((item) => `${item.key}: ${item.body}`),
-    ...input.messages.map((message) => message.body),
+    ...(workersBlock ? [workersBlock] : []),
+    ...(workBlock ? [workBlock] : []),
+    ...summaryLines.map((item) => `${item.key}: ${item.body}${item.messageId ? ` [msg:${item.messageId}]` : ""}`),
   ].join("\n");
   return {
     prefix,
@@ -127,6 +139,60 @@ function recallSection(recall: string[]): string {
   }
   return ["Recalled from earlier in this thread:", ...recall.map((line) => `- ${line}`)].join("\n");
 }
+
+/**
+ * Renders currently running background workers in the tail.
+ * Why: The dispatcher must know what background tasks are already executing so it:
+ * 1) Remains available to converse with the user while tasks run.
+ * 2) Knows what's in-flight to report status or acknowledge work in progress.
+ * 3) Can redirect or stop active workers rather than spawning duplicates.
+ * Lives in the dynamic tail so the prefix cache remains byte-stable.
+ */
+export function activeWorkersSection(
+  workers: {
+    childAgentId: string;
+    label?: string | null;
+    task: string;
+    progress?: string | null;
+    createdAt?: Date | null;
+  }[],
+): string {
+  if (workers.length === 0) {
+    return "";
+  }
+  const items = workers
+    .map((w) => {
+      const elapsed = w.createdAt
+        ? `${Math.max(0, Math.round((Date.now() - w.createdAt.getTime()) / 1000))}s ago`
+        : "recently";
+      const name = w.label?.trim() || w.childAgentId;
+      const progress = w.progress?.trim() ? `, latest: "${w.progress.slice(0, 180)}"` : "";
+      return `Worker ${name} [${w.childAgentId}] (started ${elapsed}, task: "${w.task.slice(0, 80)}"${progress})`;
+    })
+    .join(" | ");
+  return `Active background workers: ${items}. You are available to chat with the user while workers run. If the user asks for status, report what is in flight. If the user clarifies or changes task, use redirect_worker. If the user cancels, use stop_worker. Never spawn duplicate workers for jobs already running.`;
+}
+
+/**
+ * Renders a bounded cross-thread record of the employee's recent work.
+ * Why: a long-lived CMO must remember what its workers and routines actually
+ * accomplished without replaying old chats or injecting raw execution logs.
+ * Input: recent completed work selected by the caller. Output: a concise,
+ * labeled block in newest-first order.
+ */
+export function workHistorySection(
+  history: { kind: "worker" | "routine"; title: string; outcome: string; status: string; createdAt: Date }[],
+): string {
+  if (history.length === 0) return "";
+  const lines = history.slice(0, 8).map((item) => {
+    const date = item.createdAt.toISOString();
+    const title = item.title.replace(/\s+/g, " ").trim().slice(0, 120);
+    const outcome = item.outcome.replace(/\s+/g, " ").trim().slice(0, 300);
+    return `- ${date} ${item.kind} ${item.status}: ${title}${outcome ? ` — ${outcome}` : ""}`;
+  });
+  return ["Recent work memory (your own jobs across chats):", ...lines].join("\n");
+}
+
 
 function cacheKey(accountId: string, agentId: string, promptVersion: number): string {
   const raw = `${accountId}:${agentId}:${promptVersion}`;

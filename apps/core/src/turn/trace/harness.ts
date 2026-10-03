@@ -90,7 +90,7 @@ export async function runModelHarness(
       providerOptions: usesOfficialOpenAiEndpoint(input.provider, credential.baseUrl)
         ? { openai: { promptCacheKey: input.promptCacheKey, promptCacheRetention: "24h" } }
         : undefined,
-      onStepFinish: async (step) => {
+      onStepEnd: async (step) => {
         stepIndex += 1;
         const usage = step.usage
           ? {

@@ -7,6 +7,13 @@ RUN apt-get update \
     procps \
     curl \
     ca-certificates \
+    git \
+    build-essential \
+    nodejs \
+    npm \
+    python3 \
+    python3-pip \
+    python3-venv \
     xvfb \
     x11vnc \
     novnc \

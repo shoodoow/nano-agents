@@ -118,6 +118,39 @@ export function formatWorkerReport(raw: string, status: "done" | "failed"): stri
   return "Findings: (no output)\nWhat I did: Task completed but the model returned no text.\nBlockers: none";
 }
 
+/**
+ * Converts an internal evidence report into a concise manager-voice update.
+ * Why: workers use rigid Findings/What I did/Blockers sections for reliable
+ * supervision, but users should receive the outcome rather than internal
+ * process labels or a command transcript. NEEDS_PERSON remains machine-readable
+ * for the desktop handoff path.
+ */
+export function workerResultForPerson(raw: string): string {
+  const trimmed = raw.trim();
+  if (/NEEDS_PERSON:/i.test(trimmed)) return trimmed.slice(0, 4000);
+  const findings = section(trimmed, "findings", ["what i did", "blockers"]);
+  const blockers = section(trimmed, "blockers", []);
+  if (!findings) return trimmed.slice(0, 4000);
+  const usefulBlocker = blockers && !/^(none|no blockers?)[.!]?$/i.test(blockers) ? blockers : "";
+  return [findings, ...(usefulBlocker ? [`Blocker: ${usefulBlocker}`] : [])].join("\n\n").slice(0, 4000);
+}
+
+/**
+ * Extracts one markdown-labeled report section without depending on exact
+ * bolding, allowing weak models to vary formatting while preserving content.
+ */
+function section(text: string, name: string, following: string[]): string {
+  const start = new RegExp(`(?:^|\\n)\\s*\\*{0,2}${name}\\*{0,2}\\s*:`, "i").exec(text);
+  if (!start) return "";
+  const bodyStart = start.index + start[0].length;
+  let bodyEnd = text.length;
+  for (const next of following) {
+    const match = new RegExp(`\\n\\s*\\*{0,2}${next}\\*{0,2}\\s*:`, "i").exec(text.slice(bodyStart));
+    if (match) bodyEnd = Math.min(bodyEnd, bodyStart + match.index);
+  }
+  return text.slice(bodyStart, bodyEnd).trim();
+}
+
 function findingsSlice(text: string): string | null {
   const needs = text.match(/NEEDS_PERSON:\s*.+/i);
   if (needs) return needs[0].trim();

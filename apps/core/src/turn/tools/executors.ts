@@ -4,11 +4,13 @@
  */
 import {
   deleteRoutinesInputSchema,
+  correctMemoryToolInputSchema,
   delegateSchema,
   groupConversationInputSchema,
   groupCreateInputSchema,
   notifyInputSchema,
   reactionSchema,
+  rememberFactToolInputSchema,
   routineCreateInputSchema,
   routineIdSchema,
   routineUpdateInputSchema,
@@ -19,7 +21,8 @@ import {
 } from "@nano-agents/agent-tools";
 import { and, desc, eq } from "drizzle-orm";
 import { agents, conversations, delegations, members } from "../../db/schema.js";
-import { readHistory } from "../../memory/memory.js";
+import { correct, readHistory, remember } from "../../memory/memory.js";
+import { embedSummaryBacklog } from "../../memory/recall.js";
 import { todoList, todoWrite } from "../../memory/todos.js";
 import { saveNotification } from "../../notify/notify.js";
 import { createGroupRoom, deleteGroupRoom, listGroupRoomsForAgent } from "../../rooms/rooms.js";
@@ -52,6 +55,40 @@ import type { ToolContext } from "./context.js";
 import { ZodError } from "zod";
 
 export type ToolExecutor = (ctx: ToolContext, input: Record<string, unknown>) => Promise<unknown>;
+
+/**
+ * Saves one durable fact backed by a message in the current room.
+ * Why: long-lived employees need explicit, sourceable memory rather than
+ * relying on an ever-growing transcript. Agent scope is bound to the caller.
+ */
+async function executeRememberFact(ctx: ToolContext, input: Record<string, unknown>) {
+  const parsed = rememberFactToolInputSchema.parse(input);
+  const source = await readHistory(ctx.db, ctx.accountId, ctx.conversationId, { messageId: parsed.messageId });
+  if (source.length === 0) throw new Error("The memory source message is not in this room.");
+  const saved = await remember(ctx.db, ctx.accountId, {
+    ...parsed,
+    agentId: parsed.scope === "agent" ? ctx.agentId : undefined,
+  });
+  await embedSummaryBacklog(ctx.db, ctx.accountId, ctx.conversationId).catch(() => {});
+  return { memoryId: saved.id, scope: saved.scope, body: saved.body };
+}
+
+/**
+ * Replaces an exact durable fact using a correcting message in this room.
+ * Why: corrections must remove stale guidance instead of leaving two
+ * contradictory memories for the employee to reconcile on every future turn.
+ */
+async function executeCorrectMemory(ctx: ToolContext, input: Record<string, unknown>) {
+  const parsed = correctMemoryToolInputSchema.parse(input);
+  const source = await readHistory(ctx.db, ctx.accountId, ctx.conversationId, { messageId: parsed.messageId });
+  if (source.length === 0) throw new Error("The correction source message is not in this room.");
+  const saved = await correct(ctx.db, ctx.accountId, {
+    ...parsed,
+    agentId: parsed.scope === "agent" ? ctx.agentId : undefined,
+  });
+  await embedSummaryBacklog(ctx.db, ctx.accountId, ctx.conversationId).catch(() => {});
+  return { memoryId: saved.id, scope: saved.scope, body: saved.body };
+}
 
 export async function executeSendMessage(ctx: ToolContext, input: Record<string, unknown>) {
   let parsed: ReturnType<typeof sendMessageInputSchema.parse>;
@@ -312,7 +349,7 @@ export async function executeSpawnWorker(ctx: ToolContext, input: Record<string,
   // instead of burning a second worker on the same question. Independent jobs
   // (different task heads) still run side by side.
   const taskHead = valid.task.trim().slice(0, 80).toLowerCase();
-  if (taskHead.length >= 20) {
+  if (taskHead.length >= 5) {
     const rows = await ctx.store
       .select({ childAgentId: delegations.childAgentId, task: delegations.task })
       .from(delegations)
@@ -326,7 +363,10 @@ export async function executeSpawnWorker(ctx: ToolContext, input: Record<string,
       )
       .orderBy(desc(delegations.createdAt))
       .limit(5);
-    const same = rows.find((row) => row.task.trim().slice(0, 80).toLowerCase() === taskHead);
+    const same = rows.find((row) => {
+      const rowHead = row.task.trim().slice(0, 80).toLowerCase();
+      return rowHead === taskHead || (taskHead.length >= 10 && (rowHead.includes(taskHead) || taskHead.includes(rowHead)));
+    });
     if (same) {
       return {
         error: `That job is already running as ${same.childAgentId} and its result will be delivered on its own. End the turn — do not spawn a duplicate.`,
@@ -477,6 +517,8 @@ export const dispatcherExecutors: Record<string, ToolExecutor> = {
   react_to_message: executeReact,
   notify_user: executeNotify,
   read_history: executeReadHistory,
+  remember_fact: executeRememberFact,
+  correct_memory: executeCorrectMemory,
   read_skill: executeReadSkill,
   hire_subagent: executeHireSubagent,
   list_team: (ctx) => listTeam(ctx.store, ctx.accountId, ctx.agentId),

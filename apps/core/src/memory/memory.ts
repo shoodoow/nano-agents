@@ -1,11 +1,12 @@
 import { memoryCorrectSchema, memoryFactSchema } from "@nano-agents/shared";
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
 import { memories, messages } from "../db/schema.js";
 
 type Database = Pick<ReturnType<typeof getDb>, "insert" | "select" | "delete">;
 
 const pageSize = 5;
+const standingMemoryLimit = 24;
 
 /**
  * Loads one cited message, or a short search page from one room.
@@ -42,12 +43,28 @@ export async function readHistory(
 }
 
 /**
- * Stores one fact for an agent or for the whole account.
+ * Stores one fact for an agent or for the whole account, idempotently by
+ * scope/agent/body so repeated model turns do not flood standing context.
  * Input: database, account id, and a fact with scope, optional agent id, body, and message id.
  * Output: the saved fact. A user fact is stored with a null agent id.
  */
-export async function remember(db: Pick<Database, "insert">, accountId: string, input: unknown) {
+export async function remember(db: Pick<Database, "insert" | "select">, accountId: string, input: unknown) {
   const fact = memoryFactSchema.parse(input);
+  const scopeMatch =
+    fact.scope === "user" ? isNull(memories.agentId) : eq(memories.agentId, fact.agentId ?? "");
+  const [existing] = await db
+    .select()
+    .from(memories)
+    .where(
+      and(
+        eq(memories.accountId, accountId),
+        eq(memories.scope, fact.scope),
+        eq(memories.body, fact.body),
+        scopeMatch,
+      ),
+    )
+    .limit(1);
+  if (existing) return existing;
   const [row] = await db
     .insert(memories)
     .values({
@@ -90,7 +107,7 @@ export async function correct(db: Database, accountId: string, input: unknown) {
  * Output: that agent's private facts plus the account's user facts. Another account's facts are absent.
  */
 export async function memoriesFor(db: Database, accountId: string, agentId: string) {
-  return db
+  const rows = await db
     .select()
     .from(memories)
     .where(
@@ -99,5 +116,7 @@ export async function memoriesFor(db: Database, accountId: string, agentId: stri
         sql`(${memories.scope} = 'user' or (${memories.scope} = 'agent' and ${memories.agentId} = ${agentId}))`,
       ),
     )
-    .orderBy(asc(memories.createdAt));
+    .orderBy(desc(memories.createdAt))
+    .limit(standingMemoryLimit);
+  return rows.reverse();
 }

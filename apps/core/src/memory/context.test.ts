@@ -17,10 +17,10 @@ const agent = {
 };
 
 describe("buildContext", () => {
-  it("keeps the prefix stable and puts the summary and the new message after it", () => {
+  it("keeps the prefix stable and puts cited durable context only in the tail", () => {
     const first = buildContext({
       ...agent,
-      summary: [{ key: "decisions", body: "Ship on Friday." }],
+      summary: [{ key: "decisions", body: "Ship on Friday.", messageId: "message-1" }],
       messages: [{ body: "first note" }],
     });
     const second = buildContext({
@@ -33,9 +33,9 @@ describe("buildContext", () => {
     expect(first.prefix).toBe(second.prefix);
     expect(first.prefix.includes("Ship on Friday.")).toBe(false);
     expect(first.prefix.includes("first note")).toBe(false);
-    expect(first.tail.includes("Ship on Friday.")).toBe(true);
-    expect(first.tail.includes("first note")).toBe(true);
-    expect(second.tail.includes("second note")).toBe(true);
+    expect(first.tail.includes("Ship on Friday. [msg:message-1]")).toBe(true);
+    expect(first.tail.includes("first note")).toBe(false);
+    expect(second.tail.includes("second note")).toBe(false);
   });
 
   it("marks only the prefix for Anthropic and keys the OpenAI cache by account, agent, and prompt version", () => {
@@ -72,6 +72,42 @@ describe("buildContext", () => {
     expect(withRoom.tail.startsWith('Room "Group 1"')).toBe(true);
     expect(withRoom.prefix.includes("Group 1")).toBe(false);
   });
+
+  it("renders active background workers in the tail without polluting the prefix", () => {
+    const withWorkers = buildContext({
+      ...agent,
+      summary: [],
+      messages: [{ body: "What are you doing?" }],
+      activeWorkers: [
+        { childAgentId: "worker-1", task: "Install htop on the system", createdAt: new Date() },
+      ],
+    });
+    expect(withWorkers.prefix.includes("worker-1")).toBe(false);
+    expect(withWorkers.tail.includes("Active background workers:")).toBe(true);
+    expect(withWorkers.tail.includes("Worker worker-1")).toBe(true);
+    expect(withWorkers.tail.includes("Install htop on the system")).toBe(true);
+    expect(withWorkers.tail.includes("redirect_worker")).toBe(true);
+  });
+
+  it("renders bounded employee work history without raw logs", () => {
+    const withHistory = buildContext({
+      ...agent,
+      summary: [],
+      messages: [],
+      workHistory: [
+        {
+          kind: "routine",
+          title: "Weekly campaign report",
+          outcome: "Published the report and flagged declining conversion.",
+          status: "done",
+          createdAt: new Date("2026-10-03T10:00:00.000Z"),
+        },
+      ],
+    });
+    expect(withHistory.tail).toContain("Recent work memory");
+    expect(withHistory.tail).toContain("Weekly campaign report");
+    expect(withHistory.tail).toContain("declining conversion");
+  });
 });
 
 describe("runTurn prefix", () => {
@@ -107,7 +143,7 @@ describe("runTurn prefix", () => {
     await runTurn(db, account.id, room!.id, "second", generate);
     expect(prefixes[0]).toBe(prefixes[1]);
     expect(prefixes[1]?.includes("noted")).toBe(false);
-    expect(tails[1]?.includes("noted")).toBe(true);
+    expect(tails[1]?.includes("noted")).toBe(false);
     const stored = await db.select().from(messages).where(eq(messages.conversationId, room!.id));
     expect(stored.filter((message) => message.agentId).map((message) => message.cacheReadTokens)).toEqual([40, 40]);
   });
