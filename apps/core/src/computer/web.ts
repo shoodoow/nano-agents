@@ -1,7 +1,14 @@
-import { JSDOM } from "jsdom";
+import { JSDOM, VirtualConsole } from "jsdom";
 import { Readability, isProbablyReaderable } from "@mozilla/readability";
 import TurndownService from "turndown";
 import { exec } from "../linux/linux.js";
+
+/** Suppresses jsdom's noisy "Could not parse CSS stylesheet" on modern pages. */
+function quietConsole(): VirtualConsole {
+  const console = new VirtualConsole();
+  console.on("jsdomError", () => {});
+  return console;
+}
 
 // Why: "go look at this site" is core agent work, but the box ships no curl
 // and raw HTML rarely answers anyway. Two tiers: fast static fetch for docs
@@ -74,7 +81,7 @@ export function htmlToMarkdown(
   html: string,
   pageUrl: string,
 ): { title: string; byline: string; siteName: string; markdown: string; usedReader: boolean } {
-  const dom = new JSDOM(html, { url: pageUrl });
+  const dom = new JSDOM(html, { url: pageUrl, virtualConsole: quietConsole() });
   const document = dom.window.document;
   absolutizeLinks(document, pageUrl);
   stripBoilerplate(document);

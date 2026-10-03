@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Image } from "expo-image";
 import {
   Alert,
+  Linking,
   Pressable,
   ScrollView,
   Share,
@@ -11,7 +12,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import type { ProviderSetting, RosterAgent, Routine, RoutineRun } from "../api";
+import type { MessageBlock, ProviderSetting, RosterAgent, Routine, RoutineRun } from "../api";
 import { formatLastRun, formatNextRunRelative, formatRunHistoryWhen, formatSchedule, routineTitle } from "../api";
 import { colors } from "../theme/tokens";
 import { CircleButton } from "../ui/CircleButton";
@@ -20,6 +21,8 @@ import { IconBack, IconCheck, IconChevron, IconClock, IconDoc, IconMore, IconSha
 import type { MarkShape } from "@nano-agents/shared";
 import { markShapes } from "@nano-agents/shared";
 import { LivingMark, MARK_COLORS, MARK_DEFAULT, MARK_SHAPES, Mark } from "../ui/Mark";
+import { openFileBlock } from "./blocks";
+import { collectShares, type SharedFile } from "./shares";
 
 type Page = "info" | "instructions" | "provider" | "routine";
 type Tab = "info" | "links" | "media" | "files";
@@ -53,6 +56,8 @@ export function BotInfoScreen({
   onPickAvatar,
   onPauseRoutine,
   onLoadRoutineRuns,
+  messages,
+  onFetchBlob,
 }: {
   profile: RosterAgent;
   providers: ProviderSetting[];
@@ -65,6 +70,8 @@ export function BotInfoScreen({
   onPickAvatar: () => void;
   onPauseRoutine: (routine: Routine, paused: boolean) => void;
   onLoadRoutineRuns: (routineId: string) => Promise<RoutineRun[]>;
+  messages: { conversationId?: string; body: string; blocks?: MessageBlock[] | null }[];
+  onFetchBlob?: (conversationId: string, messageId: string, index: number) => Promise<{ url?: string; previewUrl?: string }>;
 }) {
   const [page, setPage] = useState<Page>("info");
   const [tab, setTab] = useState<Tab>("info");
@@ -151,6 +158,8 @@ export function BotInfoScreen({
         setSelectedId(routine.id);
         setPage("routine");
       }}
+      messages={messages}
+      onFetchBlob={onFetchBlob}
     />
   );
 }
@@ -187,6 +196,8 @@ function InfoPage({
   onInstructions,
   onProvider,
   onRoutine,
+  messages,
+  onFetchBlob,
 }: {
   profile: RosterAgent;
   providers: ProviderSetting[];
@@ -206,6 +217,8 @@ function InfoPage({
   onInstructions: () => void;
   onProvider: () => void;
   onRoutine: (routine: Routine) => void;
+  messages: { conversationId?: string; body: string; blocks?: MessageBlock[] | null }[];
+  onFetchBlob?: (conversationId: string, messageId: string, index: number) => Promise<{ url?: string; previewUrl?: string }>;
 }) {
   const configured = providers.filter((row) => row.configured);
   const providerChoices: ProviderSetting["provider"][] = [
@@ -280,7 +293,7 @@ function InfoPage({
           ))}
         </View>
         {tab !== "info" ? (
-          <TabEmpty tab={tab} />
+          <ShareTab tab={tab} messages={messages} onFetchBlob={onFetchBlob} />
         ) : (
           <View style={styles.scroll}>
             <Text style={styles.section}>Character</Text>
@@ -445,7 +458,51 @@ function InfoPage({
   );
 }
 
-/** Shows the empty state for tabs with no backend yet. */
+/** Lists links, photos, or files from this private chat. */
+function ShareTab({
+  tab,
+  messages,
+  onFetchBlob,
+}: {
+  tab: Tab;
+  messages: { conversationId?: string; body: string; blocks?: MessageBlock[] | null }[];
+  onFetchBlob?: (conversationId: string, messageId: string, index: number) => Promise<{ url?: string; previewUrl?: string }>;
+}) {
+  const shares = collectShares(messages);
+  const files = shares.files;
+  const items = tab === "links" ? shares.links : tab === "media" ? shares.media.map((item) => item.label) : files.map((file) => file.name);
+  if (items.length === 0) return <TabEmpty tab={tab} />;
+  return (
+    <View style={styles.shareList}>
+      {items.map((item, index) => (
+        <Pressable
+          key={`${item}-${index}`}
+          accessibilityRole="button"
+          style={styles.shareRow}
+          onPress={() => {
+            if (tab === "links") void Linking.openURL(item);
+            if (tab === "files") openSharedFile(files[index], onFetchBlob);
+          }}
+        >
+          <Text style={styles.shareLabel} numberOfLines={2}>{item}</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+function openSharedFile(
+  file: SharedFile | undefined,
+  onFetchBlob?: (conversationId: string, messageId: string, index: number) => Promise<{ url?: string; previewUrl?: string }>,
+): void {
+  if (!file) return;
+  const fetchBlob = file.conversationId && onFetchBlob
+    ? (messageId: string, index: number) => onFetchBlob(file.conversationId!, messageId, index)
+    : undefined;
+  void openFileBlock({ kind: "file", name: file.name, url: file.url, mime: file.mime, blobRef: file.blobRef }, fetchBlob);
+}
+
+/** Shows the empty state for a private-chat tab with nothing shared yet. */
 function TabEmpty({ tab }: { tab: Tab }) {
   const copy =
     tab === "links"
@@ -933,6 +990,9 @@ const styles = StyleSheet.create({
   saveDisabled: { opacity: 0.4 },
   saveText: { color: colors.bg, fontSize: 16, fontWeight: "600" },
   tabEmpty: { flex: 1, alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: 48 },
+  shareList: { marginHorizontal: 16, marginTop: 12, backgroundColor: colors.bubble, borderRadius: 14, overflow: "hidden" },
+  shareRow: { paddingHorizontal: 14, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
+  shareLabel: { color: colors.text, fontSize: 16 },
   tabEmptyInline: { alignItems: "center", gap: 6, paddingHorizontal: 48, paddingVertical: 64 },
   tabEmptyTitle: { color: colors.text, fontSize: 17, fontWeight: "600" },
   tabEmptyHint: { color: colors.muted, fontSize: 14, textAlign: "center" },

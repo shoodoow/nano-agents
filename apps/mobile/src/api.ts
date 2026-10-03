@@ -89,6 +89,7 @@ export type Routine = {
   nextRunAt: string;
   lastRunAt?: string | null;
   lastRunStatus?: "done" | "failed" | null;
+  conversationId?: string;
   recentRuns?: RoutineRun[];
 };
 

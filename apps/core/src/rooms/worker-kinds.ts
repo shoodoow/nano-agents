@@ -48,6 +48,15 @@ If an action or command fails with a clear, unrecoverable blocker (e.g. permissi
 - Write your final report with Findings and Blockers explaining what failed and what is needed from the user or parent agent.
 `.trim();
 
+const ARTIFACT_RULE = `
+## Return compactly
+Your final report is private evidence for the parent agent, never a chat message.
+- Keep it under 1,200 characters whenever possible: decision-ready findings, artifact paths, and blockers only.
+- If the useful output is a table, CSV, dataset, long document, or verbose log, write the full result under \`/shared/worker-results/\` (or the exact output path requested), verify the file, and return its absolute path plus a short summary.
+- Do not paste bulk rows, raw HTML, command transcripts, or long logs into the final report.
+- You have no voice in any room. Never address the person or teammates; the parent decides what to say or attach.
+`.trim();
+
 /**
  * Standing method for one worker run.
  * Built-ins load prompts/workers/<kind>.md; custom uses the parent-supplied instructions
@@ -75,9 +84,11 @@ export function workerPreambleFor(kind: WorkerKind, customInstructions?: string)
       body,
       "",
       EARLY_EXIT_RULE,
+      "",
+      ARTIFACT_RULE,
     ].join("\n");
   }
-  return [readKindPrompt(kind), "", EARLY_EXIT_RULE].join("\n");
+  return [readKindPrompt(kind), "", EARLY_EXIT_RULE, "", ARTIFACT_RULE].join("\n");
 }
 
 /** Persist kind (+ optional custom prompt) inside job_description without a schema migration. */

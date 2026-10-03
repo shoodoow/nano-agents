@@ -1,6 +1,6 @@
 import { accountSchema, agentCreateSchema, agentProfileSchema } from "@nano-agents/shared";
 import { and, eq, sql } from "drizzle-orm";
-import type { getDb } from "../db/client.js";
+import type { getDb, Store } from "../db/client.js";
 import { accounts, agents } from "../db/schema.js";
 import { createLinux } from "../linux/linux.js";
 
@@ -80,9 +80,14 @@ export async function createAgent(db: Database, accountId: string, input: unknow
  * Input: a database client, the owning account id, the agent id, and profile fields.
  * Output: the updated agent, or null when that account does not own the agent.
  */
-export async function updateAgentFlags(db: Database, accountId: string, agentId: string, input: unknown) {
+export async function updateAgentFlags(db: Store, accountId: string, agentId: string, input: unknown) {
   const data = agentProfileSchema.parse(input);
-  const identityTouched = data.role !== undefined || data.personality !== undefined || data.jobDescription !== undefined;
+  const identityTouched =
+    data.name !== undefined ||
+    data.label !== undefined ||
+    data.role !== undefined ||
+    data.personality !== undefined ||
+    data.jobDescription !== undefined;
   const [row] = await db
     .update(agents)
     .set({

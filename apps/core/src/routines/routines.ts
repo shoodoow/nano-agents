@@ -313,6 +313,7 @@ export async function listOwnRoutines(store: Store, accountId: string, agentId: 
       nextRunAt: routines.nextRunAt,
       lastRunAt: routines.lastRunAt,
       lastRunStatus: routines.lastRunStatus,
+      conversationId: routines.conversationId,
     })
     .from(routines)
     .where(and(eq(routines.accountId, accountId), eq(routines.agentId, agentId)))

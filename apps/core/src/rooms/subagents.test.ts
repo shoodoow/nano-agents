@@ -3,6 +3,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { and, count, eq } from "drizzle-orm";
 import { getDb } from "../db/client.js";
 import { agents, conversations, delegations, members, messages } from "../db/schema.js";
+import { exec } from "../linux/linux.js";
 import { createAccount, createAgent } from "../roster/roster.js";
 import { createGroupRoom } from "./rooms.js";
 import { runDelegatedTurn } from "./turn.js";
@@ -298,6 +299,65 @@ describe("subagents and teams", () => {
     expect(workerRows?.value).toBe(1);
     expect(again.workerId).toBe(first.workerId);
     expect((await checkWorker(db, account.id, again.workerId)).status).toBe("running");
+  });
+
+  it("allocates different hidden workers for parallel jobs", async () => {
+    const account = await createAccount(db, { name: "Parallel workers" });
+    const chief = await createAgent(db, account.id, agent("Chief"));
+    const [room] = await db
+      .insert(conversations)
+      .values({ accountId: account.id, kind: "direct", ownerAgentId: chief.id, title: "dm" })
+      .returning();
+    await db.insert(members).values({ conversationId: room!.id, accountId: account.id, agentId: chief.id });
+
+    const jobs = await Promise.all(
+      ["SEO", "Intel", "Positioning"].map((label) =>
+        spawnWorker(db, {
+          accountId: account.id,
+          conversationId: room!.id,
+          parentAgentId: chief.id,
+          label,
+          role: "Worker",
+          jobDescription: "Runs one lane.",
+          task: `Complete ${label}.`,
+        }),
+      ),
+    );
+    expect(new Set(jobs.map((job) => job.workerId)).size).toBe(3);
+  });
+
+  it("stores an oversized worker report as an artifact and returns a compact handoff", async () => {
+    const account = await createAccount(db, { name: "Worker artifact" });
+    const chief = await createAgent(db, account.id, agent("Chief"));
+    const [room] = await db
+      .insert(conversations)
+      .values({ accountId: account.id, kind: "direct", ownerAgentId: chief.id, title: "dm" })
+      .returning();
+    await db.insert(members).values({ conversationId: room!.id, accountId: account.id, agentId: chief.id });
+    const spawned = await spawnWorker(db, {
+      accountId: account.id,
+      conversationId: room!.id,
+      parentAgentId: chief.id,
+      label: "Report",
+      role: "Worker",
+      jobDescription: "Writes reports.",
+      task: "Produce the report.",
+    });
+    const full = `Findings: ${"evidence ".repeat(900)}\nWhat I did: researched.\nBlockers: none`;
+    await runWorker(db, {
+      accountId: account.id,
+      conversationId: room!.id,
+      parentAgentId: chief.id,
+      childId: spawned.workerId,
+      delegationId: spawned.delegationId,
+      task: "Produce the report.",
+      generate: async () => full,
+    });
+    const result = (await checkWorker(db, account.id, spawned.workerId)).result ?? "";
+    const path = `/shared/worker-results/${spawned.delegationId}.md`;
+    expect(result.length).toBeLessThan(4_000);
+    expect(result).toContain(`Full report: ${path}`);
+    expect((await exec(account.id, ["cat", path])).stdout).toBe(full);
   });
 
   it("does not let a stopped execution overwrite or deliver a stale result", async () => {

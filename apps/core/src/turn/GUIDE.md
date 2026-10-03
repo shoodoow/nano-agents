@@ -16,7 +16,8 @@ POST /messages
        → spawn_worker → runWorker (background)
             → worker tools (bash, web, read_skill, …)
             → delegations.result (report to parent)
-            → TurnBus worker.settled → deliverWorkerResult or parent wake
+            → TurnBus worker.settled → private parent wake
+            → parent reviews and decides what the room sees
   → runs (done) + events (run done)
 ```
 

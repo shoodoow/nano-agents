@@ -13,11 +13,11 @@ Turn slot:
 Worker path:
 
 1. `spawn_worker` → `agents` (hidden child) + `delegations` (`running`)
-2. `runWorker` → `delegations.result` + `status` (always non-empty report)
-3. `TurnBus` `worker.settled` → `deliverWorkerResult` or parent cue turn
-4. User sees parent `messages` row when delivered
+2. `runWorker` → `delegations.result` + `status`; oversized reports become `/shared/worker-results/` artifacts
+3. `TurnBus` `worker.settled` → private parent cue turn
+4. Parent decides whether to summarize, attach an artifact, retry, or stay quiet
 
-Delegate (sync ≤2s):
+Delegate (detached visible teammate turn):
 
 - `delegations` + child `messages` with `viaAgentId`
 

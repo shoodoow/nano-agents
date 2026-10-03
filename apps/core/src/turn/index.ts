@@ -7,7 +7,6 @@ ensureTracePlugins();
 
 export { runTurn, continueQueuedTurn } from "./orchestrator.js";
 export { runDelegatedTurn } from "./delegation.js";
-export { deliverWorkerResult } from "./worker-delivery.js";
 export { replyWithModel } from "./agent-loop.js";
 export { toModelPrompt } from "./prompt-model.js";
 export { toModelMessages, toImagePart, textOf } from "./prompt-media.js";

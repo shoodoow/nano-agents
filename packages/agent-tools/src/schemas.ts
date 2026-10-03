@@ -50,8 +50,13 @@ export const groupConversationInputSchema = z.object({
 export type GroupConversationInput = z.infer<typeof groupConversationInputSchema>;
 
 export const subagentCreateSchema = z.object({
-  label: z.string().trim().min(1).max(100),
-  role: z.string().trim().min(1).max(100),
+  label: z
+    .string()
+    .trim()
+    .min(1)
+    .max(100)
+    .describe("A human first name you choose, such as Maya or Jordan. Never the job title."),
+  role: z.string().trim().min(1).max(100).describe("The job title, such as SEO analyst. This is not their name."),
   personality: z.string().trim().max(500).optional().default(""),
   jobDescription: z.string().trim().min(1).max(10_000),
   provider: z.enum(providerNames).optional(),
@@ -61,6 +66,28 @@ export const subagentCreateSchema = z.object({
 });
 
 export type SubagentCreate = z.infer<typeof subagentCreateSchema>;
+
+export const teammateUpdateSchema = z.object({
+  agentId: z.string().uuid().describe("Teammate UUID from list_team."),
+  label: z
+    .string()
+    .trim()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe("New human first name, one word, such as Maya. Replaces their name. Never a job title."),
+  role: z.string().trim().min(1).max(100).optional().describe("New job title. Not their name."),
+  personality: z.string().trim().max(500).optional(),
+  jobDescription: z
+    .string()
+    .trim()
+    .min(1)
+    .max(10_000)
+    .optional()
+    .describe("New standing instructions: what they own and how they should work."),
+});
+
+export type TeammateUpdate = z.infer<typeof teammateUpdateSchema>;
 
 export const delegateSchema = z.object({
   agentId: z.string().uuid(),

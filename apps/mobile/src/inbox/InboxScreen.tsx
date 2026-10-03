@@ -1,8 +1,12 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Feather } from "@expo/vector-icons";
+import { FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { markShapes, type MarkShape } from "@nano-agents/shared";
 import type { RosterAgent } from "../api";
 import { colors } from "../theme/tokens";
 import { Avatar } from "../ui/Avatar";
+import { Mark } from "../ui/Mark";
+import { GroupCluster, type GroupFace } from "../ui/GroupCluster";
 import { CircleButton } from "../ui/CircleButton";
 import { IconPlus, IconReply, IconSearch } from "../ui/icons";
 
@@ -22,15 +26,19 @@ export function InboxScreen({
   onNew,
   onOpen,
   onOpenGroup,
+  onPin,
+  onHide,
   menu,
 }: {
   agents: RosterAgent[];
-  groups: { id: string; title: string; memberCount: number }[];
+  groups: { id: string; title: string; memberCount: number; members: GroupFace[] }[];
   pendingCount?: number;
   onAccount: () => void;
   onNew: () => void;
   onOpen: (agent: RosterAgent) => void;
   onOpenGroup: (conversationId: string) => void;
+  onPin: (agent: RosterAgent) => void;
+  onHide: (agent: RosterAgent) => void;
   menu?: ReactNode;
 }) {
   const [query, setQuery] = useState("");
@@ -43,8 +51,9 @@ export function InboxScreen({
     }
     return visible.filter((agent) => `${agent.name} ${agent.label} ${agent.role} ${agent.jobDescription}`.toLowerCase().includes(needle));
   }, [query, visible]);
-  const featured = query.trim() ? undefined : (filtered.find((agent) => agent.pinned) ?? filtered[0]);
-  const rows = featured ? filtered.filter((agent) => agent.id !== featured.id) : filtered;
+  const [held, setHeld] = useState<RosterAgent | null>(null);
+  const pinned = query.trim() ? [] : filtered.filter((agent) => agent.pinned);
+  const rows = query.trim() ? filtered : filtered.filter((agent) => !agent.pinned);
 
   return (
     <View style={styles.screen}>
@@ -82,24 +91,33 @@ export function InboxScreen({
         keyExtractor={(agent) => agent.id}
         contentContainerStyle={styles.list}
         ListHeaderComponent={
-          featured ? (
-            <Pressable accessibilityRole="button" onPress={() => onOpen(featured)} style={styles.featured}>
-              <Avatar
-                id={featured.id}
-                size={92}
-                shape={featured.markShape}
-                color={featured.markColor}
-                photo={featured.avatarUrl}
-                mood="idle"
-              />
-              <View style={styles.featuredName}>
-                <Text style={styles.featuredLabel}>{featured.name}</Text>
-                {featured.notify ? <View style={styles.online} accessibilityLabel="Notifications on" /> : null}
-              </View>
-            </Pressable>
-          ) : (
-            <Text style={styles.empty}>{agents.length === 0 ? "Sign up, then create a chat or a group." : "No matching agents."}</Text>
-          )
+          <>
+            {pinned.length > 0 ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pinnedRow}>
+                {pinned.map((agent) => (
+                  <Pressable
+                    key={agent.id}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Pinned ${agent.name}`}
+                    onPress={() => onOpen(agent)}
+                    onLongPress={() => setHeld(agent)}
+                    delayLongPress={350}
+                    style={styles.pinnedItem}
+                  >
+                    <PinnedFace agent={agent} />
+                    <Text style={styles.pinnedLabel} numberOfLines={1}>
+                      {agent.name}
+                    </Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            ) : null}
+            {agents.length === 0 ? (
+              <Text style={styles.empty}>Sign up, then create a chat or a group.</Text>
+            ) : filtered.length === 0 ? (
+              <Text style={styles.empty}>No matching agents.</Text>
+            ) : null}
+          </>
         }
         ListFooterComponent={
           groups.length > 0 ? (
@@ -112,7 +130,7 @@ export function InboxScreen({
                   onPress={() => onOpenGroup(group.id)}
                   style={({ pressed }) => [styles.row, pressed && styles.pressed]}
                 >
-                  <Avatar id={group.id} size={46} />
+                  <GroupCluster members={group.members} size={40} />
                   <View style={styles.rowBody}>
                     <Text style={styles.name} numberOfLines={1}>
                       {group.title}
@@ -127,7 +145,13 @@ export function InboxScreen({
           ) : null
         }
         renderItem={({ item }) => (
-          <Pressable accessibilityRole="button" onPress={() => onOpen(item)} style={({ pressed }) => [styles.row, pressed && styles.pressed]}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => onOpen(item)}
+            onLongPress={() => setHeld(item)}
+            delayLongPress={350}
+            style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+          >
             <Avatar id={item.id} size={46} round={item.name.length % 2 === 0} shape={item.markShape} color={item.markColor} photo={item.avatarUrl} />
             <View style={styles.rowBody}>
               <View style={styles.rowTop}>
@@ -151,6 +175,74 @@ export function InboxScreen({
         )}
       />
       {menu ? <View style={styles.menu}>{menu}</View> : null}
+      <Modal visible={held !== null} transparent animationType="fade" onRequestClose={() => setHeld(null)}>
+        <Pressable accessibilityLabel="Dismiss" style={styles.scrim} onPress={() => setHeld(null)}>
+          {held ? (
+            <Pressable style={styles.holdCard} onPress={() => {}}>
+              <View style={styles.holdPreview}>
+                <Avatar id={held.id} size={28} shape={held.markShape} color={held.markColor} photo={held.avatarUrl} alive={false} />
+                <Text style={styles.holdName} numberOfLines={1}>{held.name}</Text>
+              </View>
+              <Text style={styles.holdBody} numberOfLines={4}>{held.role || `Message ${held.name}`}</Text>
+              <View style={styles.holdMenu}>
+                <Pressable
+                  accessibilityRole="button"
+                  style={styles.holdRow}
+                  onPress={() => {
+                    const agent = held;
+                    setHeld(null);
+                    onPin(agent);
+                  }}
+                >
+                  <Feather name="map-pin" size={18} color="#fff" />
+                  <Text style={styles.holdLabel}>{held.pinned ? "Unpin" : "Pin"}</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  style={styles.holdRow}
+                  onPress={() => {
+                    const agent = held;
+                    setHeld(null);
+                    onHide(agent);
+                  }}
+                >
+                  <Feather name="eye-off" size={18} color={colors.danger} />
+                  <Text style={[styles.holdLabel, styles.holdDanger]}>Hide</Text>
+                </Pressable>
+              </View>
+            </Pressable>
+          ) : null}
+        </Pressable>
+      </Modal>
+    </View>
+  );
+}
+
+const PIN_BOX = 76;
+const PIN_SPAN: Record<string, number> = {
+  circle: 1,
+  blob: 1.08,
+  square: 1,
+  pill: 1.3,
+  triangle: 0.96,
+  hexagon: 1,
+  cloud: 1.2,
+  drop: 1,
+};
+
+/** Draws one pinned face inside the same square, whatever the mark shape is. */
+function PinnedFace({ agent }: { agent: RosterAgent }) {
+  if (agent.avatarUrl) {
+    return (
+      <View style={styles.pinnedFace}>
+        <Avatar id={agent.id} size={PIN_BOX} photo={agent.avatarUrl} alive={false} />
+      </View>
+    );
+  }
+  const shape = markShapes.includes(agent.markShape as MarkShape) ? (agent.markShape as MarkShape) : "square";
+  return (
+    <View style={styles.pinnedFace}>
+      <Mark shape={shape} color={agent.markColor || "#8B5CF6"} size={PIN_BOX / (PIN_SPAN[shape] ?? 1)} />
     </View>
   );
 }
@@ -176,10 +268,10 @@ const styles = StyleSheet.create({
   list: { paddingBottom: 32 },
   groups: { marginTop: 8 },
   groupsTitle: { color: colors.muted, fontSize: 13, fontWeight: "700", textTransform: "uppercase", paddingHorizontal: 16, marginBottom: 4 },
-  featured: { alignItems: "center", paddingTop: 36, paddingBottom: 28 },
-  featuredName: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 14 },
-  featuredLabel: { color: colors.text, fontSize: 16, fontWeight: "600" },
-  online: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.online },
+  pinnedRow: { gap: 8, paddingTop: 28, paddingBottom: 16, paddingHorizontal: 16, flexGrow: 1, justifyContent: "center" },
+  pinnedItem: { width: 108, alignItems: "center", gap: 8 },
+  pinnedFace: { width: 108, height: 76, alignItems: "center", justifyContent: "center" },
+  pinnedLabel: { color: colors.text, fontSize: 13, textAlign: "center" },
   empty: { color: colors.muted, textAlign: "center", marginTop: 80, fontSize: 16, paddingHorizontal: 32 },
   row: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 10, gap: 12 },
   pressed: { opacity: 0.6 },
@@ -190,4 +282,13 @@ const styles = StyleSheet.create({
   badgeText: { color: colors.muted, fontSize: 13 },
   previewRow: { flexDirection: "row", alignItems: "center" },
   preview: { color: colors.muted, fontSize: 15, flex: 1 },
+  scrim: { flex: 1, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "center", paddingHorizontal: 36 },
+  holdCard: { gap: 10 },
+  holdPreview: { flexDirection: "row", alignItems: "center", gap: 8, alignSelf: "flex-start", backgroundColor: "#2C2C2E", borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8 },
+  holdName: { color: colors.text, fontSize: 16, fontWeight: "600", maxWidth: 180 },
+  holdBody: { color: colors.text, fontSize: 15, lineHeight: 20, backgroundColor: "#2C2C2E", borderRadius: 16, paddingHorizontal: 14, paddingVertical: 12 },
+  holdMenu: { backgroundColor: "#2C2C2E", borderRadius: 16, overflow: "hidden", marginTop: 4 },
+  holdRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, paddingVertical: 14 },
+  holdLabel: { color: colors.text, fontSize: 16 },
+  holdDanger: { color: colors.danger },
 });

@@ -219,7 +219,7 @@ export function ChatScreen({
         </CircleButton>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Agent details for ${title}`}
+          accessibilityLabel={members.length > 0 ? `Group details for ${title}` : `Agent details for ${title}`}
           onPress={onAgentMenu}
           style={styles.pill}
         >
@@ -243,7 +243,7 @@ export function ChatScreen({
             ) : null}
           </View>
         </Pressable>
-        {agent.linuxProfile ? (
+        {members.length === 0 && agent.linuxProfile ? (
           <CircleButton label="Desktop" onPress={onDesktop}>
             <IconMonitor />
           </CircleButton>

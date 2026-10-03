@@ -1,11 +1,10 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { getDb } from "../db/client.js";
-import { conversations, delegations, members, messages } from "../db/schema.js";
+import { conversations, members, messages } from "../db/schema.js";
 import { eq } from "drizzle-orm";
 import { createAccount, createAgent } from "../roster/roster.js";
 import { saveUserMessage } from "./rooms.js";
-import { spawnWorker } from "./subagents.js";
-import { deliverWorkerResult, runTurn, toModelPrompt } from "./turn.js";
+import { runTurn, toModelPrompt } from "./turn.js";
 
 const databaseUrl = process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/nano_agents";
 const db = getDb(databaseUrl);
@@ -191,48 +190,6 @@ describe("runTurn", () => {
     expect(log).toEqual(["start", "end", "start", "end"]);
   });
 
-  it("posts a finished worker result once, then skips the duplicate", async () => {
-    const account = await createAccount(db, { name: "Delivery" });
-    const owner = await createAgent(db, account.id, agent("Owner"));
-    const [room] = await db
-      .insert(conversations)
-      .values({ accountId: account.id, kind: "direct", ownerAgentId: owner.id, title: "delivery" })
-      .returning();
-    await db.insert(members).values({ conversationId: room!.id, accountId: account.id, agentId: owner.id });
-    const spawned = await spawnWorker(db, {
-      accountId: account.id,
-      conversationId: room!.id,
-      parentAgentId: owner.id,
-      label: "Dig",
-      role: "Researcher",
-      jobDescription: "Dig through files.",
-      task: "Find the ledger.",
-    });
-    await db
-      .update(delegations)
-      .set({ status: "done", result: "Found three rows in the ledger for March." })
-      .where(eq(delegations.id, spawned.delegationId));
-    const first = await deliverWorkerResult(db, {
-      accountId: account.id,
-      conversationId: room!.id,
-      parentAgentId: owner.id,
-      delegationId: spawned.delegationId,
-      settled: { workerId: spawned.workerId, task: "Find the ledger.", result: "Found three rows in the ledger for March." },
-      generate: async () => "Worker found three ledger rows for March.",
-    });
-    expect(first).toBe("delivered");
-    const stored = await db.select().from(messages).where(eq(messages.conversationId, room!.id));
-    expect(stored.some((m) => m.agentId === owner.id && m.body.includes("three rows in the ledger"))).toBe(true);
-    const second = await deliverWorkerResult(db, {
-      accountId: account.id,
-      conversationId: room!.id,
-      parentAgentId: owner.id,
-      delegationId: spawned.delegationId,
-      settled: { workerId: spawned.workerId, task: "Find the ledger.", result: "Found three rows in the ledger for March." },
-      generate: async () => "duplicate",
-    });
-    expect(second).toBe("skipped");
-  });
 });
 
 function agent(name: string) {

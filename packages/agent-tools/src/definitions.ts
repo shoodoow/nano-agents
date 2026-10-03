@@ -22,6 +22,7 @@ import {
   sendMessageInputSchema,
   spawnWorkerToolInputSchema,
   subagentCreateSchema,
+  teammateUpdateSchema,
   todoWriteInputSchema,
   typeTextInputSchema,
   urlInputSchema,
@@ -74,7 +75,8 @@ export const allToolDefinitions: ToolDefinition[] = [
   },
   {
     name: "delegate",
-    description: "Hand a task to a teammate already in this room and wait for their reply (≤2s). For longer work use spawn_worker.",
+    description:
+      "Ask a lasting teammate already in this group to act or reply. Their turn starts in the background and their own messages appear visibly in this room. Use agent UUIDs from list_team; text @mentions alone do not wake teammates. For hidden parent-only execution use spawn_worker.",
     surfaces: ["dispatcher"],
     inputSchema: delegateSchema,
   },
@@ -102,9 +104,16 @@ export const allToolDefinitions: ToolDefinition[] = [
   {
     name: "hire_subagent",
     description:
-      "Create a lasting teammate with role, personality, and job (max 10 visible teammates; hidden workers do not count). For one task, use spawn_worker. In a private 1:1 chat: call create_group first, then hire_subagent again with conversationId set to the group id create_group returned. In a group room, omit conversationId.",
+      "Create a lasting teammate (max 10 visible teammates; hidden workers do not count). label is a human first name you invent, never the job. role is the job title. Also pass personality and jobDescription. For one task, use spawn_worker. In a private 1:1 chat: call create_group first, then hire_subagent again with conversationId set to the group id create_group returned. In a group room, omit conversationId.",
     surfaces: ["dispatcher"],
     inputSchema: subagentCreateSchema,
+  },
+  {
+    name: "update_teammate",
+    description:
+      "Change a teammate you hired. agentId comes from list_team. label is their new human first name (one word, never the job). jobDescription replaces their standing instructions. role and personality are optional. Hidden workers cannot be updated.",
+    surfaces: ["dispatcher"],
+    inputSchema: teammateUpdateSchema,
   },
   {
     name: "list_groups",

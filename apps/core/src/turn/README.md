@@ -15,8 +15,8 @@ Dispatcher-first room turns: the chatting agent uses voice tools only; heavy wor
 | `events/emitter.ts` | Durable `events` + SSE fanout |
 | `events/bus.ts` | In-process worker/handoff events |
 | `trace/` | Plugin-ready execution traces |
-| `worker-delivery.ts` | Parent voice delivery to the room |
-| `handlers/worker-lifecycle.ts` | Subscribes to `worker.settled` |
+| `parent-wake.ts` | Private worker-result cue for manager review |
+| `handlers/worker-lifecycle.ts` | Batches `worker.settled` and wakes the parent |
 
 ## Extend
 

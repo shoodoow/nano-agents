@@ -1,7 +1,10 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Image, Linking, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Image, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { File, Paths } from "expo-file-system";
+import * as Sharing from "expo-sharing";
 import type { MessageBlock } from "../api";
 import { blocksFromMaybeWidgetText } from "@nano-agents/shared";
+import { parseMarkdownBlocks } from "./markdown";
 import { colors } from "../theme/tokens";
 import { IconClose, IconShield } from "../ui/icons";
 
@@ -91,7 +94,10 @@ export function BlockView({
   }
   if (block.kind === "file") {
     return (
-      <Pressable style={styles.fileWrap} onPress={() => void Linking.openURL(block.url)}>
+      <Pressable
+        style={styles.fileWrap}
+        onPress={() => void openFileBlock(block, fetchBlob)}
+      >
         <Text style={styles.fileName}>{block.name}</Text>
         <Text style={styles.fileHint}>Tap to open</Text>
       </Pressable>
@@ -109,6 +115,35 @@ export function BlockView({
       onSubmitSecret={onSubmitSecret}
     />
   );
+}
+
+/** Resolves lazy bytes, writes them to device cache, then opens the native share/preview sheet. */
+export async function openFileBlock(
+  block: Extract<MessageBlock, { kind: "file" }>,
+  fetchBlob?: (messageId: string, index: number) => Promise<{ url?: string; previewUrl?: string }>,
+): Promise<void> {
+  let url = block.url;
+  if (!url && block.blobRef && fetchBlob) {
+    url = (await fetchBlob(block.blobRef.messageId, block.blobRef.index)).url ?? "";
+  }
+  const data = /^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/.exec(url);
+  if (!data) {
+    if (url) await Linking.openURL(url);
+    return;
+  }
+  const raw = globalThis.atob(data[2]!);
+  const bytes = new Uint8Array(raw.length);
+  for (let index = 0; index < raw.length; index += 1) bytes[index] = raw.charCodeAt(index);
+  const safeName = block.name.replace(/[^A-Za-z0-9._-]+/g, "_") || "attachment";
+  const file = new File(Paths.cache, safeName);
+  if (file.exists) file.delete();
+  file.create();
+  file.write(bytes);
+  if (await Sharing.isAvailableAsync()) {
+    await Sharing.shareAsync(file.uri, { mimeType: block.mime ?? data[1], dialogTitle: `Open ${block.name}` });
+  } else {
+    await Linking.openURL(file.uri);
+  }
 }
 
 /**
@@ -172,7 +207,42 @@ function LazyBlobImage({
  * Input: raw markdown-ish text. Output: nested Text spans.
  */
 function RichText({ text }: { text: string }) {
-  return <Text style={styles.body}>{renderInlineMarkdown(text)}</Text>;
+  const blocks = parseMarkdownBlocks(text);
+  if (blocks.length === 1 && blocks[0]?.kind === "text") {
+    return <Text style={styles.body}>{renderInlineMarkdown(blocks[0].text)}</Text>;
+  }
+  return (
+    <View style={styles.richStack}>
+      {blocks.map((block, index) =>
+        block.kind === "table" ? (
+          <ScrollView key={index} horizontal showsHorizontalScrollIndicator={false}>
+            <View>
+              <View style={styles.mdTableHead}>
+                {block.columns.map((column, columnIndex) => (
+                  <Text key={columnIndex} style={styles.mdTableHeader}>
+                    {renderInlineMarkdown(column, `h-${index}-${columnIndex}`)}
+                  </Text>
+                ))}
+              </View>
+              {block.rows.map((row, rowIndex) => (
+                <View key={rowIndex} style={styles.mdTableRow}>
+                  {block.columns.map((_, columnIndex) => (
+                    <Text key={columnIndex} style={styles.mdTableCell}>
+                      {renderInlineMarkdown(row[columnIndex] ?? "", `c-${index}-${rowIndex}-${columnIndex}`)}
+                    </Text>
+                  ))}
+                </View>
+              ))}
+            </View>
+          </ScrollView>
+        ) : (
+          <Text key={index} style={styles.body}>
+            {renderInlineMarkdown(block.text, `p-${index}`)}
+          </Text>
+        ),
+      )}
+    </View>
+  );
 }
 
 function renderInlineMarkdown(text: string, keyPrefix = "t"): ReactNode[] {
@@ -762,6 +832,11 @@ function SecretWidget({
 const styles = StyleSheet.create({
   body: { color: colors.text, fontSize: 16, lineHeight: 24 },
   mdBold: { fontWeight: "700", color: colors.text },
+  richStack: { gap: 8 },
+  mdTableHead: { flexDirection: "row", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
+  mdTableHeader: { width: 148, color: colors.text, fontSize: 13, fontWeight: "700", paddingVertical: 6, paddingRight: 10 },
+  mdTableRow: { flexDirection: "row", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#2C2C2E" },
+  mdTableCell: { width: 148, color: colors.text, fontSize: 13, lineHeight: 18, paddingVertical: 6, paddingRight: 10 },
   mdCode: {
     fontFamily: "monospace",
     fontSize: 14,

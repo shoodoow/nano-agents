@@ -4,7 +4,7 @@ import { createAccount } from "../roster/roster.js";
 import { exec } from "../linux/linux.js";
 import { blocksToText } from "./send-message.js";
 import { stripBloatedBlocks } from "./rooms.js";
-import { materializeBlocks, parseDataUri, sanitizeFileName } from "./uploads.js";
+import { inlineSharedOutputBlocks, materializeBlocks, parseDataUri, sanitizeFileName } from "./uploads.js";
 import { textOf, toImagePart, toModelMessages } from "./turn.js";
 
 const databaseUrl = process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/nano_agents";
@@ -127,5 +127,18 @@ describe("materializeBlocks", () => {
     expect(image.savedPath).toBe("/shared/uploads/msg-1/dot");
     // Remote URLs are not ours to fetch: passthrough untouched.
     expect(landed[3]).toEqual({ kind: "file", url: "https://cdn.example/remote.pdf", name: "remote.pdf" });
+  });
+
+  it("turns an agent-created shared path into phone-readable attachment bytes", async () => {
+    const account = await createAccount(db, { name: "Outbound upload" });
+    await exec(account.id, ["sh", "-c", "printf 'vendor,price\\nOctessa,15000\\n' > /shared/scan.csv"]);
+    const blocks = await inlineSharedOutputBlocks(account.id, [
+      { kind: "file", url: "/shared/scan.csv", name: "scan.csv", mime: "text/csv" },
+    ]);
+    const file = blocks[0] as { url: string; savedPath?: string };
+    expect(file.url).toBe(
+      `data:text/csv;base64,${Buffer.from("vendor,price\nOctessa,15000\n").toString("base64")}`,
+    );
+    expect(file.savedPath).toBe("/shared/scan.csv");
   });
 });

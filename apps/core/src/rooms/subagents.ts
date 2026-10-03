@@ -17,7 +17,7 @@ import { buildWorkerToolSet } from "../turn/tools/build-tools.js";
 import type { ToolContext } from "../turn/tools/context.js";
 import { appendEvent } from "./events.js";
 import { publish } from "./stream.js";
-import { createProfile } from "../linux/linux.js";
+import { createProfile, execStdin } from "../linux/linux.js";
 import { agents, conversations, delegations, members, messages } from "../db/schema.js";
 import { RoomCapacityError } from "./rooms.js";
 
@@ -32,6 +32,24 @@ export const MAX_ROOM_MEMBERS = 20;
 
 /** Live model calls keyed by delegation so stop/redirect can cancel immediately. */
 const activeWorkerRuns = new Map<string, AbortController>();
+/** Serializes free-worker allocation so parallel tool calls cannot claim one row twice. */
+const workerSpawnLocks = new Map<string, Promise<void>>();
+
+async function withWorkerSpawnLock<T>(key: string, work: () => Promise<T>): Promise<T> {
+  const previous = workerSpawnLocks.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  workerSpawnLocks.set(key, current);
+  await previous;
+  try {
+    return await work();
+  } finally {
+    release();
+    if (workerSpawnLocks.get(key) === current) workerSpawnLocks.delete(key);
+  }
+}
 
 /** Returned when spawn_worker cannot insert or reuse a worker; tool layer maps this to { error }. */
 export class WorkerCapacityError extends Error {
@@ -439,54 +457,56 @@ export async function spawnWorker(
     modelId: data.modelId ?? parent.modelId,
   };
 
-  const freeId = await findFreeHiddenWorker(store, input.accountId, input.parentAgentId);
-  if (freeId) {
-    return assignWorkerRow(store, {
+  return withWorkerSpawnLock(`${input.accountId}:${input.parentAgentId}`, async () => {
+    const freeId = await findFreeHiddenWorker(store, input.accountId, input.parentAgentId);
+    if (freeId) {
+      return assignWorkerRow(store, {
+        accountId: input.accountId,
+        conversationId: input.conversationId,
+        parentAgentId: input.parentAgentId,
+        childAgentId: freeId,
+        task: data.task,
+        ...workerMeta,
+      });
+    }
+
+    const [workerCount] = await store
+      .select({ value: count() })
+      .from(agents)
+      .where(
+        and(eq(agents.parentId, input.parentAgentId), eq(agents.accountId, input.accountId), eq(agents.hidden, true)),
+      );
+    if ((workerCount?.value ?? 0) >= MAX_WORKERS_PER_PARENT) {
+      await throwWorkerCapacity(store, input.accountId, input.parentAgentId);
+    }
+
+    const baseName = data.label.trim().replace(/\s+/g, "-").slice(0, 60) || "worker";
+    const [child] = await store
+      .insert(agents)
+      .values({
+        accountId: input.accountId,
+        name: `${baseName}-${Math.random().toString(36).slice(2, 6)}`,
+        label: data.label,
+        role: data.role,
+        personality: data.personality ?? "",
+        jobDescription: packedJob,
+        provider: data.provider ?? parent.provider,
+        modelId: data.modelId ?? parent.modelId,
+        parentId: input.parentAgentId,
+        teamId: parent.teamId ?? parent.id,
+        hidden: true,
+      })
+      .returning();
+    if (!child) throw new Error("Worker insert returned no row.");
+    // NOTE: no members insert — workers are never room members. Room 1:1
+    // integrity holds structurally, and group threads stay free of worker noise.
+    return startWorkerDelegation(store, {
       accountId: input.accountId,
       conversationId: input.conversationId,
       parentAgentId: input.parentAgentId,
-      childAgentId: freeId,
+      childAgentId: child.id,
       task: data.task,
-      ...workerMeta,
     });
-  }
-
-  const [workerCount] = await store
-    .select({ value: count() })
-    .from(agents)
-    .where(
-      and(eq(agents.parentId, input.parentAgentId), eq(agents.accountId, input.accountId), eq(agents.hidden, true)),
-    );
-  if ((workerCount?.value ?? 0) >= MAX_WORKERS_PER_PARENT) {
-    await throwWorkerCapacity(store, input.accountId, input.parentAgentId);
-  }
-
-  const baseName = data.label.trim().replace(/\s+/g, "-").slice(0, 60) || "worker";
-  const [child] = await store
-    .insert(agents)
-    .values({
-      accountId: input.accountId,
-      name: `${baseName}-${Math.random().toString(36).slice(2, 6)}`,
-      label: data.label,
-      role: data.role,
-      personality: data.personality ?? "",
-      jobDescription: packedJob,
-      provider: data.provider ?? parent.provider,
-      modelId: data.modelId ?? parent.modelId,
-      parentId: input.parentAgentId,
-      teamId: parent.teamId ?? parent.id,
-      hidden: true,
-    })
-    .returning();
-  if (!child) throw new Error("Worker insert returned no row.");
-  // NOTE: no members insert — workers are never room members. Room 1:1
-  // integrity holds structurally, and group threads stay free of worker noise.
-  return startWorkerDelegation(store, {
-    accountId: input.accountId,
-    conversationId: input.conversationId,
-    parentAgentId: input.parentAgentId,
-    childAgentId: child.id,
-    task: data.task,
   });
 }
 
@@ -737,7 +757,8 @@ export async function runWorker(
   };
   const finish = async (status: "done" | "failed", result: string, usage?: Usage): Promise<void> => {
     const { formatWorkerReport } = await import("../turn/worker-report.js");
-    const report = formatWorkerReport(result, status);
+    const fullReport = formatWorkerReport(result, status);
+    const report = await compactWorkerReport(input.accountId, input.delegationId, fullReport);
     const updated = await db
       .update(delegations)
       .set({
@@ -997,6 +1018,28 @@ export async function runWorker(
       activeWorkerRuns.delete(input.delegationId);
     }
   }
+}
+
+/**
+ * Keeps large datasets/logs out of manager context while preserving every byte.
+ * Workers are prompted to do this themselves; this is the deterministic safety
+ * net for models that still paste a long report.
+ */
+async function compactWorkerReport(accountId: string, delegationId: string, report: string): Promise<string> {
+  const REPORT_INLINE_MAX = 4_000;
+  if (report.length <= REPORT_INLINE_MAX) return report;
+  const path = `/shared/worker-results/${delegationId}.md`;
+  const written = await execStdin(
+    accountId,
+    ["sh", "-c", `mkdir -p /shared/worker-results && cat > '${path}' && chmod 644 '${path}'`],
+    Buffer.from(report, "utf8"),
+  ).catch(() => null);
+  if (!written || written.code !== 0) return report.slice(0, REPORT_INLINE_MAX);
+
+  const head = report.slice(0, 2_800);
+  const boundary = Math.max(head.lastIndexOf("\n\n"), head.lastIndexOf(". "), head.lastIndexOf("\n"));
+  const summary = head.slice(0, boundary >= 1_400 ? boundary : head.length).trimEnd();
+  return `${summary}\n\nFull report: ${path}`;
 }
 
 /**

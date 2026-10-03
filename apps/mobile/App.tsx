@@ -22,11 +22,13 @@ import { authClient } from "./src/auth";
 import { MenuSheet, type MenuPage, type SignedAccount } from "./src/account/MenuSheet";
 import { ApprovalsScreen } from "./src/approvals/ApprovalsScreen";
 import { BotInfoScreen } from "./src/chat/BotInfoScreen";
+import { GroupInfoScreen } from "./src/chat/GroupInfoScreen";
 import { ChatScreen, type Bubble } from "./src/chat/ChatScreen";
 import { DesktopScreen } from "./src/desktop/DesktopScreen";
 import { InboxScreen } from "./src/inbox/InboxScreen";
 import { NewRoomSheet } from "./src/inbox/NewRoomSheet";
 import { colors } from "./src/theme/tokens";
+import type { GroupFace } from "./src/ui/GroupCluster";
 
 configureAuthCookie(authClient.getCookie);
 const core = createCore();
@@ -112,7 +114,14 @@ type Screen =
       memberIds: string[];
     }
   | { name: "desktop"; agent: RosterAgent }
-  | { name: "profile"; agent: RosterAgent }
+  | { name: "profile"; agent: RosterAgent; fromGroup?: boolean }
+  | {
+      name: "group";
+      conversationId: string;
+      title: string;
+      memberIds: string[];
+      owner: RosterAgent;
+    }
   | { name: "approvals" };
 
 /**
@@ -147,10 +156,12 @@ export default function App() {
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [toolApprovals, setToolApprovals] = useState<ToolApproval[]>([]);
   const [routines, setRoutines] = useState<Routine[]>([]);
+  const [groupFeed, setGroupFeed] = useState<(Bubble & { conversationId?: string })[]>([]);
+  const [profileFeed, setProfileFeed] = useState<(Bubble & { conversationId?: string })[]>([]);
   const [profile, setProfile] = useState<RosterAgent | null>(null);
   const [conversationId, setConversationId] = useState("");
   const [contextLine, setContextLine] = useState<string | null>(null);
-  const [groups, setGroups] = useState<{ id: string; title: string; memberCount: number }[]>([]);
+  const [groups, setGroups] = useState<{ id: string; title: string; memberCount: number; members: GroupFace[] }[]>([]);
   // Last opened chat, so the desktop back-button returns to the right title.
   const [lastChat, setLastChat] = useState<{
     agent: RosterAgent;
@@ -202,7 +213,7 @@ export default function App() {
     setScreen({ name: "inbox" });
     setMenu(null);
     setNote("");
-    await loadGroups(accountIdFromSession);
+    await loadGroups(accountIdFromSession, roster);
     // Best-effort push registration + badge: no EAS projectId, denied
     // permission, or network failure all degrade to SSE/polling silently.
     try {
@@ -257,12 +268,13 @@ export default function App() {
    */
   async function switchAccount(id: string): Promise<void> {
     setAccountId(id);
-    setAgents(await core.listAgents(id));
+    const roster = await core.listAgents(id);
+    setAgents(roster);
     setProviders(await core.listProviders(id));
     setScreen({ name: "inbox" });
     setMenu("menu");
     setNote("");
-    await loadGroups(id);
+    await loadGroups(id, roster);
     const pending = await core.listNotifications(id).catch(() => []);
     setPendingCount(pending.length);
   }
@@ -287,7 +299,7 @@ export default function App() {
     setAgents(rows);
     await enterRoom({ id: room.id, kind: "direct", title: fresh.name, ownerAgentId: fresh.id }, rows);
     setCreating(false);
-    await loadGroups(accountId);
+    await loadGroups(accountId, rows);
   }
 
   /**
@@ -301,7 +313,7 @@ export default function App() {
     setAgents(rows);
     await enterRoom({ id: room.id, kind: "group", title, ownerAgentId: agentIds[0]! }, rows);
     setCreating(false);
-    await loadGroups(accountId);
+    await loadGroups(accountId, rows);
   }
 
   /**
@@ -474,13 +486,26 @@ export default function App() {
    * only. Counts come from one members call per group (few groups per user).
    * Input: account id + roster (unused, kept for symmetry). Output: nothing.
    */
-  async function loadGroups(id: string): Promise<void> {
+  async function loadGroups(id: string, roster: RosterAgent[]): Promise<void> {
     const rooms = await core.listConversations(id).catch(() => []);
     const groups = rooms.filter((room) => room.kind === "group");
     const withCounts = await Promise.all(
       groups.map(async (group) => {
         const members = await core.listMembers(id, group.id).catch(() => []);
-        return { id: group.id, title: group.title, memberCount: members.length };
+        return {
+          id: group.id,
+          title: group.title,
+          memberCount: members.length,
+          members: members.map((member) => {
+            const agent = roster.find((row) => row.id === member.agentId);
+            return {
+              id: member.agentId,
+              markShape: agent?.markShape,
+              markColor: agent?.markColor,
+              avatarUrl: agent?.avatarUrl,
+            };
+          }),
+        };
       }),
     );
     setGroups(withCounts);
@@ -847,14 +872,49 @@ export default function App() {
    * desktop More menu used to open. Input: the agent. Output: nothing.
    * The profile screen opens on it.
    */
-  function openProfile(agent: RosterAgent): void {
+  function openProfile(agent: RosterAgent, fromGroup = false): void {
     void core
       .listProviders(accountId.trim())
       .then(setProviders)
       .catch(show);
     void refreshRoutines(agent.id).catch(show);
     setProfile(agent);
-    setScreen({ name: "profile", agent });
+    if (screen.name === "chat" && screen.kind === "direct" && screen.agent.id === agent.id) {
+      setProfileFeed(messages.map((row) => ({ ...row, conversationId: screen.conversationId })));
+    } else {
+      setProfileFeed([]);
+    }
+    setScreen({ name: "profile", agent, fromGroup });
+    void loadDirectFeed(agent.id).then(setProfileFeed).catch(show);
+  }
+
+  /** Opens the room page for a group instead of the owner's profile. */
+  async function openGroupInfo(): Promise<void> {
+    if (screen.name !== "chat" || screen.kind !== "group") return;
+    const conversationId = screen.conversationId;
+    const memberIds = screen.memberIds;
+    setGroupFeed(messages.map((row) => ({ ...row, conversationId })));
+    setScreen({
+      name: "group",
+      conversationId,
+      title: screen.title,
+      memberIds,
+      owner: screen.agent,
+    });
+    const history = await core.listMessages(accountId.trim(), conversationId).catch(() => null);
+    if (!Array.isArray(history)) return;
+    setGroupFeed(toBubbles(history, [], agents).map((row) => ({ ...row, conversationId })));
+  }
+
+  /** Loads one agent's private thread for the profile Links, Media, and Files tabs. */
+  async function loadDirectFeed(agentId: string): Promise<(Bubble & { conversationId?: string })[]> {
+    const id = accountId.trim();
+    const rooms = await core.listConversations(id).catch(() => []);
+    const direct = rooms.find((room) => room.kind === "direct" && room.ownerAgentId === agentId);
+    if (!direct) return [];
+    const history = await core.listMessages(id, direct.id).catch(() => null);
+    if (!Array.isArray(history)) return [];
+    return toBubbles(history, [], agents).map((row) => ({ ...row, conversationId: direct.id }));
   }
 
   /**
@@ -863,6 +923,12 @@ export default function App() {
    * before state settles). Omit it to save the profile on screen.
    * Output: nothing. The roster shows the saved name, label, and flags.
    */
+  /** Pins or hides one roster agent without opening the profile. */
+  async function setRosterFlag(agent: RosterAgent, patch: { pinned?: boolean; hidden?: boolean }): Promise<void> {
+    const saved = await core.saveProfile(accountId.trim(), agent.id, patch);
+    setAgents((rows) => rows.map((row) => (row.id === agent.id ? { ...row, ...saved, ...patch } : row)));
+  }
+
   async function saveProfile(draft?: RosterAgent): Promise<void> {
     const current = draft ?? profile;
     if (!current) {
@@ -988,6 +1054,8 @@ export default function App() {
             setCreating(true);
           }}
           onOpen={(agent) => void openAgent(agent).catch(show)}
+          onPin={(agent) => void setRosterFlag(agent, { pinned: !agent.pinned }).catch(show)}
+          onHide={(agent) => void setRosterFlag(agent, { hidden: true }).catch(show)}
           menu={
             menu ? (
               <MenuSheet
@@ -1083,7 +1151,10 @@ export default function App() {
           }
           onBack={() => setScreen({ name: "inbox" })}
           onDesktop={() => setScreen({ name: "desktop", agent: screen.agent })}
-          onAgentMenu={() => openProfile(screen.agent)}
+          onAgentMenu={() => {
+            if (screen.kind === "group") void openGroupInfo().catch(show);
+            else openProfile(screen.agent);
+          }}
         />
       ) : null}
       {screen.name === "desktop" ? (
@@ -1107,17 +1178,39 @@ export default function App() {
           onChange={setProfile}
           onSave={() => void saveProfile().catch(show)}
           onSaveNotify={(draft) => void saveProfile(draft).catch(show)}
-          onBack={() =>
-            lastChat && conversationId
-              ? setScreen({ name: "chat", ...lastChat })
-              : setScreen({ name: "inbox" })
-          }
+          onBack={() => {
+            if (screen.fromGroup && lastChat?.kind === "group") {
+              setScreen({
+                name: "group",
+                conversationId: lastChat.conversationId,
+                title: lastChat.title,
+                memberIds: lastChat.memberIds,
+                owner: lastChat.agent,
+              });
+              return;
+            }
+            setScreen(lastChat && conversationId ? { name: "chat", ...lastChat } : { name: "inbox" });
+          }}
           onApprovals={() => void refreshProposals().catch(show)}
           onPickAvatar={() => void pickAvatar().catch(show)}
           onPauseRoutine={(routine, paused) => void pauseRoutine(routine, paused).catch(show)}
           onLoadRoutineRuns={(routineId) =>
             core.listRoutineRuns(accountId.trim(), profile.id, routineId)
           }
+          messages={profileFeed}
+          onFetchBlob={(roomId, messageId, index) => core.blob(accountId.trim(), roomId, messageId, index)}
+        />
+      ) : null}
+      {screen.name === "group" ? (
+        <GroupInfoScreen
+          title={screen.title}
+          members={screen.memberIds
+            .map((id) => agents.find((agent) => agent.id === id))
+            .filter((agent): agent is RosterAgent => Boolean(agent))}
+          messages={groupFeed}
+          onBack={() => setScreen(lastChat ? { name: "chat", ...lastChat } : { name: "inbox" })}
+          onOpenMember={(member) => void openAgent(member).catch(show)}
+          onFetchBlob={(roomId, messageId, index) => core.blob(accountId.trim(), roomId, messageId, index)}
         />
       ) : null}
       {screen.name === "approvals" ? (

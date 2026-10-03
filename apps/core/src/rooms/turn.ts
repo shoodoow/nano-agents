@@ -3,7 +3,6 @@ export {
   runTurn,
   continueQueuedTurn,
   runDelegatedTurn,
-  deliverWorkerResult,
   replyWithModel,
   toModelPrompt,
   toModelMessages,

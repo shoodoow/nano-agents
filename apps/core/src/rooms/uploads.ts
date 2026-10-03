@@ -11,6 +11,7 @@ export const UPLOADS_ROOT = "/shared/uploads";
 const MAX_FILES_PER_MESSAGE = 5;
 const MAX_TOTAL_BYTES = 10_000_000;
 const MAX_PREVIEW_CHARS = 700_000;
+const MAX_OUTBOUND_FILE_BYTES = 5_000_000;
 
 /**
  * Sanitizes an attachment filename for shell-safe writes.
@@ -33,6 +34,37 @@ export function parseDataUri(url: string): { mime: string; base64: string } | nu
   const match = /^data:([A-Za-z0-9.+-]+\/[A-Za-z0-9.+-]+);base64,([A-Za-z0-9+/=]+)$/.exec(url);
   if (!match) return null;
   return { mime: match[1]!, base64: match[2]! };
+}
+
+/**
+ * Converts agent-created /shared files into real attachment bytes.
+ * Why: /shared is a path inside the account computer, not a URL the phone can
+ * open. Store a data URI; large payloads are stripped to blobRef on list and
+ * fetched lazily by the client.
+ */
+export async function inlineSharedOutputBlocks(accountId: string, blocks: MessageBlock[]): Promise<MessageBlock[]> {
+  const out: MessageBlock[] = [];
+  for (const block of blocks) {
+    if (block.kind !== "file" || !block.url.startsWith("/shared/")) {
+      out.push(block);
+      continue;
+    }
+    if (block.url.includes("\0") || block.url.split("/").includes("..")) {
+      throw new Error("Shared attachment path is invalid.");
+    }
+    const bytes = await execBytes(accountId, ["cat", "--", block.url]);
+    if (bytes.code !== 0) throw new Error(`Could not read attachment ${block.url}.`);
+    if (bytes.stdout.length > MAX_OUTBOUND_FILE_BYTES) {
+      throw new Error(`Attachment ${block.name} is larger than 5 MB. Send a smaller export.`);
+    }
+    const mime = block.mime || "application/octet-stream";
+    out.push({
+      ...block,
+      url: `data:${mime};base64,${bytes.stdout.toString("base64")}`,
+      savedPath: block.savedPath ?? block.url,
+    });
+  }
+  return out;
 }
 
 /**

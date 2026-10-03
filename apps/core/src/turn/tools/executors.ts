@@ -17,6 +17,7 @@ import {
   sendMessageInputSchema,
   spawnWorkerToolInputSchema,
   subagentCreateSchema,
+  teammateUpdateSchema,
   workerRedirectInputSchema,
 } from "@nano-agents/agent-tools";
 import { and, desc, eq } from "drizzle-orm";
@@ -26,6 +27,7 @@ import { embedSummaryBacklog } from "../../memory/recall.js";
 import { todoList, todoWrite } from "../../memory/todos.js";
 import { saveNotification } from "../../notify/notify.js";
 import { createGroupRoom, deleteGroupRoom, listGroupRoomsForAgent } from "../../rooms/rooms.js";
+import { inlineSharedOutputBlocks } from "../../rooms/uploads.js";
 import { unpackWorkerJobDescription } from "../../rooms/worker-kinds.js";
 import { saveSendMessage, saveReaction } from "../../rooms/send-message.js";
 import {
@@ -39,6 +41,7 @@ import {
   stopWorker,
   WorkerCapacityError,
 } from "../../rooms/subagents.js";
+import { updateAgentFlags } from "../../roster/roster.js";
 import { readSkillForAccount } from "../../skills/skills.js";
 import {
   createOwnRoutine,
@@ -48,7 +51,7 @@ import {
   updateOwnRoutine,
 } from "../../routines/routines.js";
 import { emitTurnBus } from "../events/bus.js";
-import { DELEGATE_SYNC_TIMEOUT_MS, MAX_DELEGATION_DEPTH } from "../constants.js";
+import { MAX_DELEGATION_DEPTH } from "../constants.js";
 import { normalizeSendMessageInput } from "./normalize-send-message.js";
 import { validateWorkerTask } from "./worker-task.js";
 import type { ToolContext } from "./context.js";
@@ -117,13 +120,19 @@ export async function executeSendMessage(ctx: ToolContext, input: Record<string,
     };
   }
   const asksSecret = parsed.blocks.some((block) => block.kind === "widget" && block.widget === "secret");
+  let deliverableBlocks = parsed.blocks;
+  try {
+    deliverableBlocks = await inlineSharedOutputBlocks(ctx.accountId, parsed.blocks);
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Could not attach the shared file." };
+  }
   const saved = await saveSendMessage(ctx.store, {
     accountId: ctx.accountId,
     conversationId: ctx.conversationId,
     agentId: ctx.agentId,
     runId: ctx.runId,
     viaAgentId: ctx.viaAgentId ?? null,
-    blocks: parsed.blocks,
+    blocks: deliverableBlocks,
     replyTo: parsed.replyTo,
     createdAt: ctx.nextTime(),
   });
@@ -180,6 +189,47 @@ export async function executeReadSkill(ctx: ToolContext, input: Record<string, u
   } catch {
     return "Skill not found.";
   }
+}
+
+export async function executeUpdateTeammate(ctx: ToolContext, input: Record<string, unknown>) {
+  let parsed: ReturnType<typeof teammateUpdateSchema.parse>;
+  try {
+    parsed = teammateUpdateSchema.parse(input);
+  } catch (error) {
+    if (error instanceof ZodError) {
+      return { error: "Invalid update_teammate input. Required: agentId, plus label, role, personality, or jobDescription." };
+    }
+    throw error;
+  }
+  if (!parsed.label && !parsed.role && parsed.personality === undefined && !parsed.jobDescription) {
+    return { error: "Pass label, role, personality, or jobDescription." };
+  }
+  const [target] = await ctx.store
+    .select()
+    .from(agents)
+    .where(and(eq(agents.id, parsed.agentId), eq(agents.accountId, ctx.accountId)));
+  if (!target || target.hidden) return { error: "That teammate is not on your team." };
+  const mine = target.parentId === ctx.agentId || target.teamId === ctx.agentId;
+  if (!mine || target.id === ctx.agentId) return { error: "You can only update a teammate you hired." };
+  const patch: { name?: string; label?: string; role?: string; personality?: string; jobDescription?: string } = {};
+  if (parsed.label) {
+    const name = parsed.label.trim();
+    const siblings = await ctx.store
+      .select({ id: agents.id, name: agents.name })
+      .from(agents)
+      .where(eq(agents.accountId, ctx.accountId));
+    if (siblings.some((row) => row.id !== target.id && row.name.toLowerCase() === name.toLowerCase())) {
+      return { error: "Another agent already uses that name. Pick a different first name." };
+    }
+    patch.name = name;
+    patch.label = name;
+  }
+  if (parsed.role) patch.role = parsed.role;
+  if (parsed.personality !== undefined) patch.personality = parsed.personality;
+  if (parsed.jobDescription) patch.jobDescription = parsed.jobDescription;
+  const saved = await updateAgentFlags(ctx.store, ctx.accountId, target.id, patch);
+  if (!saved) return { error: "That teammate is not on your team." };
+  return { agentId: saved.id, name: saved.name, label: saved.label, role: saved.role };
 }
 
 export async function executeHireSubagent(ctx: ToolContext, input: Record<string, unknown>) {
@@ -257,7 +307,12 @@ export async function executeHireSubagent(ctx: ToolContext, input: Record<string
   return { agentId: child.id, name: child.name, hiredInConversationId: hireConversationId };
 }
 
-/** Delegate with sync timeout — use spawn_worker for longer work. */
+/**
+ * Starts a visible teammate turn without blocking the parent.
+ * Why: a model call cannot reliably finish inside the old 2s race. That race
+ * marked healthy teammate turns failed while their messages kept arriving.
+ * Persistent teammates speak in the group; hidden workers remain parent-only.
+ */
 export async function executeDelegate(
   ctx: ToolContext,
   input: Record<string, unknown>,
@@ -288,7 +343,7 @@ export async function executeDelegate(
     agentId: parsed.agentId,
     task: parsed.task,
   });
-  const run = runDelegatedTurn({
+  void runDelegatedTurn({
     accountId: ctx.accountId,
     conversationId: ctx.conversationId,
     runId: ctx.runId,
@@ -302,28 +357,22 @@ export async function executeDelegate(
     emit: ctx.emit,
     delegationDepth: (ctx.delegationDepth ?? 0) + 1,
     generate: ctx.generate,
-  });
-  try {
-    const bubbles = await Promise.race([
-      run,
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Delegate timed out — use spawn_worker to stay available.")), DELEGATE_SYNC_TIMEOUT_MS),
-      ),
-    ]);
-    await ctx.db
-      .update(delegations)
-      .set({ status: "done", result: bubbles.map((bubble) => bubble.body).join("\n\n").slice(0, 20_000) })
-      .where(eq(delegations.id, row.id));
-    return { delegationId: row.id, bubbles: bubbles.length };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Delegation failed.";
-    await ctx.db
-      .update(delegations)
-      .set({ status: "failed", result: message.slice(0, 20_000) })
-      .where(eq(delegations.id, row.id))
-      .catch(() => {});
-    throw error;
-  }
+  })
+    .then(async (bubbles) => {
+      await ctx.db
+        .update(delegations)
+        .set({ status: "done", result: bubbles.map((bubble) => bubble.body).join("\n\n").slice(0, 20_000) })
+        .where(eq(delegations.id, row.id));
+    })
+    .catch(async (error: unknown) => {
+      const message = error instanceof Error ? error.message : "Delegation failed.";
+      await ctx.db
+        .update(delegations)
+        .set({ status: "failed", result: message.slice(0, 20_000) })
+        .where(eq(delegations.id, row.id))
+        .catch(() => {});
+    });
+  return { delegationId: row.id, status: "started" };
 }
 
 /** Max spawns per turn: validation failures count, so the model can't retry-burn. */
@@ -521,6 +570,7 @@ export const dispatcherExecutors: Record<string, ToolExecutor> = {
   correct_memory: executeCorrectMemory,
   read_skill: executeReadSkill,
   hire_subagent: executeHireSubagent,
+  update_teammate: executeUpdateTeammate,
   list_team: (ctx) => listTeam(ctx.store, ctx.accountId, ctx.agentId),
   add_to_group: (ctx, input) =>
     addGroupMember(ctx.store, { accountId: ctx.accountId, conversationId: ctx.conversationId, agentId: String(input.agentId) }),

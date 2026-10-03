@@ -34,6 +34,7 @@ describe("dispatcher SDK tools", () => {
       "todo_list",
       "todo_write",
       "update_routine",
+      "update_teammate",
       "web_fetch",
       "web_search",
     ]);

@@ -13,6 +13,8 @@ describe("worker kinds", () => {
       const text = workerPreambleFor(kind);
       expect(text.length).toBeGreaterThan(40);
       expect(text).toContain("Findings:");
+      expect(text).toContain("/shared/worker-results/");
+      expect(text).toContain("no voice in any room");
     }
   });
 
