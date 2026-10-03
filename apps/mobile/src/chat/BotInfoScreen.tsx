@@ -12,7 +12,7 @@ import {
   View,
 } from "react-native";
 import type { ProviderSetting, RosterAgent, Routine, RoutineRun } from "../api";
-import { formatLastRun, formatSchedule, routineTitle } from "../api";
+import { formatLastRun, formatNextRunRelative, formatRunHistoryWhen, formatSchedule, routineTitle } from "../api";
 import { colors } from "../theme/tokens";
 import { CircleButton } from "../ui/CircleButton";
 import { IconBack, IconCheck, IconChevron, IconClock, IconDoc, IconMore, IconShare } from "../ui/icons";
@@ -225,178 +225,184 @@ function InfoPage({
           </CircleButton>
         </View>
       </View>
-      <Pressable accessibilityRole="button" accessibilityLabel="Change bot photo" onPress={onPickAvatar} style={styles.markWrap}>
-        {profile.avatarUrl ? (
-          <Image source={{ uri: profile.avatarUrl }} contentFit="cover" style={styles.markPhoto} />
+      <ScrollView
+        contentContainerStyle={styles.pageScroll}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Pressable accessibilityRole="button" accessibilityLabel="Change bot photo" onPress={onPickAvatar} style={styles.markWrap}>
+          {profile.avatarUrl ? (
+            <Image source={{ uri: profile.avatarUrl }} contentFit="cover" style={styles.markPhoto} />
+          ) : (
+            <Mark shape={mark.shape} color={mark.color} size={128} />
+          )}
+        </Pressable>
+        <View style={styles.nameCard}>
+          <TextInput
+            value={profile.name}
+            onChangeText={(name) => onChange({ ...profile, name })}
+            keyboardAppearance="dark"
+            style={styles.nameInput}
+          />
+          <View style={styles.nameDivider} />
+          <TextInput
+            value={profile.label}
+            onChangeText={(label) => onChange({ ...profile, label })}
+            placeholder="Title (optional)"
+            placeholderTextColor={colors.muted}
+            keyboardAppearance="dark"
+            style={styles.titleInput}
+          />
+        </View>
+        <View style={styles.tabs}>
+          {TABS.map((entry) => (
+            <Pressable
+              key={entry.id}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: tab === entry.id }}
+              onPress={() => onTab(entry.id)}
+              style={styles.tab}
+            >
+              <Text style={[styles.tabText, tab === entry.id ? styles.tabTextOn : null]}>{entry.label}</Text>
+              {tab === entry.id ? <View style={styles.tabBar} /> : null}
+            </Pressable>
+          ))}
+        </View>
+        {tab !== "info" ? (
+          <TabEmpty tab={tab} />
         ) : (
-          <Mark shape={mark.shape} color={mark.color} size={112} />
-        )}
-      </Pressable>
-      <View style={styles.nameCard}>
-        <TextInput
-          value={profile.name}
-          onChangeText={(name) => onChange({ ...profile, name })}
-          keyboardAppearance="dark"
-          style={styles.nameInput}
-        />
-        <View style={styles.nameDivider} />
-        <TextInput
-          value={profile.label}
-          onChangeText={(label) => onChange({ ...profile, label })}
-          placeholder="Title (optional)"
-          placeholderTextColor={colors.muted}
-          keyboardAppearance="dark"
-          style={styles.titleInput}
-        />
-      </View>
-      <View style={styles.tabs}>
-        {TABS.map((entry) => (
-          <Pressable
-            key={entry.id}
-            accessibilityRole="tab"
-            accessibilityState={{ selected: tab === entry.id }}
-            onPress={() => onTab(entry.id)}
-            style={styles.tab}
-          >
-            <Text style={[styles.tabText, tab === entry.id ? styles.tabTextOn : null]}>{entry.label}</Text>
-            {tab === entry.id ? <View style={styles.tabBar} /> : null}
-          </Pressable>
-        ))}
-      </View>
-      {tab !== "info" ? (
-        <TabEmpty tab={tab} />
-      ) : (
-        <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-          <Text style={styles.section}>Character</Text>
-          <View style={styles.card}>
-            <View style={styles.shapeGrid}>
-              {MARK_SHAPES.map((entry) => (
-                <Pressable
-                  key={entry.id}
-                  accessibilityRole="button"
-                  accessibilityLabel={entry.label}
-                  accessibilityState={{ selected: mark.shape === entry.id }}
-                  onPress={() => onPickMark({ ...mark, shape: entry.id })}
-                  style={styles.shapeCell}
-                >
-                  <View style={[styles.ring, mark.shape === entry.id ? styles.ringOn : null]}>
-                    <Mark shape={entry.id} color={mark.color} size={40} />
-                  </View>
-                </Pressable>
-              ))}
-            </View>
-            <View style={styles.colorGrid}>
-              {MARK_COLORS.map((color) => (
-                <Pressable
-                  key={color}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Mark color ${color}`}
-                  accessibilityState={{ selected: mark.color === color }}
-                  onPress={() => onPickMark({ ...mark, color })}
-                  style={styles.colorCell}
-                >
-                  <View style={[styles.ring, mark.color === color ? styles.ringOn : null]}>
-                    <View style={[styles.dot, { backgroundColor: color }]} />
-                  </View>
-                </Pressable>
-              ))}
-            </View>
-            <View style={styles.resetDivider} />
-            <Pressable accessibilityRole="button" onPress={onResetMark} style={styles.resetRow}>
-              <Text style={styles.resetText}>Reset to default</Text>
-            </Pressable>
-          </View>
-          <Text style={styles.caption}>How this Bot's mark looks everywhere</Text>
-          <Pressable accessibilityRole="button" onPress={onInstructions} style={styles.rowCard}>
-            <IconDoc />
-            <Text style={styles.rowLabel}>Instructions</Text>
-            <IconChevron />
-          </Pressable>
-          <Text style={styles.section}>Routines</Text>
-          <View style={styles.group}>
-            {routines.length === 0 ? (
-              <View style={styles.emptyRow}>
-                <Text style={styles.emptyText}>No routines yet — this bot adds them with its tools.</Text>
-              </View>
-            ) : null}
-            {routines.map((routine) => (
-              <Pressable
-                key={routine.id}
-                accessibilityRole="button"
-                onPress={() => onRoutine(routine)}
-                style={styles.routineRow}
-              >
-                <IconClock />
-                <View style={styles.routineBody}>
-                  <Text style={styles.routineTitle} numberOfLines={1}>
-                    {routineTitle(routine.body)}
-                  </Text>
-                  <Text style={styles.routineSub} numberOfLines={1}>
-                    {formatSchedule(routine.cron)}
-                    {routine.paused ? " · Paused" : ""}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.routineSub,
-                      routine.lastRunStatus === "failed" ? styles.routineFailed : null,
-                    ]}
-                    numberOfLines={1}
+          <View style={styles.scroll}>
+            <Text style={styles.section}>Character</Text>
+            <View style={styles.card}>
+              <View style={styles.shapeGrid}>
+                {MARK_SHAPES.map((entry) => (
+                  <Pressable
+                    key={entry.id}
+                    accessibilityRole="button"
+                    accessibilityLabel={entry.label}
+                    accessibilityState={{ selected: mark.shape === entry.id }}
+                    onPress={() => onPickMark({ ...mark, shape: entry.id })}
+                    style={styles.shapeCell}
                   >
-                    Last run · {formatLastRun(routine.lastRunAt, routine.lastRunStatus, routine.timezone)}
-                  </Text>
-                </View>
-                <IconChevron />
-              </Pressable>
-            ))}
-          </View>
-          <View style={styles.notifyCard}>
-            <Text style={styles.rowLabel}>Notifications</Text>
-            <Switch
-              value={profile.notify}
-              onValueChange={(notify) => onSaveNotify({ ...profile, notify })}
-              trackColor={{ true: colors.green, false: colors.line }}
-            />
-          </View>
-          <Text style={styles.caption}>Get notified when this Bot finishes or needs input</Text>
-          <Text style={styles.section}>Advanced</Text>
-          <View style={styles.group}>
-            <Pressable accessibilityRole="button" onPress={onProvider} style={styles.providerRow}>
-              <Text style={styles.rowLabel}>Provider</Text>
-              <View style={styles.trailing}>
-                <Text style={styles.trailingText}>{providerName}</Text>
-                <IconChevron />
+                    <View style={[styles.shapeRing, mark.shape === entry.id ? styles.ringOn : null]}>
+                      <Mark shape={entry.id} color={mark.color} size={30} />
+                    </View>
+                  </Pressable>
+                ))}
               </View>
+              <View style={styles.colorGrid}>
+                {MARK_COLORS.map((color) => (
+                  <Pressable
+                    key={color}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Mark color ${color}`}
+                    accessibilityState={{ selected: mark.color === color }}
+                    onPress={() => onPickMark({ ...mark, color })}
+                    style={styles.colorCell}
+                  >
+                    <View style={[styles.colorRing, mark.color === color ? styles.ringOn : null]}>
+                      <View style={[styles.dot, { backgroundColor: color }]} />
+                    </View>
+                  </Pressable>
+                ))}
+              </View>
+              <View style={styles.resetDivider} />
+              <Pressable accessibilityRole="button" onPress={onResetMark} style={styles.resetRow}>
+                <Text style={styles.resetText}>Reset to default</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.caption}>How this Bot's mark looks everywhere</Text>
+            <Pressable accessibilityRole="button" onPress={onInstructions} style={styles.rowCard}>
+              <IconDoc />
+              <Text style={styles.rowLabel}>Instructions</Text>
+              <IconChevron />
             </Pressable>
-            <View style={styles.advancedBlock}>
-              <Text style={styles.advancedLabel}>Model id</Text>
-              <TextInput
-                value={profile.modelId}
-                onChangeText={(modelId) => onChange({ ...profile, modelId })}
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardAppearance="dark"
-                style={styles.input}
+            <Text style={styles.section}>Routines</Text>
+            <View style={styles.group}>
+              {routines.length === 0 ? (
+                <View style={styles.emptyRow}>
+                  <Text style={styles.emptyText}>No routines yet — this bot adds them with its tools.</Text>
+                </View>
+              ) : null}
+              {routines.map((routine) => (
+                <Pressable
+                  key={routine.id}
+                  accessibilityRole="button"
+                  onPress={() => onRoutine(routine)}
+                  style={styles.routineRow}
+                >
+                  <IconClock />
+                  <View style={styles.routineBody}>
+                    <Text style={styles.routineTitle} numberOfLines={1}>
+                      {routineTitle(routine)}
+                    </Text>
+                    <Text style={styles.routineSub} numberOfLines={1}>
+                      {formatSchedule(routine.cron)}
+                      {routine.paused ? " · Paused" : ""}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.routineSub,
+                        routine.lastRunStatus === "failed" ? styles.routineFailed : null,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      Last run · {formatLastRun(routine.lastRunAt, routine.lastRunStatus, routine.timezone)}
+                    </Text>
+                  </View>
+                  <IconChevron />
+                </Pressable>
+              ))}
+            </View>
+            <View style={styles.notifyCard}>
+              <Text style={styles.rowLabel}>Notifications</Text>
+              <Switch
+                value={profile.notify}
+                onValueChange={(notify) => onSaveNotify({ ...profile, notify })}
+                trackColor={{ true: colors.green, false: colors.line }}
               />
             </View>
-            <View style={styles.flagRow}>
-              <Text style={styles.rowLabel}>Pin</Text>
-              <Switch value={profile.pinned} onValueChange={(pinned) => onChange({ ...profile, pinned })} />
+            <Text style={styles.caption}>Get notified when this Bot finishes or needs input</Text>
+            <Text style={styles.section}>Advanced</Text>
+            <View style={styles.group}>
+              <Pressable accessibilityRole="button" onPress={onProvider} style={styles.providerRow}>
+                <Text style={styles.rowLabel}>Provider</Text>
+                <View style={styles.trailing}>
+                  <Text style={styles.trailingText}>{providerName}</Text>
+                  <IconChevron />
+                </View>
+              </Pressable>
+              <View style={styles.advancedBlock}>
+                <Text style={styles.advancedLabel}>Model id</Text>
+                <TextInput
+                  value={profile.modelId}
+                  onChangeText={(modelId) => onChange({ ...profile, modelId })}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardAppearance="dark"
+                  style={styles.input}
+                />
+              </View>
+              <View style={styles.flagRow}>
+                <Text style={styles.rowLabel}>Pin</Text>
+                <Switch value={profile.pinned} onValueChange={(pinned) => onChange({ ...profile, pinned })} />
+              </View>
+              <View style={styles.flagRow}>
+                <Text style={styles.rowLabel}>Hide</Text>
+                <Switch value={profile.hidden} onValueChange={(hidden) => onChange({ ...profile, hidden })} />
+              </View>
             </View>
-            <View style={styles.flagRow}>
-              <Text style={styles.rowLabel}>Hide</Text>
-              <Switch value={profile.hidden} onValueChange={(hidden) => onChange({ ...profile, hidden })} />
-            </View>
+            <Pressable
+              accessibilityRole="button"
+              disabled={!saveReady}
+              onPress={onSave}
+              style={[styles.save, !saveReady ? styles.saveDisabled : null]}
+            >
+              <Text style={styles.saveText}>Save changes</Text>
+            </Pressable>
           </View>
-          <Pressable
-            accessibilityRole="button"
-            disabled={!saveReady}
-            onPress={onSave}
-            style={[styles.save, !saveReady ? styles.saveDisabled : null]}
-          >
-            <Text style={styles.saveText}>Save changes</Text>
-          </Pressable>
-        </ScrollView>
-      )}
+        )}
+      </ScrollView>
     </View>
   );
 }
@@ -410,7 +416,7 @@ function TabEmpty({ tab }: { tab: Tab }) {
         ? { title: "No media yet", hint: "Photos and videos from this conversation will appear here." }
         : { title: "No files yet", hint: "Files from this conversation will appear here." };
   return (
-    <View style={styles.tabEmpty}>
+    <View style={styles.tabEmptyInline}>
       <Text style={styles.tabEmptyTitle}>{copy.title}</Text>
       <Text style={styles.tabEmptyHint}>{copy.hint}</Text>
     </View>
@@ -520,9 +526,8 @@ function ProviderPage({
 }
 
 /**
- * Shows one routine: full standing order, schedule, next run, pause, and recent fires.
- * Why: detail must show the whole body (list rows stay truncated); delete stays
- * with the agent tools / Auto-review, not this screen.
+ * Shows one routine in the Grok-style detail layout: Active, Schedule,
+ * Instruction, and Run history. Delete stays with agent tools / Auto-review.
  */
 function RoutineDetailPage({
   routine,
@@ -536,8 +541,10 @@ function RoutineDetailPage({
   onBack: () => void;
 }) {
   const [runs, setRuns] = useState<RoutineRun[]>(routine.recentRuns ?? []);
+  const [showInstructions, setShowInstructions] = useState(false);
   useEffect(() => {
     setRuns(routine.recentRuns ?? []);
+    setShowInstructions(false);
     let cancelled = false;
     void onLoadRuns()
       .then((next) => {
@@ -552,81 +559,95 @@ function RoutineDetailPage({
     // Refresh when opening this routine; avoid looping on unstable callbacks.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routine.id]);
+
+  if (showInstructions) {
+    return (
+      <View style={styles.screen}>
+        <View style={styles.pageHeader}>
+          <CircleButton label="Back" onPress={() => setShowInstructions(false)}>
+            <IconBack />
+          </CircleButton>
+          <Text style={styles.pageTitle} numberOfLines={1}>
+            Instruction
+          </Text>
+          <View style={styles.spacer} />
+        </View>
+        <ScrollView contentContainerStyle={styles.routineScroll} showsVerticalScrollIndicator={false}>
+          <View style={styles.card}>
+            <Text style={styles.routineFullBody} selectable>
+              {routine.instructions.trim()}
+            </Text>
+          </View>
+        </ScrollView>
+      </View>
+    );
+  }
+
+  const title = routineTitle(routine);
   return (
     <View style={styles.screen}>
       <View style={styles.pageHeader}>
         <CircleButton label="Back" onPress={onBack}>
           <IconBack />
         </CircleButton>
-        <Text style={styles.pageTitle}>Routine</Text>
+        <Text style={[styles.pageTitle, styles.routineNavTitle]} numberOfLines={1}>
+          {title}
+        </Text>
         <View style={styles.spacer} />
       </View>
       <ScrollView contentContainerStyle={styles.routineScroll} showsVerticalScrollIndicator={false}>
-        <View style={styles.routineHero}>
-          <View style={styles.routineHeroIcon}>
-            <IconClock />
-          </View>
-          <Text style={styles.routineSchedule}>{formatSchedule(routine.cron)}</Text>
-          {routine.paused ? <Text style={styles.routinePausedBadge}>Paused</Text> : null}
-        </View>
-
-        <Text style={styles.routineSection}>Standing order</Text>
-        <View style={styles.card}>
-          <Text style={styles.routineFullBody} selectable>
-            {routine.body.trim()}
-          </Text>
+        <View style={styles.activeCard}>
+          <Text style={styles.rowLabel}>Active</Text>
+          <Switch
+            value={!routine.paused}
+            onValueChange={(active) => onPause(!active)}
+            trackColor={{ true: colors.green, false: colors.line }}
+          />
         </View>
 
         <Text style={styles.routineSection}>Schedule</Text>
         <View style={styles.card}>
-          <View style={styles.metaRow}>
+          <Text style={styles.scheduleLine}>{formatSchedule(routine.cron)}</Text>
+          <View style={styles.nextRunRow}>
             <Text style={styles.metaLabel}>Next run</Text>
             <Text style={styles.metaValue}>
-              {routine.paused ? "—" : formatNextRun(routine.nextRunAt, routine.timezone)}
+              {routine.paused ? "—" : formatNextRunRelative(routine.nextRunAt, routine.timezone)}
             </Text>
-          </View>
-          <View style={styles.metaRow}>
-            <Text style={styles.metaLabel}>Timezone</Text>
-            <Text style={styles.metaValue}>{routine.timezone}</Text>
-          </View>
-          <View style={[styles.metaRow, styles.metaRowLast]}>
-            <View style={styles.cardBody}>
-              <Text style={styles.rowLabel}>Paused</Text>
-              <Text style={styles.hint}>Paused routines never fire.</Text>
-            </View>
-            <Switch
-              value={routine.paused}
-              onValueChange={onPause}
-              trackColor={{ true: colors.green, false: colors.line }}
-            />
           </View>
         </View>
 
-        <Text style={styles.routineSection}>Recent runs</Text>
-        <View style={styles.card}>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => setShowInstructions(true)}
+          style={styles.instructionRow}
+        >
+          <Text style={styles.rowLabel}>Instruction</Text>
+          <IconChevron />
+        </Pressable>
+
+        <Text style={styles.routineSection}>Run history</Text>
+        <View style={styles.group}>
           {runs.length === 0 ? (
-            <Text style={styles.hint}>No finished runs yet.</Text>
+            <View style={styles.emptyRow}>
+              <Text style={styles.emptyText}>No finished runs yet.</Text>
+            </View>
           ) : (
             runs.map((run, index) => (
               <View
                 key={run.id}
-                style={[styles.runRow, index === runs.length - 1 ? styles.runRowLast : null]}
+                style={[styles.historyRow, index === runs.length - 1 ? styles.historyRowLast : null]}
               >
-                <View
-                  style={[
-                    styles.runDot,
-                    run.status === "failed" ? styles.runDotFail : styles.runDotOk,
-                  ]}
-                />
+                <Text style={styles.historyWhen}>
+                  {formatRunHistoryWhen(run.runAt, routine.timezone)}
+                </Text>
                 <Text
                   style={[
-                    styles.runStatus,
-                    run.status === "failed" ? styles.routineFailed : styles.runOk,
+                    styles.historyStatus,
+                    run.status === "failed" ? styles.historyFail : styles.historyOk,
                   ]}
                 >
-                  {run.status === "failed" ? "Failed" : "Completed"}
+                  {run.status === "failed" ? "Failed" : "Succeeded"}
                 </Text>
-                <Text style={styles.runWhen}>{formatNextRun(run.runAt, routine.timezone)}</Text>
               </View>
             ))
           )}
@@ -636,131 +657,241 @@ function RoutineDetailPage({
   );
 }
 
-/** Words one ISO instant in the routine's zone. Output: "Fri, Jan 16, 9:32 AM". */
-function formatNextRun(iso: string, timeZone: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) {
-    return "—";
-  }
-  try {
-    return new Intl.DateTimeFormat("en-US", {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-      timeZone,
-    }).format(date);
-  } catch {
-    return "—";
-  }
-}
-
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
-  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 8, paddingTop: 4 },
-  headerRight: { flexDirection: "row", alignItems: "center", gap: 8 },
+  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 10, paddingTop: 2 },
+  headerRight: { flexDirection: "row", alignItems: "center", gap: 4 },
   pageHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 8, paddingTop: 4 },
-  pageTitle: { color: colors.text, fontSize: 17, fontWeight: "600" },
+  pageTitle: { color: colors.text, fontSize: 17, fontWeight: "600", flexShrink: 1 },
   spacer: { width: 44 },
-  markWrap: { alignItems: "center", paddingTop: 8 },
-  markPhoto: { width: 112, height: 106, borderRadius: 34, borderCurve: "continuous" },
-  nameCard: { marginHorizontal: 48, marginTop: 16, backgroundColor: colors.bubble, borderRadius: 20, borderCurve: "continuous", paddingVertical: 6 },
-  nameInput: { color: colors.text, fontSize: 22, fontWeight: "700", textAlign: "center", paddingVertical: 10, paddingHorizontal: 16 },
-  nameDivider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.line, marginHorizontal: 16 },
-  titleInput: { color: colors.text, fontSize: 16, textAlign: "center", paddingVertical: 12, paddingHorizontal: 16 },
-  tabs: { flexDirection: "row", marginTop: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
-  tab: { flex: 1, alignItems: "center", paddingVertical: 10 },
-  tabText: { color: "#666666", fontSize: 16 },
-  tabTextOn: { color: colors.text },
-  tabBar: { position: "absolute", bottom: 0, width: 64, height: 2, backgroundColor: colors.text },
-  scroll: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 40, gap: 10 },
-  section: { color: colors.muted, fontSize: 14, marginTop: 12, marginLeft: 6 },
-  card: { backgroundColor: colors.bubble, borderRadius: 20, borderCurve: "continuous", padding: 16 },
-  cardBody: { flex: 1, gap: 2 },
-  shapeGrid: { flexDirection: "row", flexWrap: "wrap" },
-  shapeCell: { width: "25%", alignItems: "center", paddingVertical: 10 },
-  ring: { width: 66, height: 66, borderRadius: 33, borderWidth: 2, borderColor: "transparent", alignItems: "center", justifyContent: "center" },
-  ringOn: { borderColor: "#6E6E73" },
-  colorGrid: { flexDirection: "row", flexWrap: "wrap", marginTop: 4 },
-  colorCell: { width: "16.66%", alignItems: "center", paddingVertical: 8 },
-  dot: { width: 42, height: 42, borderRadius: 21 },
-  resetDivider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.line, marginTop: 8 },
-  resetRow: { paddingTop: 14 },
-  resetText: { color: colors.link, fontSize: 17 },
-  caption: { color: colors.muted, fontSize: 13, marginHorizontal: 6 },
-  rowCard: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: colors.bubble, borderRadius: 16, borderCurve: "continuous", paddingHorizontal: 16, paddingVertical: 16 },
-  rowLabel: { color: colors.text, fontSize: 17, flex: 1 },
-  hint: { color: colors.muted, fontSize: 13, lineHeight: 18 },
-  trailing: { flexDirection: "row", alignItems: "center", gap: 6 },
-  trailingText: { color: colors.muted, fontSize: 16 },
-  configured: { color: colors.green, fontSize: 13 },
-  group: { backgroundColor: colors.bubble, borderRadius: 20, borderCurve: "continuous", overflow: "hidden" },
-  routineRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
-  routineHead: { flexDirection: "row", alignItems: "center", gap: 12 },
-  routineBody: { flex: 1, gap: 2 },
-  routineTitle: { color: colors.text, fontSize: 17 },
-  routineSub: { color: colors.muted, fontSize: 14 },
-  routineFailed: { color: colors.danger },
-  routineScroll: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 48, gap: 8 },
-  routineHero: { alignItems: "center", gap: 10, paddingVertical: 12 },
-  routineHeroIcon: {
-    width: 56,
-    height: 56,
+  markWrap: { alignItems: "center", paddingTop: 4, minHeight: 132, justifyContent: "center" },
+  markPhoto: { width: 128, height: 120, borderRadius: 36, borderCurve: "continuous" },
+  // Narrow pill like Grok — not full-bleed, not a tiny island.
+  nameCard: {
+    alignSelf: "center",
+    width: "58%",
+    maxWidth: 240,
+    minWidth: 180,
+    marginTop: 12,
+    backgroundColor: colors.bubble,
     borderRadius: 18,
     borderCurve: "continuous",
+    overflow: "hidden",
+  },
+  nameInput: {
+    color: colors.text,
+    fontSize: 20,
+    fontWeight: "700",
+    textAlign: "center",
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  nameDivider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.line, marginHorizontal: 14 },
+  titleInput: {
+    color: colors.text,
+    fontSize: 15,
+    textAlign: "center",
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  pageScroll: { paddingBottom: 40 },
+  tabs: {
+    flexDirection: "row",
+    marginTop: 14,
+    marginHorizontal: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.line,
+  },
+  tab: { flex: 1, alignItems: "center", paddingVertical: 9 },
+  tabText: { color: "#8E8E93", fontSize: 15, fontWeight: "500" },
+  tabTextOn: { color: colors.text },
+  tabBar: { position: "absolute", bottom: 0, width: 36, height: 2, borderRadius: 1, backgroundColor: colors.text },
+  scroll: { paddingHorizontal: 16, paddingTop: 10, gap: 8 },
+  section: { color: colors.muted, fontSize: 13, marginTop: 8, marginLeft: 4, marginBottom: -2 },
+  card: {
     backgroundColor: colors.bubble,
+    borderRadius: 18,
+    borderCurve: "continuous",
+    paddingHorizontal: 10,
+    paddingTop: 10,
+    paddingBottom: 4,
+  },
+  cardBody: { flex: 1, gap: 2 },
+  shapeGrid: { flexDirection: "row", flexWrap: "wrap" },
+  shapeCell: { width: "25%", alignItems: "center", paddingVertical: 6 },
+  shapeRing: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    borderWidth: 1.5,
+    borderColor: "transparent",
     alignItems: "center",
     justifyContent: "center",
   },
-  routineSchedule: { color: colors.text, fontSize: 20, fontWeight: "700", textAlign: "center" },
-  routinePausedBadge: {
-    color: colors.muted,
-    fontSize: 13,
-    fontWeight: "600",
-    overflow: "hidden",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-    backgroundColor: colors.control,
+  ringOn: { borderColor: "#636366" },
+  colorGrid: { flexDirection: "row", flexWrap: "wrap", marginTop: 2 },
+  colorCell: { width: "16.66%", alignItems: "center", paddingVertical: 5 },
+  colorRing: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderColor: "transparent",
+    alignItems: "center",
+    justifyContent: "center",
   },
-  routineSection: { color: colors.muted, fontSize: 13, fontWeight: "600", marginTop: 10, marginLeft: 4 },
-  routineFullBody: { color: colors.text, fontSize: 16, lineHeight: 24 },
-  metaRowLast: { paddingTop: 14, marginTop: 4, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.line },
-  runRow: {
+  dot: { width: 30, height: 30, borderRadius: 15 },
+  resetDivider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.line, marginTop: 6, marginHorizontal: 6 },
+  resetRow: { paddingVertical: 12, paddingHorizontal: 6 },
+  resetText: { color: colors.link, fontSize: 16 },
+  caption: { color: colors.muted, fontSize: 12, marginHorizontal: 4, marginTop: -2, marginBottom: 4 },
+  rowCard: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    gap: 12,
+    backgroundColor: colors.bubble,
+    borderRadius: 14,
+    borderCurve: "continuous",
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+  },
+  rowLabel: { color: colors.text, fontSize: 16, flex: 1 },
+  hint: { color: colors.muted, fontSize: 13, lineHeight: 18 },
+  trailing: { flexDirection: "row", alignItems: "center", gap: 6 },
+  trailingText: { color: colors.muted, fontSize: 15 },
+  configured: { color: colors.green, fontSize: 13 },
+  group: { backgroundColor: colors.bubble, borderRadius: 14, borderCurve: "continuous", overflow: "hidden" },
+  routineRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 14,
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.line,
   },
-  runRowLast: { borderBottomWidth: 0, paddingBottom: 0 },
-  runDot: { width: 8, height: 8, borderRadius: 4 },
-  runDotOk: { backgroundColor: colors.green },
-  runDotFail: { backgroundColor: colors.danger },
-  runStatus: { fontSize: 15, fontWeight: "600", flex: 1 },
-  runOk: { color: colors.text },
-  runWhen: { color: colors.muted, fontSize: 14, flexShrink: 1, textAlign: "right" },
+  routineHead: { flexDirection: "row", alignItems: "center", gap: 12 },
+  routineBody: { flex: 1, gap: 2 },
+  routineTitle: { color: colors.text, fontSize: 16 },
+  routineSub: { color: colors.muted, fontSize: 13 },
+  routineFailed: { color: colors.danger },
+  routineScroll: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 48, gap: 10 },
+  routineNavTitle: { flex: 1, textAlign: "center", marginHorizontal: 4 },
+  activeCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.bubble,
+    borderRadius: 16,
+    borderCurve: "continuous",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  routineSection: { color: colors.muted, fontSize: 13, fontWeight: "600", marginTop: 6, marginLeft: 4 },
+  routineFullBody: { color: colors.text, fontSize: 16, lineHeight: 24 },
+  scheduleLine: { color: colors.text, fontSize: 17, fontWeight: "500" },
+  nextRunRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.line,
+  },
+  instructionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.bubble,
+    borderRadius: 16,
+    borderCurve: "continuous",
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+  },
+  historyRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.line,
+  },
+  historyRowLast: { borderBottomWidth: 0 },
+  historyWhen: { color: colors.text, fontSize: 16, flex: 1 },
+  historyStatus: { fontSize: 16, fontWeight: "500" },
+  historyOk: { color: colors.green },
+  historyFail: { color: colors.danger },
   emptyRow: { paddingHorizontal: 16, paddingVertical: 14 },
   emptyText: { color: colors.muted, fontSize: 14 },
-  notifyCard: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: colors.bubble, borderRadius: 20, borderCurve: "continuous", paddingHorizontal: 16, paddingVertical: 14 },
-  providerRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
-  providerChoice: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
-  metaRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingTop: 12 },
+  notifyCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: colors.bubble,
+    borderRadius: 14,
+    borderCurve: "continuous",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  providerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.line,
+  },
+  providerChoice: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.line,
+  },
   metaLabel: { color: colors.muted, fontSize: 15 },
-  metaValue: { color: colors.text, fontSize: 15 },
+  metaValue: { color: colors.muted, fontSize: 15 },
   detailsText: { color: colors.text, fontSize: 15, lineHeight: 22 },
-  advancedBlock: { paddingHorizontal: 16, paddingTop: 14, gap: 8 },
+  advancedBlock: { paddingHorizontal: 14, paddingTop: 12, gap: 8 },
   advancedLabel: { color: colors.text, fontSize: 15 },
-  input: { backgroundColor: colors.control, color: colors.text, borderRadius: 14, borderCurve: "continuous", height: 48, paddingHorizontal: 14, fontSize: 16 },
+  input: {
+    backgroundColor: colors.control,
+    color: colors.text,
+    borderRadius: 12,
+    borderCurve: "continuous",
+    height: 44,
+    paddingHorizontal: 12,
+    fontSize: 16,
+  },
   fieldLabel: { color: colors.text, fontSize: 15, marginTop: 16, marginBottom: 6 },
-  area: { backgroundColor: colors.bubble, color: colors.text, borderRadius: 14, borderCurve: "continuous", minHeight: 110, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16, textAlignVertical: "top" },
-  flagRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 12 },
-  save: { marginTop: 24, backgroundColor: colors.text, borderRadius: 22, borderCurve: "continuous", height: 48, alignItems: "center", justifyContent: "center" },
+  area: {
+    backgroundColor: colors.bubble,
+    color: colors.text,
+    borderRadius: 12,
+    borderCurve: "continuous",
+    minHeight: 110,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 16,
+    textAlignVertical: "top",
+  },
+  flagRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 10 },
+  save: {
+    marginTop: 20,
+    backgroundColor: colors.text,
+    borderRadius: 22,
+    borderCurve: "continuous",
+    height: 46,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   saveDisabled: { opacity: 0.4 },
   saveText: { color: colors.bg, fontSize: 16, fontWeight: "600" },
   tabEmpty: { flex: 1, alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: 48 },
+  tabEmptyInline: { alignItems: "center", gap: 6, paddingHorizontal: 48, paddingVertical: 64 },
   tabEmptyTitle: { color: colors.text, fontSize: 17, fontWeight: "600" },
   tabEmptyHint: { color: colors.muted, fontSize: 14, textAlign: "center" },
 });

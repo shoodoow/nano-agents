@@ -292,7 +292,10 @@ export const routines = pgTable(
     conversationId: uuid("conversation_id")
       .notNull()
       .references(() => conversations.id),
-    body: text("body").notNull(),
+    // Short label for the phone list / detail header (agent-chosen).
+    title: text("title").notNull(),
+    // Standing order the agent follows when the job fires (was `body`).
+    instructions: text("instructions").notNull(),
     cron: text("cron").notNull(),
     nextRunAt: timestamp("next_run_at", { withTimezone: true }).notNull(),
     // Self-managed routines (Phase 15): agents pause/resume their own jobs.

@@ -1039,6 +1039,7 @@ export default function App() {
       {screen.name === "chat" ? (
         <ChatScreen
           agent={screen.agent}
+          conversationId={screen.conversationId}
           title={screen.title}
           subtitle={screen.subtitle}
           contextLine={contextLine}

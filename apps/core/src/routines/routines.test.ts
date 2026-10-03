@@ -34,7 +34,8 @@ describe("routines", () => {
     await createRoutine(db, account.id, {
       agentId: owner.id,
       conversationId: room!.id,
-      body: "Good morning.",
+      title: "Morning hello",
+      instructions: "Good morning.",
       cron: "*/15 * * * *",
       nextRunAt: new Date(Date.now() - 60_000).toISOString(),
     });
@@ -62,7 +63,8 @@ describe("routines", () => {
     await createRoutine(db, account.id, {
       agentId: ada.id,
       conversationId: room!.id,
-      body: "@Ada check the ledger",
+      title: "Ledger check",
+      instructions: "@Ada check the ledger",
       cron: "*/15 * * * *",
       nextRunAt: new Date(Date.now() - 60_000).toISOString(),
     });
@@ -82,7 +84,8 @@ describe("routines", () => {
     await createRoutine(db, account.id, {
       agentId: bea.id,
       conversationId: room!.id,
-      body: "anyone there",
+      title: "Ping",
+      instructions: "anyone there",
       cron: "*/15 * * * *",
       nextRunAt: new Date(Date.now() - 30_000).toISOString(),
     });
@@ -111,7 +114,8 @@ describe("routines", () => {
         accountId: account.id,
         conversationId: room!.id,
         agentId: ada.id,
-        body: "Bad.",
+        title: "Bad",
+        instructions: "Bad.",
         cron: "not a cron",
       }),
     ).rejects.toThrow(/Unsupported/);
@@ -120,14 +124,15 @@ describe("routines", () => {
       accountId: account.id,
       conversationId: room!.id,
       agentId: ada.id,
-      body: "Morning note.",
+      title: "Morning note",
+      instructions: "Morning note.",
       cron: "0 9 * * *",
       timezone: "Europe/Berlin",
     });
     expect(mine.timezone).toBe("Europe/Berlin");
     expect(mine.agentId).toBe(ada.id);
 
-    expect(await updateOwnRoutine(db, account.id, bea.id, { routineId: mine.id, body: "Stolen." })).toBeNull();
+    expect(await updateOwnRoutine(db, account.id, bea.id, { routineId: mine.id, instructions: "Stolen." })).toBeNull();
     expect(await deleteOwnRoutine(db, account.id, bea.id, mine.id)).toBe(false);
     expect((await listOwnRoutines(db, account.id, ada.id)).map((row) => row.id)).toContain(mine.id);
     expect((await listOwnRoutines(db, account.id, bea.id)).map((row) => row.id)).not.toContain(mine.id);
@@ -145,7 +150,8 @@ describe("routines", () => {
       accountId: account.id,
       conversationId: room!.id,
       agentId: ada.id,
-      body: "Paused at birth.",
+      title: "Quiet",
+      instructions: "Paused at birth.",
       cron: "*/15 * * * *",
       paused: true,
     });
@@ -165,7 +171,8 @@ describe("routines", () => {
       accountId: account.id,
       conversationId: room!.id,
       agentId: ada.id,
-      body: "Ping once.",
+      title: "Ping once",
+      instructions: "Ping once.",
       cron: "*/15 * * * *",
       timezone: "UTC",
     });
@@ -173,7 +180,8 @@ describe("routines", () => {
       accountId: account.id,
       conversationId: room!.id,
       agentId: ada.id,
-      body: "Ping twice.",
+      title: "Ping twice",
+      instructions: "Ping twice.",
       cron: "*/15 * * * *",
       timezone: "UTC",
     });

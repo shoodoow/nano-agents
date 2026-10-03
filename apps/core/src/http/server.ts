@@ -633,14 +633,21 @@ function mountRoutes(app: Express, ctx: AppContext): void {
       res.status(404).json({ error: "Agent not found." });
       return;
     }
-    const raw = (req.body ?? {}) as { conversationId?: unknown; body?: unknown; cron?: unknown; timezone?: unknown };
+    const raw = (req.body ?? {}) as {
+      conversationId?: unknown;
+      title?: unknown;
+      instructions?: unknown;
+      cron?: unknown;
+      timezone?: unknown;
+    };
     if (typeof raw.conversationId !== "string" || raw.conversationId.length === 0) {
       res.status(400).json({ error: "conversationId is required." });
       return;
     }
     try {
       const data = routineCreateInputSchema.parse({
-        body: raw.body,
+        title: raw.title,
+        instructions: raw.instructions,
         cron: raw.cron,
         timezone: raw.timezone ?? undefined,
       });
@@ -660,11 +667,18 @@ function mountRoutes(app: Express, ctx: AppContext): void {
       res.status(404).json({ error: "Agent not found." });
       return;
     }
-    const raw = (req.body ?? {}) as { body?: unknown; cron?: unknown; timezone?: unknown; paused?: unknown };
+    const raw = (req.body ?? {}) as {
+      title?: unknown;
+      instructions?: unknown;
+      cron?: unknown;
+      timezone?: unknown;
+      paused?: unknown;
+    };
     try {
       const updated = await updateOwnRoutine(ctx.db, accountId, agentId, {
         routineId: pathParam(req, "routineId"),
-        body: typeof raw.body === "string" ? raw.body : undefined,
+        title: typeof raw.title === "string" ? raw.title : undefined,
+        instructions: typeof raw.instructions === "string" ? raw.instructions : undefined,
         cron: typeof raw.cron === "string" ? raw.cron : undefined,
         timezone: typeof raw.timezone === "string" ? raw.timezone : undefined,
         paused: typeof raw.paused === "boolean" ? raw.paused : undefined,

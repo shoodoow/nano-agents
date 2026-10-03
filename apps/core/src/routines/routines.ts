@@ -14,7 +14,7 @@ type Database = Pick<ReturnType<typeof getDb>, "insert" | "select" | "update" | 
 
 /**
  * Stores one schedule for an agent and the first job that will run it.
- * Input: database, account id, and the agent, room, message body, cron, and optional first run time.
+ * Input: database, account id, and the agent, room, title, instructions, cron, and optional first run time.
  * Output: the saved routine and its pending job.
  */
 export async function createRoutine(db: Database, accountId: string, input: unknown) {
@@ -27,7 +27,8 @@ export async function createRoutine(db: Database, accountId: string, input: unkn
         accountId,
         agentId: data.agentId,
         conversationId: data.conversationId,
-        body: data.body,
+        title: data.title,
+        instructions: data.instructions,
         cron: data.cron,
         nextRunAt: runAt,
       })
@@ -173,11 +174,11 @@ export async function runDue(
       }
       throw error;
     }
-    // Hidden cue wake — never save routine.body as a user bubble. The owning
+    // Hidden cue wake — never save routine.instructions as a user bubble. The owning
     // agent runs the standing order and send_messages only when the person
     // should see something (check-in question, email digest, etc.).
     const cue =
-      `[routine] Standing order for you:\n${routine.body}\n\n` +
+      `[routine] Standing order for you (${routine.title}):\n${routine.instructions}\n\n` +
       `Act on this now. send_message only when the person should see something. ` +
       `Do not quote or answer this wake as if they wrote it. Stay quiet if nothing changed.`;
     const replies = await runTurn(db, routine.accountId, routine.conversationId, cue, opts.generate as never, opts.skillsRoot, {
@@ -224,15 +225,25 @@ export function nextRun(cron: string, timezone = "UTC"): Date {
  * human console steps, and one agent can never schedule work as another.
  * The first job fires at the next cron occurrence (not immediately), so
  * "every day at 09:00" means 09:00, not now.
- * Input: store, account/room/caller ids, {body, cron, timezone?, paused?}.
+ * Input: store, account/room/caller ids, {title, instructions, cron, timezone?, paused?}.
  * Output: the saved routine. Throws on bad cron/timezone.
  */
 export async function createOwnRoutine(
   store: Store,
-  input: { accountId: string; conversationId: string; agentId: string; body: string; cron: string; timezone?: string; paused?: boolean },
+  input: {
+    accountId: string;
+    conversationId: string;
+    agentId: string;
+    title: string;
+    instructions: string;
+    cron: string;
+    timezone?: string;
+    paused?: boolean;
+  },
 ) {
   const data = routineCreateInputSchema.parse({
-    body: input.body,
+    title: input.title,
+    instructions: input.instructions,
     cron: input.cron,
     timezone: input.timezone ?? "UTC",
     paused: input.paused ?? false,
@@ -244,7 +255,8 @@ export async function createOwnRoutine(
       accountId: input.accountId,
       agentId: input.agentId,
       conversationId: input.conversationId,
-      body: data.body,
+      title: data.title,
+      instructions: data.instructions,
       cron: data.cron,
       timezone: data.timezone,
       paused: data.paused,
@@ -270,7 +282,8 @@ export async function listOwnRoutines(store: Store, accountId: string, agentId: 
   const rows = await store
     .select({
       id: routines.id,
-      body: routines.body,
+      title: routines.title,
+      instructions: routines.instructions,
       cron: routines.cron,
       timezone: routines.timezone,
       paused: routines.paused,
@@ -353,14 +366,21 @@ async function recentRunsByRoutine(
  * for foreign ids, which reads as "not found" instead of leaking existence.
  * Reschedules the pending job when cron/timezone changes (paused flips stop
  * or restart firing accordingly).
- * Input: store, account/caller ids, {routineId, body?, cron?, timezone?, paused?}.
+ * Input: store, account/caller ids, {routineId, title?, instructions?, cron?, timezone?, paused?}.
  * Output: the updated routine, or null when not owned.
  */
 export async function updateOwnRoutine(
   store: Store,
   accountId: string,
   agentId: string,
-  input: { routineId: string; body?: string; cron?: string; timezone?: string; paused?: boolean },
+  input: {
+    routineId: string;
+    title?: string;
+    instructions?: string;
+    cron?: string;
+    timezone?: string;
+    paused?: boolean;
+  },
 ) {
   const data = routineUpdateInputSchema.parse(input);
   const [owned] = await store
@@ -368,8 +388,16 @@ export async function updateOwnRoutine(
     .from(routines)
     .where(and(eq(routines.id, data.routineId), eq(routines.accountId, accountId), eq(routines.agentId, agentId)));
   if (!owned) return null;
-  const patch: Partial<{ body: string; cron: string; timezone: string; paused: boolean; nextRunAt: Date }> = {};
-  if (data.body !== undefined) patch.body = data.body;
+  const patch: Partial<{
+    title: string;
+    instructions: string;
+    cron: string;
+    timezone: string;
+    paused: boolean;
+    nextRunAt: Date;
+  }> = {};
+  if (data.title !== undefined) patch.title = data.title;
+  if (data.instructions !== undefined) patch.instructions = data.instructions;
   if (data.timezone !== undefined) patch.timezone = data.timezone;
   if (data.paused !== undefined) patch.paused = data.paused;
   if (data.cron !== undefined) {

@@ -156,7 +156,8 @@ export type SpawnWorkerInput = z.infer<typeof spawnWorkerInputSchema>;
 export type SpawnWorkerToolInput = z.infer<typeof spawnWorkerToolInputSchema>;
 
 export const routineCreateInputSchema = z.object({
-  body: z.string().trim().min(1).max(20_000),
+  title: z.string().trim().min(1).max(120),
+  instructions: z.string().trim().min(1).max(20_000),
   cron: z.string().trim().min(1).max(100),
   timezone: z.string().trim().min(1).max(100).optional().default("UTC"),
   paused: z.boolean().optional().default(false),
@@ -166,7 +167,8 @@ export type RoutineCreateInput = z.infer<typeof routineCreateInputSchema>;
 
 export const routineUpdateInputSchema = z.object({
   routineId: z.string().uuid(),
-  body: z.string().trim().min(1).max(20_000).optional(),
+  title: z.string().trim().min(1).max(120).optional(),
+  instructions: z.string().trim().min(1).max(20_000).optional(),
   cron: z.string().trim().min(1).max(100).optional(),
   timezone: z.string().trim().min(1).max(100).optional(),
   paused: z.boolean().optional(),

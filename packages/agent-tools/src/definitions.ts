@@ -66,7 +66,7 @@ export const allToolDefinitions: ToolDefinition[] = [
   {
     name: "create_routine",
     description:
-      "Schedule your own recurring job in this room. Daily is M H * * *, weekly is M H * * D, in the person's IANA timezone. Does not run now. body is a standing order to your future self (goal, method, what to send_message, when to stay quiet) — not a fake user chat line. On fire you wake privately and act; the person only sees what you send_message.",
+      "Schedule your own recurring job in this room. Daily is M H * * *, weekly is M H * * D, in the person's IANA timezone. Does not run now. title is a short phone label; instructions is a standing order to your future self (goal, method, what to send_message, when to stay quiet) — not a fake user chat line. On fire you wake privately and act; the person only sees what you send_message.",
     surfaces: ["dispatcher"],
     inputSchema: routineCreateInputSchema,
   },
@@ -114,7 +114,7 @@ export const allToolDefinitions: ToolDefinition[] = [
   {
     name: "list_routines",
     description:
-      "List your own routines with ids, schedules, pause state, next run, last run, and up to 10 recent finished fires (done/failed). Use before update_routine or delete_routines.",
+      "List your own routines with ids, titles, instructions, schedules, pause state, next run, last run, and up to 10 recent finished fires (done/failed). Use before update_routine or delete_routines.",
     surfaces: ["dispatcher"],
     inputSchema: emptyToolInputSchema,
   },

@@ -38,7 +38,8 @@ describe("scheduler", () => {
     const { routine } = await createRoutine(db, account.id, {
       agentId: owner.id,
       conversationId: room!.id,
-      body: "Tick.",
+      title: "Tick",
+      instructions: "Tick.",
       cron: "*/15 * * * *",
       nextRunAt: new Date(Date.now() - 60_000).toISOString(),
     });

@@ -109,7 +109,13 @@ describe("server", () => {
     });
     const created = await postJson<{ id: string }>(
       `${baseUrl}/agents/${ada.id}/routines?accountId=${account.id}`,
-      { conversationId: room.id, body: "Sell the license", cron: "32 9 * * *", timezone: "UTC" },
+      {
+        conversationId: room.id,
+        title: "License sale",
+        instructions: "Sell the license",
+        cron: "32 9 * * *",
+        timezone: "UTC",
+      },
     );
     expect(created.id).toBeTruthy();
 
@@ -121,7 +127,7 @@ describe("server", () => {
 
     const bad = await fetch(`${baseUrl}/agents/${ada.id}/routines?accountId=${account.id}`, {
       method: "POST",
-      body: JSON.stringify({ conversationId: room.id, body: "Bad", cron: "nonsense" }),
+      body: JSON.stringify({ conversationId: room.id, title: "Bad", instructions: "Bad", cron: "nonsense" }),
     });
     expect(bad.status).toBe(400);
 
@@ -148,7 +154,12 @@ describe("server", () => {
     expect(foreign).toEqual([]);
     const blocked = await fetch(`${baseUrl}/agents/${ada.id}/routines?accountId=${outsider.id}`, {
       method: "POST",
-      body: JSON.stringify({ conversationId: room.id, body: "Nope", cron: "0 9 * * *" }),
+      body: JSON.stringify({
+        conversationId: room.id,
+        title: "Nope",
+        instructions: "Nope",
+        cron: "0 9 * * *",
+      }),
     });
     expect(blocked.status).toBe(404);
   });

@@ -341,7 +341,8 @@ export type ProposalInput = z.infer<typeof proposalSchema>;
 export const routineSchema = z.object({
   agentId: z.string().uuid(),
   conversationId: z.string().uuid(),
-  body: z.string().min(1),
+  title: z.string().trim().min(1).max(120),
+  instructions: z.string().min(1),
   cron: z.string().min(1),
   nextRunAt: z.string().min(1).optional(),
 });

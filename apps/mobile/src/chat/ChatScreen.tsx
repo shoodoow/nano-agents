@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Animated,
   FlatList,
@@ -101,6 +101,7 @@ function SwipeableBubble({ onSwipe, children }: { onSwipe: () => void; children:
  */
 export function ChatScreen({
   agent,
+  conversationId,
   title,
   subtitle,
   contextLine,
@@ -135,6 +136,7 @@ export function ChatScreen({
   onAgentMenu,
 }: {
   agent: RosterAgent;
+  conversationId: string;
   title: string;
   subtitle: string;
   contextLine?: string | null;
@@ -168,8 +170,27 @@ export function ChatScreen({
   onDesktop: () => void;
   onAgentMenu: () => void;
 }) {
-  const list = useRef<FlatList<Bubble>>(null);
+  const listRef = useRef<FlatList<Bubble>>(null);
   const [pickingFor, setPickingFor] = useState<string | null>(null);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  // Newest-first + inverted FlatList opens on the latest message with no
+  // top→bottom scroll animation (scrollToEnd on layout was the jump).
+  const thread = useMemo(() => [...messages].reverse(), [messages]);
+  useEffect(() => {
+    setPickingFor(null);
+    setHighlightId(null);
+  }, [conversationId]);
+
+  /** Scrolls the inverted thread to the parent of a swipe-reply. */
+  function scrollToReply(messageId: string): void {
+    const index = thread.findIndex((row) => row.id === messageId);
+    if (index < 0) return;
+    listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.35 });
+    setHighlightId(messageId);
+    setTimeout(() => {
+      setHighlightId((current) => (current === messageId ? null : current));
+    }, 1400);
+  }
   // @ mention autocomplete: matches a trailing @word in the draft and offers
   // room members starting with it. A trailing space (finished mention) hides it.
   const mentionQuery = /@([A-Za-z0-9_-]*)$/.exec(draft)?.[1]?.toLowerCase() ?? null;
@@ -228,28 +249,41 @@ export function ChatScreen({
         </Text>
       ) : null}
       <FlatList
-        ref={list}
-        data={messages}
+        ref={listRef}
+        key={conversationId}
+        inverted
+        data={thread}
         keyExtractor={(message) => message.id}
         contentContainerStyle={styles.thread}
-        onContentSizeChange={() => list.current?.scrollToEnd({ animated: true })}
+        keyboardShouldPersistTaps="handled"
+        onScrollToIndexFailed={({ index }) => {
+          // Off-screen rows need a layout pass before scrollToIndex works.
+          setTimeout(() => {
+            listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.35 });
+          }, 120);
+        }}
         ListEmptyComponent={
           typing ? null : (
-            <View style={styles.empty}>
-              <Text style={styles.emptyTitle}>This is the start of {title}</Text>
-              <Text style={styles.emptyHint}>
-                {members.length > 0 ? "Say hi below — type @ to mention a member." : "Say hi below to start."}
-              </Text>
+            // Inverted lists flip empty content; un-flip so copy reads upright.
+            <View style={styles.emptyInvert}>
+              <View style={styles.empty}>
+                <Text style={styles.emptyTitle}>This is the start of {title}</Text>
+                <Text style={styles.emptyHint}>
+                  {members.length > 0 ? "Say hi below — type @ to mention a member." : "Say hi below to start."}
+                </Text>
+              </View>
             </View>
           )
         }
         renderItem={({ item, index }) => {
-          const previous = messages[index - 1];
+          // thread is newest-first; the chronologically older neighbor is at index+1.
+          const previous = thread[index + 1];
           const showTime = !previous || previous.time !== item.time;
           const blocks: MessageBlock[] =
             item.blocks && item.blocks.length > 0 ? item.blocks : [{ kind: "text", markdown: item.body }];
           const nameColor = item.mine ? colors.text : colorFor(item.agentId ?? item.author);
           const author = item.agentId === agent.id ? agent : (members.find((member) => member.id === item.agentId) ?? null);
+          const highlighted = highlightId === item.id;
           return (
             <View>
               {showTime ? <Text style={styles.time}>Today {item.time}</Text> : null}
@@ -275,10 +309,23 @@ export function ChatScreen({
                     <Pressable
                       onLongPress={() => setPickingFor((current) => (current === item.id ? null : item.id))}
                       delayLongPress={350}
-                      style={[styles.bubble, item.mine ? styles.bubbleMine : styles.bubbleTheirs]}
+                      style={[
+                        styles.bubble,
+                        item.mine ? styles.bubbleMine : styles.bubbleTheirs,
+                        highlighted ? styles.bubbleHighlight : null,
+                      ]}
                       accessibilityLabel={`${item.author}. ${item.body}`}
                     >
-                      {item.replyPreview ? <Text style={styles.quote}>↩ {item.replyPreview}</Text> : null}
+                      {item.replyTo && item.replyPreview ? (
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel={`Jump to replied message: ${item.replyPreview}`}
+                          onPress={() => scrollToReply(item.replyTo!)}
+                          hitSlop={6}
+                        >
+                          <Text style={styles.quote}>↩ {item.replyPreview}</Text>
+                        </Pressable>
+                      ) : null}
                       {blocks.map((block, blockIndex) => (
                         <BlockView
                           key={blockIndex}
@@ -428,7 +475,9 @@ const styles = StyleSheet.create({
   mentionRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10, paddingHorizontal: 12 },
   mentionName: { color: colors.text, fontSize: 16 },
   headerSpacer: { width: 44 },
-  thread: { paddingHorizontal: 12, paddingTop: 12, paddingBottom: 16, gap: 8 },
+  // With inverted lists, paddingTop is the visual bottom (near composer).
+  thread: { flexGrow: 1, paddingHorizontal: 12, paddingTop: 16, paddingBottom: 12, gap: 8 },
+  emptyInvert: { transform: [{ scaleY: -1 }] },
   time: { color: colors.muted, textAlign: "center", fontSize: 13, marginVertical: 10 },
   row: { flexDirection: "row", alignItems: "flex-end", gap: 8 },
   rowMine: { justifyContent: "flex-end" },
@@ -441,7 +490,8 @@ const styles = StyleSheet.create({
   bubble: { borderRadius: 18, paddingHorizontal: 14, paddingVertical: 10, gap: 6 },
   bubbleMine: { backgroundColor: colors.online, borderBottomRightRadius: 6 },
   bubbleTheirs: { backgroundColor: colors.bubble, borderBottomLeftRadius: 6 },
-  quote: { color: colors.muted, fontSize: 13, borderLeftWidth: 2, borderLeftColor: colors.link, paddingLeft: 8 },
+  quote: { color: colors.muted, fontSize: 13, borderLeftWidth: 2, borderLeftColor: colors.link, paddingLeft: 8, marginBottom: 4 },
+  bubbleHighlight: { borderWidth: 1, borderColor: colors.link },
   typing: { color: colors.muted, paddingHorizontal: 20, paddingBottom: 4, fontSize: 13 },
   error: { color: colors.danger, paddingHorizontal: 20, paddingBottom: 6, fontSize: 14 },
   replyBar: { backgroundColor: colors.control, marginHorizontal: 12, borderRadius: 10, padding: 8 },

@@ -81,7 +81,8 @@ export type RoutineRun = {
 
 export type Routine = {
   id: string;
-  body: string;
+  title: string;
+  instructions: string;
   cron: string;
   timezone: string;
   paused: boolean;
@@ -93,13 +94,15 @@ export type Routine = {
 
 export type RoutineInput = {
   conversationId: string;
-  body: string;
+  title: string;
+  instructions: string;
   cron: string;
   timezone?: string;
 };
 
 export type RoutinePatch = {
-  body?: string;
+  title?: string;
+  instructions?: string;
   cron?: string;
   timezone?: string;
   paused?: boolean;
@@ -860,7 +863,7 @@ async function createRoutine(
 }
 
 /**
- * Changes one routine's body, schedule, or paused flag.
+ * Changes one routine's title, instructions, schedule, or paused flag.
  * Input: the core base URL, ids, the patch fields, and fetch.
  * Output: the updated routine.
  */
@@ -999,13 +1002,58 @@ export function buildCron(kind: "daily" | "weekdays" | number, hour: number, min
 }
 
 /**
- * The routine title shown in the list.
- * Why: routines carry a body, not a title — the first line is the name.
- * Input: the routine body. Output: the first line, capped at 80 chars.
+ * The routine title shown in the list / detail header.
+ * Why: prefers the stored title; falls back to the first instructions line.
  */
-export function routineTitle(body: string): string {
-  const first = body.split("\n")[0]?.trim() ?? "";
+export function routineTitle(routine: { title?: string | null; instructions?: string | null } | string): string {
+  if (typeof routine === "string") {
+    const first = routine.split("\n")[0]?.trim() ?? "";
+    return first.length > 80 ? `${first.slice(0, 80)}…` : first || "Untitled routine";
+  }
+  const titled = routine.title?.trim();
+  if (titled) return titled.length > 80 ? `${titled.slice(0, 80)}…` : titled;
+  const first = routine.instructions?.split("\n")[0]?.trim() ?? "";
   return first.length > 80 ? `${first.slice(0, 80)}…` : first || "Untitled routine";
+}
+
+/**
+ * Relative run-history label matching the phone detail screen.
+ * Why: "Yesterday at 16:21" / "Last Thursday at 16:22" / "Sep 26 at 16:21".
+ */
+export function formatRunHistoryWhen(iso: string, timeZone: string, now = new Date()): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+  try {
+    const zone = timeZone || "UTC";
+    const time = new Intl.DateTimeFormat("en-GB", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: zone,
+    }).format(date);
+    const dayKey = (value: Date) =>
+      new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: zone }).format(value);
+    const todayKey = dayKey(now);
+    const yesterday = new Date(now.getTime() - 86_400_000);
+    const yesterdayKey = dayKey(yesterday);
+    const runKey = dayKey(date);
+    if (runKey === todayKey) return `today at ${time}`;
+    if (runKey === yesterdayKey) return `Yesterday at ${time}`;
+    const weekday = new Intl.DateTimeFormat("en-US", { weekday: "long", timeZone: zone }).format(date);
+    const daysAgo = Math.floor((now.getTime() - date.getTime()) / 86_400_000);
+    if (daysAgo > 1 && daysAgo < 7) return `Last ${weekday} at ${time}`;
+    const monthDay = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: zone }).format(date);
+    return `${monthDay} at ${time}`;
+  } catch {
+    return "—";
+  }
+}
+
+/**
+ * Next-run label for the schedule card ("today at 16:14").
+ */
+export function formatNextRunRelative(iso: string, timeZone: string, now = new Date()): string {
+  return formatRunHistoryWhen(iso, timeZone, now);
 }
 
 /**

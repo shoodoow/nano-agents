@@ -85,12 +85,22 @@ test("a group is created on the signed-in account", async () => {
 });
 
 test("routines round-trip over the agent endpoints", async () => {
-  const routines = [{ id: "r1", body: "Sell the license", cron: "32 9 * * 1-5", timezone: "UTC", paused: false }];
+  const routines = [
+    {
+      id: "r1",
+      title: "License sale",
+      instructions: "Sell the license",
+      cron: "32 9 * * 1-5",
+      timezone: "UTC",
+      paused: false,
+    },
+  ];
   const fetchImpl: typeof fetch = async (input, init) => {
     const url = String(input);
     if (url.endsWith("/agents/a1/routines?accountId=account-1") && init?.method === "POST") {
-      const body = JSON.parse(String(init.body)) as { cron: string };
+      const body = JSON.parse(String(init.body)) as { cron: string; title: string };
       expect(body.cron).toBe("32 9 * * 1-5");
+      expect(body.title).toBe("License sale");
       return new Response(JSON.stringify({ ...routines[0], id: "r2" }), { status: 201 });
     }
     if (url.endsWith("/agents/a1/routines?accountId=account-1")) {
@@ -108,7 +118,8 @@ test("routines round-trip over the agent endpoints", async () => {
   await expect(core.listRoutines("account-1", "a1")).resolves.toHaveLength(1);
   const created = await core.createRoutine("account-1", "a1", {
     conversationId: "c1",
-    body: "Sell the license",
+    title: "License sale",
+    instructions: "Sell the license",
     cron: "32 9 * * 1-5",
   });
   expect(created.id).toBe("r2");
@@ -131,6 +142,9 @@ test("schedules read the way the bot info page shows them", () => {
   expect(buildCron(1, 16, 14)).toBe("14 16 * * 1");
   expect(routineTitle("Sell the license\nRun the weekday check.")).toBe("Sell the license");
   expect(routineTitle("")).toBe("Untitled routine");
+  expect(routineTitle({ title: "Octessa IG afternoon post", instructions: "Post at 4." })).toBe(
+    "Octessa IG afternoon post",
+  );
 });
 
 test("vault secrets post the name and value without echoing them back", async () => {

@@ -519,22 +519,24 @@ export const dispatcherExecutors: Record<string, ToolExecutor> = {
       accountId: ctx.accountId,
       conversationId: ctx.conversationId,
       agentId: ctx.agentId,
-      body: String(input.body),
+      title: String(input.title),
+      instructions: String(input.instructions),
       cron: String(input.cron),
       timezone: typeof input.timezone === "string" ? input.timezone : "UTC",
     });
-    return { routineId: routine.id, nextRunAt: routine.nextRunAt };
+    return { routineId: routine.id, title: routine.title, nextRunAt: routine.nextRunAt };
   },
   update_routine: async (ctx, input) => {
     const updated = await updateOwnRoutine(ctx.store, ctx.accountId, ctx.agentId, {
       routineId: String(input.routineId),
-      body: input.body as string | undefined,
+      title: input.title as string | undefined,
+      instructions: input.instructions as string | undefined,
       cron: input.cron as string | undefined,
       timezone: input.timezone as string | undefined,
       paused: input.paused as boolean | undefined,
     });
     if (!updated) throw new Error("No routine of yours with that id.");
-    return { routineId: updated.id, nextRunAt: updated.nextRunAt, paused: updated.paused };
+    return { routineId: updated.id, title: updated.title, nextRunAt: updated.nextRunAt, paused: updated.paused };
   },
   delete_routine: async (ctx, input) => {
     const parsed = routineIdSchema.parse({ routineId: input.routineId });
