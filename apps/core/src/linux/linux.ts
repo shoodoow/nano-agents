@@ -72,13 +72,7 @@ export async function createLinux(accountId: string): Promise<string> {
       name,
       Image: image,
       Labels: labels,
-      HostConfig: {
-        Memory: memoryBytes,
-        MemorySwap: memoryBytes,
-        NanoCpus: 2_000_000_000,
-        StorageOpt: { size: storageSize },
-        Binds: [`nano-account-${accountId}:/var/nano`],
-      },
+      HostConfig: accountContainerHostConfig(accountId),
     });
     await container.start();
   } catch (error) {
@@ -297,8 +291,28 @@ export async function removeAccountContainers(options?: { testOnly?: boolean }):
   );
 }
 
-function containerName(accountId: string): string {
+export function containerName(accountId: string): string {
   return `nano-${accountId}`;
+}
+
+/**
+ * Host settings for one account cage.
+ * Why: the container must not see the Docker socket or another account's volume.
+ * Input: account id. Output: Docker HostConfig. Privileged stays off.
+ */
+export function accountContainerHostConfig(accountId: string): Dockerode.HostConfig {
+  const binds = [`nano-account-${accountId}:/var/nano`];
+  if (binds.some((bind) => bind.includes("docker.sock") || bind.startsWith("/") && !bind.startsWith("nano-account-"))) {
+    throw new Error("Account containers cannot mount the host.");
+  }
+  return {
+    Memory: memoryBytes,
+    MemorySwap: memoryBytes,
+    NanoCpus: 2_000_000_000,
+    StorageOpt: { size: storageSize },
+    Binds: binds,
+    Privileged: false,
+  };
 }
 
 async function ensureMemory(container: Dockerode.Container, current: number): Promise<void> {

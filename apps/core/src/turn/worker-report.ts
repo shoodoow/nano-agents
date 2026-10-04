@@ -30,7 +30,26 @@ const REPORT_MARKERS = /(^|\n)\s*(\*{0,2}(findings|what i did|blockers)\*{0,2}\s
 const NEXT_STEP_NARRATION = /\b(let me|i'?ll|i will|going to|about to|now i'?ll|let's)\b/i;
 
 /** Screens only the person can clear (login/2FA/payment), seen but not acted on. */
-const PERSON_GATE = /\b(log in|login|sign in|sign-in|signin|logged out|log back in|2fa|two-?factor|verification code|verify (?:your|it'?s you)|enter (?:your )?password|password|captcha|checkpoint|confirm it'?s you|payment)\b/i;
+const PERSON_GATE = /\b(log in|login|sign in|sign-in|signin|logged out|log back in|2fa|two-?factor|verification code|verify (?:your|it'?s you)|enter (?:your )?password|password|checkpoint|confirm it'?s you|payment)\b/i;
+
+const WRITTEN_PATH = /(?:\/shared|\/home|\/var\/nano)\/[A-Za-z0-9_./-]+/g;
+
+/**
+ * Paths a finished report claims it wrote.
+ * Why: a worker can say the engine finished when the file was never created.
+ * Input: report text. Output: absolute paths mentioned as written output.
+ */
+export function claimedWrittenPaths(text: string): string[] {
+  const paths = new Set<string>();
+  for (const line of text.split("\n")) {
+    if (/\b(missing|not found|does not exist|doesn't exist|absent|never written)\b/i.test(line)) continue;
+    if (!/\b(wrote|written|saved|created|output file|file at)\b/i.test(line)) continue;
+    for (const match of line.match(WRITTEN_PATH) ?? []) {
+      paths.add(match.replace(/[.,;:]+$/, ""));
+    }
+  }
+  return [...paths];
+}
 
 export type WorkerEnding =
   | { kind: "report"; result: string }

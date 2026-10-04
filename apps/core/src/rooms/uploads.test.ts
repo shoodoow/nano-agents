@@ -48,12 +48,12 @@ describe("attachment pure helpers", () => {
       { id: parentId, agentId: "agent-1", body: "Pick a or b?", payload: null },
       { id: "msg-reply", agentId: null, body: "b", payload: null, replyTo: parentId },
     ]);
-    expect(messages[1]!.content).toBe('[msg:msg-reply]\n(Replying to you: "Pick a or b?")\nb');
+    expect(messages[1]!.content).toBe('(Replying to you: "Pick a or b?")\nb');
     const missing = toModelMessages(
       [{ id: "msg-reply", agentId: null, body: "yes", payload: null, replyTo: "gone" }],
       new Map([["gone", { body: "Want coffee?", agentId: null }]]),
     );
-    expect(missing[0]!.content).toBe('[msg:msg-reply]\n(Replying to them: "Want coffee?")\nyes');
+    expect(missing[0]!.content).toBe('(Replying to them: "Want coffee?")\nyes');
   });
 
   it("attaches vision parts for the newest user images only", () => {

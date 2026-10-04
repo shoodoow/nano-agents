@@ -31,4 +31,7 @@ RUN apt-get update \
     netcat-openbsd \
   && rm -rf /var/lib/apt/lists/*
 
+RUN mkdir -p /opt/nano
+COPY browser-bridge.mjs mcp-bridge.mjs /opt/nano/
+
 CMD ["sleep", "infinity"]

@@ -6,7 +6,9 @@ import { and, eq } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
 import { mcpServers } from "../db/schema.js";
 import { open, seal } from "../keys/keys.js";
-import { closeMcpSession, connectHttpMcp, listMcpTools } from "./session.js";
+import { listMcpToolsInCage, syncMcpConfig } from "../computer/mcp-bridge.js";
+import { createLinux } from "../linux/linux.js";
+import { closeMcpSession } from "./session.js";
 import type { McpToolCacheEntry } from "./types.js";
 import { assertSafeMcpUrl } from "./url.js";
 
@@ -53,6 +55,11 @@ export async function deleteMcpServer(db: Database, accountId: string, slug: str
   if (!row) return;
   await closeMcpSession(accountId, row.id);
   await db.delete(mcpServers).where(and(eq(mcpServers.accountId, accountId), eq(mcpServers.slug, slug)));
+  const remaining = await db.select().from(mcpServers).where(eq(mcpServers.accountId, accountId));
+  await syncMcpConfig(
+    accountId,
+    remaining.map((server) => ({ slug: server.slug, url: server.url, secret: open(server.secret) })),
+  ).catch(() => {});
 }
 
 export async function saveMcpServer(db: Database, accountId: string, input: unknown): Promise<StoredMcpServer> {
@@ -67,13 +74,26 @@ export async function saveMcpServer(db: Database, accountId: string, input: unkn
 
   let toolsCache: McpToolCacheEntry[] = existing ? parseToolsCache(existing.toolsCache) : [];
   let lastError: string | null = null;
+  if (existing) await closeMcpSession(accountId, existing.id);
   try {
-    const session = await connectHttpMcp(data.url, plain);
-    toolsCache = await listMcpTools(session);
-    await session.close();
-    if (existing) await closeMcpSession(accountId, existing.id);
+    await createLinux(accountId);
+    const others = await db.select().from(mcpServers).where(eq(mcpServers.accountId, accountId));
+    await syncMcpConfig(
+      accountId,
+      others
+        .filter((row) => row.slug !== data.slug)
+        .map((row) => ({ slug: row.slug, url: row.url, secret: open(row.secret) }))
+        .concat({ slug: data.slug, url: data.url, secret: plain }),
+    );
+    const listed = await listMcpToolsInCage(accountId, data.slug);
+    if ("error" in listed) {
+      lastError = listed.error;
+      toolsCache = [];
+    } else {
+      toolsCache = listed;
+    }
   } catch (error) {
-    lastError = error instanceof Error ? error.message : "Could not connect to MCP server.";
+    lastError = error instanceof Error ? error.message : "Could not reach the MCP bridge in this account's computer.";
     toolsCache = [];
   }
 

@@ -20,6 +20,24 @@ Use this skill when:
 - **Performance Analysis**: Recording and analyzing performance traces to identify bottlenecks and Core Web Vital issues.
 - **Emulation**: Resizing the viewport or emulating network/CPU conditions.
 
+## Tools in this product
+
+Use these names. They run inside the account computer over localhost Chrome debugging. There is no host MCP URL.
+
+- `browser_list_pages`, `browser_navigate`, `browser_snapshot`
+- `browser_click` and `browser_fill` take `uid` from the latest snapshot
+- `browser_press_key` with `PageDown` or `Home` scrolls
+- `browser_handle_dialog` accepts or dismisses `alert` / `confirm` / `prompt`
+- `browser_wait_for` waits for visible text
+
+## Ads versus captchas
+
+1. `browser_snapshot` first.
+2. If you see Close, Skip, X, or "No thanks", `browser_click` that uid or `browser_handle_dialog` with `accept: false`.
+3. `browser_press_key` `Escape`, then snapshot again.
+4. A search-engine page that says "enable JavaScript" or shows only a challenge widget, with no site content, is a bot wall. Say that in Blockers. Do not call it a site captcha and do not invent rankings.
+5. `NEEDS_PERSON` only for a real sign-in, 2FA, or payment form after the overlay is gone.
+
 ## Tool Categories
 
 ### 1. Navigation & Page Management

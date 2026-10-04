@@ -430,7 +430,8 @@ function bootDesktop(display: number, profile: string): string {
 
 function jwmConfig(display: number): string {
   const root = `/tmp/desktop-${display}`;
-  const chrome = "chromium --no-sandbox --disable-dev-shm-usage --disable-gpu --no-first-run --start-maximized";
+  const chrome =
+    "chromium --no-sandbox --disable-dev-shm-usage --disable-gpu --no-first-run --start-maximized --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222";
   return `<JWM>
 <WindowStyle>
 <Font>DejaVu Sans-11</Font>

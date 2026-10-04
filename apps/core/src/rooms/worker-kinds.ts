@@ -45,6 +45,8 @@ const EARLY_EXIT_RULE = `
 ## Early exit on unrecoverable blocker
 If an action or command fails with a clear, unrecoverable blocker (e.g. permission denied, sudo requires password, command not found with no install path, missing credentials, unreachable network):
 - Stop immediately. Do NOT run futile diagnostic loops, endless searches, or repeat the failed action.
+- One empty web_search is a retry with different words, then stop. Do not loop the same query.
+- Write long output to /shared/worker-results/ as you go, then say the path only after you have checked the file exists.
 - Write your final report with Findings and Blockers explaining what failed and what is needed from the user or parent agent.
 `.trim();
 

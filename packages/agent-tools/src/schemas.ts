@@ -309,3 +309,43 @@ export const grepInputSchema = z.object({
   path: z.string().optional(),
   include: z.string().optional(),
 });
+
+/** Install into this account's skill folder. Pass markdown or owner/repo@skill, not both required. */
+export const installSkillInputSchema = z
+  .object({
+    source: z
+      .string()
+      .trim()
+      .min(3)
+      .max(200)
+      .optional()
+      .describe("GitHub spec owner/repo or owner/repo@skill. Never use a global install."),
+    markdown: z.string().trim().min(1).max(80_000).optional().describe("Full SKILL.md when you already have the file body."),
+  })
+  .refine((value) => Boolean(value.source || value.markdown), { message: "Pass source or markdown." });
+
+export const browserNavigateInputSchema = z.object({
+  url: z.string().min(1),
+});
+
+export const browserUidInputSchema = z.object({
+  uid: z.string().min(1).max(40),
+});
+
+export const browserFillInputSchema = z.object({
+  uid: z.string().min(1).max(40),
+  value: z.string().max(4000),
+});
+
+export const browserPressKeyInputSchema = z.object({
+  key: z.string().min(1).max(40),
+});
+
+export const browserDialogInputSchema = z.object({
+  accept: z.boolean(),
+  promptText: z.string().max(500).optional(),
+});
+
+export const browserWaitInputSchema = z.object({
+  text: z.string().min(1).max(200),
+});

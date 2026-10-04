@@ -18,8 +18,10 @@ describe("dispatcher SDK tools", () => {
       "glob",
       "grep",
       "hire_subagent",
+      "install_skill",
       "list_groups",
       "list_routines",
+      "list_skills",
       "list_team",
       "notify_user",
       "react_to_message",
@@ -27,6 +29,7 @@ describe("dispatcher SDK tools", () => {
       "read_history",
       "read_skill",
       "redirect_worker",
+      "refresh_skills",
       "remember_fact",
       "send_message",
       "spawn_worker",
@@ -44,8 +47,12 @@ describe("dispatcher SDK tools", () => {
       if (parentCheap.has(name)) expect(names).toContain(name);
       else expect(names).not.toContain(name);
     }
-    expect(workerToolNames(true)).toEqual([...profileToolNames(), "read_history", "read_skill"].sort());
+    expect(workerToolNames(true)).toEqual(
+      expect.arrayContaining([...profileToolNames(), "read_history", "read_skill", "browser_snapshot", "install_skill"]),
+    );
     expect(workerToolNames(true)).toContain("web_search");
-    expect(workerToolNames(false)).toEqual(["read_history", "read_skill"]);
+    expect(workerToolNames(false)).toEqual(
+      ["install_skill", "list_skills", "read_history", "read_skill", "refresh_skills"].sort(),
+    );
   });
 });

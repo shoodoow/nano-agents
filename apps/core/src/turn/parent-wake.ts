@@ -76,7 +76,9 @@ function workerCompletionCue(
   return (
     `[worker results — private to manager]\n${reports}\n\n` +
     "Review these reports and decide what belongs in the room. The worker has no voice and must not be quoted raw. " +
-    "Send a concise human update only when useful. If a report names a /shared artifact the person asked for, attach it as a file block. " +
-    "Never expose Findings/What I did/Blockers labels, worker ids, tool logs, or implementation details."
+    "Do not tell the person a file or install finished unless the report proves the path exists. " +
+    "When you relay a number, quote the single source the report actually cited — do not blend two different figures. " +
+    "Send a concise human update only when there is new evidence. If a report names a /shared artifact the person asked for, attach it as a file block. " +
+    "Never expose Findings/What I did/Blockers labels, [msg:…] ids, worker ids, tool logs, or implementation details."
   );
 }

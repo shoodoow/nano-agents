@@ -9,7 +9,7 @@ platforms: [linux]
 
 How to talk to **this bot's Linux computer** — the assigned X11 desktop, not a generic VPS setup guide.
 
-Adapted from [agent-sh/computer-use-linux](https://github.com/agent-sh/computer-use-linux) (AT-SPI / text-first desktop control). Here the runtime tools are `bash`, `computer_*`, `web_fetch`, and (when configured) Chrome DevTools MCP / `chrome-devtools` skill.
+Adapted from [agent-sh/computer-use-linux](https://github.com/agent-sh/computer-use-linux) (AT-SPI / text-first desktop control). Here the runtime tools are `bash`, `computer_*`, `web_fetch`, and `browser_*` from the `chrome-devtools` skill. Browser control stays inside this account's computer.
 
 ## When to Use
 

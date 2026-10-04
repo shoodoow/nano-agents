@@ -1,8 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { sendMessageInputSchema } from "@nano-agents/agent-tools";
-import { normalizeSendMessageInput } from "./normalize-send-message.js";
+import { normalizeSendMessageInput, stripInternalChatMarks } from "./normalize-send-message.js";
 
 describe("normalizeSendMessageInput", () => {
+  it("strips message ids and worker labels before they reach chat", () => {
+    expect(stripInternalChatMarks("[msg:7adfdcc1-c99e-4660-9d56-6d673bf6e842]\nFindings: hello")).toBe("hello");
+    const n = normalizeSendMessageInput({
+      blocks: [{ kind: "text", markdown: "[msg:abc-123]\nOn it." }],
+    });
+    expect(n.blocks).toEqual([{ kind: "text", markdown: "On it." }]);
+  });
+
   it("wraps root-level kind/markdown (trace failure mode)", () => {
     const raw = { kind: "text", markdown: "On it." };
     const n = normalizeSendMessageInput(raw);

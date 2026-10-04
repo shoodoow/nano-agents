@@ -4,8 +4,8 @@
 import { jsonSchema, tool } from "ai";
 import type { getDb } from "../db/client.js";
 import type { ToolContext } from "../turn/tools/context.js";
-import { bearerForMcpRow, mcpRowsForAccount } from "./store.js";
-import { callMcpTool, getMcpSession } from "./session.js";
+import { runMcpTool } from "../computer/mcp-bridge.js";
+import { mcpRowsForAccount } from "./store.js";
 import type { McpToolCacheEntry } from "./types.js";
 
 type Db = ReturnType<typeof getDb>;
@@ -52,7 +52,6 @@ export async function appendMcpTools(
   for (const row of rows) {
     const tools = (Array.isArray(row.toolsCache) ? row.toolsCache : []) as McpToolCacheEntry[];
     if (tools.length === 0) continue;
-    const token = await bearerForMcpRow(row);
     for (const entry of tools) {
       const fullName = `${row.slug}_${entry.name}`;
       // Approval boundary (prompt-level: servers don't annotate read vs
@@ -64,8 +63,10 @@ export async function appendMcpTools(
         description: (entry.description || `MCP ${row.slug}/${entry.name}`) + askFirst,
         inputSchema: mcpInputSchema(entry) as never,
         execute: wrapExecute(fullName, async (input) => {
-          const session = await getMcpSession(ctx.accountId, row.id, row.url, token);
-          return callMcpTool(session, entry.name, input);
+          if (!ctx.linuxProfile) {
+            return { error: "Connectors run inside this account's computer, which is not ready yet." };
+          }
+          return runMcpTool(ctx.accountId, row.slug, entry.name, input);
         }) as never,
       });
     }

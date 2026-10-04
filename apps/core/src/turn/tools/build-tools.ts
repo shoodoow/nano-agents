@@ -6,11 +6,21 @@ import { readSkillForAccount } from "../../skills/skills.js";
 import { linuxToolExecutes, DISPATCHER_FETCH_CHARS } from "../../computer/linux-tool-executes.js";
 import type { AgentMode } from "../types.js";
 import type { ToolContext } from "./context.js";
-import { dispatcherExecutors, executeDelegate } from "./executors.js";
+import { dispatcherExecutors, executeDelegate, executeInstallSkill, executeListSkills, executeRefreshSkills } from "./executors.js";
 import { wrapToolExecute } from "./wrap-tool-execute.js";
 
 /** OpenAI-compatible empty tool input (avoids Zod→JSON Schema propertyNames warnings). */
-const NO_PARAMETERS_TOOLS = new Set(["list_groups", "list_team", "list_routines", "todo_list", "computer_screenshot"]);
+const NO_PARAMETERS_TOOLS = new Set([
+  "list_groups",
+  "list_team",
+  "list_routines",
+  "todo_list",
+  "computer_screenshot",
+  "list_skills",
+  "refresh_skills",
+  "browser_list_pages",
+  "browser_snapshot",
+]);
 
 const emptyParametersSchema = jsonSchema<Record<string, never>>({
   type: "object",
@@ -63,6 +73,12 @@ function workerExecute(
         return "Skill not found.";
       }
     };
+  }
+  if (def.name === "list_skills" || def.name === "install_skill" || def.name === "refresh_skills") {
+    const skillCtx = { db: workerCtx.db, skillsRoot: workerCtx.skillsRoot, accountId: workerCtx.accountId };
+    if (def.name === "list_skills") return async () => executeListSkills(skillCtx);
+    if (def.name === "refresh_skills") return async () => executeRefreshSkills(skillCtx);
+    return async (input) => executeInstallSkill(skillCtx, input);
   }
   const linuxFn = linux[def.name];
   if (!linuxFn) throw new Error(`Missing Linux execute for ${def.name}`);

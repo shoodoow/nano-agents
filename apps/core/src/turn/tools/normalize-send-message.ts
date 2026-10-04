@@ -31,8 +31,26 @@ export function normalizeSendMessageInput(input: Record<string, unknown>): { blo
   }
 
   if (Array.isArray(blocks)) {
-    blocks = expandWidgetMarkupBlocks(blocks);
+    blocks = expandWidgetMarkupBlocks(blocks).map((block) => {
+      if (!block || typeof block !== "object") return block;
+      const row = block as { kind?: string; markdown?: string };
+      if (row.kind === "text" && typeof row.markdown === "string") {
+        return { ...row, markdown: stripInternalChatMarks(row.markdown) };
+      }
+      return block;
+    });
   }
 
   return { blocks, replyTo: replyTo ?? null };
+}
+
+/** Drops message-id citations and worker report labels the person should not see. */
+export function stripInternalChatMarks(markdown: string): string {
+  return markdown
+    .replace(/^\s*\[msg:[^\]]+\]\s*/i, "")
+    .replace(/\n\s*\[msg:[^\]]+\]\s*/g, "\n")
+    .split("\n")
+    .map((line) => line.replace(/^\s*\*{0,2}(Findings|What I did|Blockers)\*{0,2}\s*:\s*/i, ""))
+    .join("\n")
+    .trim();
 }

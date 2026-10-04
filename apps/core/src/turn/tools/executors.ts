@@ -42,6 +42,12 @@ import {
   WorkerCapacityError,
 } from "../../rooms/subagents.js";
 import { updateAgentFlags } from "../../roster/roster.js";
+import {
+  bumpAccountPromptVersions,
+  catalogText,
+  installSkillFromSource,
+  writeAccountSkill,
+} from "../../skills/install.js";
 import { readSkillForAccount } from "../../skills/skills.js";
 import {
   createOwnRoutine,
@@ -188,6 +194,41 @@ export async function executeReadSkill(ctx: ToolContext, input: Record<string, u
     return readSkillForAccount(ctx.skillsRoot, ctx.accountId, String(input.name));
   } catch {
     return "Skill not found.";
+  }
+}
+
+export async function executeListSkills(ctx: Pick<ToolContext, "skillsRoot" | "accountId">) {
+  if (!ctx.skillsRoot) return "No skills directory configured.";
+  const catalog = catalogText(ctx.skillsRoot, ctx.accountId);
+  return catalog || "No skills installed for this account yet.";
+}
+
+export async function executeRefreshSkills(ctx: Pick<ToolContext, "db" | "skillsRoot" | "accountId">) {
+  if (!ctx.skillsRoot) return "No skills directory configured.";
+  const bumped = await bumpAccountPromptVersions(ctx.db, ctx.accountId);
+  return { refreshed: true, agents: bumped, catalog: catalogText(ctx.skillsRoot, ctx.accountId) };
+}
+
+export async function executeInstallSkill(
+  ctx: Pick<ToolContext, "db" | "skillsRoot" | "accountId">,
+  input: Record<string, unknown>,
+) {
+  if (!ctx.skillsRoot) return { error: "No skills directory configured." };
+  try {
+    const markdown = typeof input.markdown === "string" ? input.markdown : "";
+    const source = typeof input.source === "string" ? input.source : "";
+    const written = markdown
+      ? writeAccountSkill(ctx.skillsRoot, ctx.accountId, markdown)
+      : await installSkillFromSource(ctx.skillsRoot, ctx.accountId, source);
+    const agentsBumped = await bumpAccountPromptVersions(ctx.db, ctx.accountId);
+    return {
+      installed: written.name,
+      agentsBumped,
+      catalog: catalogText(ctx.skillsRoot, ctx.accountId),
+      note: "The skill list updates on the next turn. Confirm with list_skills or read_skill before telling the person it is ready.",
+    };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "install_skill failed." };
   }
 }
 
@@ -385,13 +426,14 @@ export async function executeSpawnWorker(ctx: ToolContext, input: Record<string,
       error: "Already spawned several workers this turn. send_message what you started, then stop — results arrive on their own.",
     };
   }
-  const failed = await failuresSinceLastUser(ctx.store, ctx.accountId, ctx.conversationId, ctx.agentId);
+  const task = String(input.task ?? "");
+  const failed = await failuresSinceLastUser(ctx.store, ctx.accountId, ctx.conversationId, ctx.agentId, task);
   if (failed >= 2) {
     return {
-      error: "Two workers already failed since the person's last message. Do not start another. send_message what failed, in plain words, then stop.",
+      error:
+        "Two workers already failed on this same task since the person's last message. A different task can still start. send_message what failed, in plain words, then stop.",
     };
   }
-  const task = String(input.task ?? "");
   const valid = validateWorkerTask(task);
   if (!valid.ok) return { error: valid.hint };
   // De-dupe: same parent+room already running (near-)identical task — reuse it
@@ -523,10 +565,17 @@ export async function executeRedirectWorker(ctx: ToolContext, input: Record<stri
       error: "Already spawned several workers this turn. send_message what you started, then stop — results arrive on their own.",
     };
   }
-  const failed = await failuresSinceLastUser(ctx.store, ctx.accountId, ctx.conversationId, ctx.agentId);
+  const failed = await failuresSinceLastUser(
+    ctx.store,
+    ctx.accountId,
+    ctx.conversationId,
+    ctx.agentId,
+    running.task,
+  );
   if (failed >= 2) {
     return {
-      error: "Two workers already failed since the person's last message. Do not start another. send_message what failed, in plain words, then stop.",
+      error:
+        "Two workers already failed on this same task since the person's last message. A different task can still start. send_message what failed, in plain words, then stop.",
     };
   }
   const [worker] = await ctx.store
@@ -569,6 +618,9 @@ export const dispatcherExecutors: Record<string, ToolExecutor> = {
   remember_fact: executeRememberFact,
   correct_memory: executeCorrectMemory,
   read_skill: executeReadSkill,
+  list_skills: (ctx) => executeListSkills(ctx),
+  install_skill: (ctx, input) => executeInstallSkill(ctx, input),
+  refresh_skills: (ctx) => executeRefreshSkills(ctx),
   hire_subagent: executeHireSubagent,
   update_teammate: executeUpdateTeammate,
   list_team: (ctx) => listTeam(ctx.store, ctx.accountId, ctx.agentId),

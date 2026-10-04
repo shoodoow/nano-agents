@@ -101,7 +101,7 @@ export function toModelMessages(
     const role = row.agentId ? "assistant" : "user";
     const body = tailSlice(row.body);
     const linked = row.replyTo ? formatReplyBody(body, byId.get(row.replyTo) ?? null) : body;
-    const text = row.id ? `[msg:${row.id}]\n${linked}` : linked;
+    const text = linked;
     const parts = wanted.get(index);
     if (!parts || parts.length === 0) return { role, content: text };
     return {

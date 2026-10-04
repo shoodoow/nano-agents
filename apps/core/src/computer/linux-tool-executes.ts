@@ -4,6 +4,7 @@ import { bash, clickAt, moveMouse, pressKeys, readFile, screenshotImage, typeTex
 import { globFiles, grepFiles } from "./find.js";
 import { webSearch } from "./search.js";
 import { webFetch } from "./web.js";
+import { runBrowserTool } from "./browser-bridge.js";
 
 type Database = ReturnType<typeof getDb>;
 
@@ -87,6 +88,14 @@ export function linuxToolExecutes(
         path: typeof input.path === "string" ? input.path : undefined,
         include: typeof input.include === "string" ? input.include : undefined,
       }),
+    browser_list_pages: () => runBrowserTool(accountId, profile, "browser_list_pages", {}),
+    browser_navigate: (input) => runBrowserTool(accountId, profile, "browser_navigate", input),
+    browser_snapshot: () => runBrowserTool(accountId, profile, "browser_snapshot", {}),
+    browser_click: (input) => runBrowserTool(accountId, profile, "browser_click", input),
+    browser_fill: (input) => runBrowserTool(accountId, profile, "browser_fill", input),
+    browser_press_key: (input) => runBrowserTool(accountId, profile, "browser_press_key", input),
+    browser_handle_dialog: (input) => runBrowserTool(accountId, profile, "browser_handle_dialog", input),
+    browser_wait_for: (input) => runBrowserTool(accountId, profile, "browser_wait_for", input),
   };
 }
 

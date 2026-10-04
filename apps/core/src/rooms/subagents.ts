@@ -19,7 +19,9 @@ import { buildWorkerToolSet } from "../turn/tools/build-tools.js";
 import type { ToolContext } from "../turn/tools/context.js";
 import { appendEvent } from "./events.js";
 import { publish } from "./stream.js";
-import { createProfile, execStdin } from "../linux/linux.js";
+import { createProfile, exec, execStdin } from "../linux/linux.js";
+import { appendMcpTools } from "../mcp/tools.js";
+import { wrapToolExecute } from "../turn/tools/wrap-tool-execute.js";
 import { agents, conversations, delegations, members, messages } from "../db/schema.js";
 import { RoomCapacityError } from "./rooms.js";
 
@@ -877,6 +879,11 @@ export async function runWorker(
       skillsRoot: input.skillsRoot,
       review,
     });
+    if (profile) {
+      await appendMcpTools(review, tools as Record<string, unknown>, (name, execute) =>
+        wrapToolExecute(review, "worker", name, execute),
+      );
+    }
     const roleLine = `You are ${child.label} — ${child.role}.`;
     const kindMeta = unpackWorkerJobDescription(child.jobDescription);
     const standing = workerPreambleFor(kindMeta.kind, kindMeta.instructions);
@@ -999,7 +1006,7 @@ export async function runWorker(
       },
       steps: workerSteps,
     });
-    const { classifyWorkerEnding, collectWorkerFallback, collectWorkerText } = await import("../turn/worker-report.js");
+    const { claimedWrittenPaths, classifyWorkerEnding, collectWorkerFallback, collectWorkerText } = await import("../turn/worker-report.js");
     const ranTools =
       (result.toolResults?.length ?? 0) > 0 ||
       (result.steps ?? []).some(
@@ -1032,6 +1039,21 @@ export async function runWorker(
         usage,
       );
       return;
+    }
+    if (ending.kind === "report" && profile) {
+      const missing: string[] = [];
+      for (const path of claimedWrittenPaths(ending.result)) {
+        const check = await exec(input.accountId, ["test", "-f", path], profile).catch(() => ({ code: 1 }));
+        if (check.code !== 0) missing.push(path);
+      }
+      if (missing.length > 0) {
+        await finish(
+          "failed",
+          `Claimed files are missing: ${missing.join(", ")}. Do not tell the person this finished.`,
+          usage,
+        );
+        return;
+      }
     }
     // report | needs_person: deliver as-is (needs_person triggers the sign-in handover).
     await finish("done", ending.result, usage);

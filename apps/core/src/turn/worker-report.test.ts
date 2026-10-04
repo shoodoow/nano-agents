@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  claimedWrittenPaths,
   classifyWorkerEnding,
   collectWorkerFallback,
   collectWorkerText,
@@ -104,6 +105,17 @@ describe("classifyWorkerEnding", () => {
     expect(
       classifyWorkerEnding("The web_fetch returned empty (JS-heavy). Let me open objkt.com in Chromium.", true).kind,
     ).toBe("stall");
+  });
+
+  it("does not treat the word captcha alone as a person gate", () => {
+    expect(classifyWorkerEnding("The overlay looks like a captcha. Let me close it.", false).kind).toBe("stall");
+  });
+
+  it("collects paths the report claims it wrote", () => {
+    expect(claimedWrittenPaths("I saved the verdict to /shared/worker-results/hackerone-verdict.md.")).toEqual([
+      "/shared/worker-results/hackerone-verdict.md",
+    ]);
+    expect(claimedWrittenPaths("The file /shared/worker-results/missing.md was not found.")).toEqual([]);
   });
 
   it("passes an explicit NEEDS_PERSON line straight through as a report", () => {

@@ -32,13 +32,20 @@ import {
   xyInputSchema,
   pathInputSchema,
   readWriteInputSchema,
+  installSkillInputSchema,
+  browserNavigateInputSchema,
+  browserUidInputSchema,
+  browserFillInputSchema,
+  browserPressKeyInputSchema,
+  browserDialogInputSchema,
+  browserWaitInputSchema,
 } from "./schemas.js";
 
 const WORKER_KIND_HINT =
   "Pick kind by the work: executor (general), computer (desktop GUI — Method must include read_skill computer-use-linux), browser (public web — prefer read_skill chrome-devtools for live pages), explore (files/code search), shell (commands), debug (evidence-based bugs), watch_video / video_review (media), vm_setup (project setup), docs (public documentation). If none fit, kind=custom and pass instructions with the standing method for this new specialist. Default kind is computer.";
 
 const WORKER_TASK_HINT =
-  `Act like the task owner, not a messenger: the worker starts blank, so the task must fully assign the job. ${WORKER_KIND_HINT} Task must include Goal (one sentence, with done-criteria), Inputs (exact URLs/paths/quotes), Method, Success check (how you will verify the result answers the Goal), and Return format with proof. Never pass provider or modelId — the worker uses your model. Proof is mandatory: demand exact numbers, URLs, and quotes observed — never estimates, never invented content. Return format is always three labeled sections: Findings: (evidence), What I did: (steps), Blockers: (what stopped you, or none). Desktop/browser: put the exact URL in the task; explore cheapest-first — web_fetch, then headless dump-dom / chrome-devtools snapshots for JS pages, visible Chromium only for login-gated pages. For desktop GUI, Method includes read_skill computer-use-linux. Never mention screenshots in the brief unless the person asked for visual proof — text/snapshot first; images burn tokens. Reuse the existing Chromium window (do not pkill chromium); drive clicks with computer_click, computer_type, and computer_key (or DevTools uid tools), never xdotool or Playwright from bash; no OCR unless the person asked. If the screen needs a password, 2FA, captcha, or payment, the worker ends with NEEDS_PERSON: plus one instruction for the person. If a skill applies, name read_skill <name> in Method.`;
+  `Act like the task owner, not a messenger: the worker starts blank, so the task must fully assign the job. ${WORKER_KIND_HINT} Task must include Goal (one sentence, with done-criteria), Inputs (exact URLs/paths/quotes), Method, Success check (how you will verify the result answers the Goal), and Return format with proof. Never pass provider or modelId — the worker uses your model. Proof is mandatory: demand exact numbers, URLs, and quotes observed — never estimates, never invented content. Return format is always three labeled sections: Findings: (evidence), What I did: (steps), Blockers: (what stopped you, or none). Skill installs are install_skill on the dispatcher, or kind shell with that tool — never a new teammate. Live pages use browser_snapshot, browser_click, browser_fill, browser_press_key, and browser_handle_dialog (read_skill chrome-devtools). Desktop GUI uses read_skill computer-use-linux. Never mention screenshots unless the person asked for visual proof. Reuse the existing Chromium window (do not pkill chromium). If the screen needs a password, 2FA, or payment, end with NEEDS_PERSON: plus one instruction. A popup ad is not a captcha — dismiss it. If a skill applies, name read_skill <name> in Method. Do not claim a file exists unless you wrote it and checked it.`;
 
 export type ToolSurface = "dispatcher" | "worker";
 
@@ -180,6 +187,27 @@ export const allToolDefinitions: ToolDefinition[] = [
     descriptionWorker: "Load one skill's steps by name when the task needs that procedure. Skip it when the task is already clear.",
   },
   {
+    name: "list_skills",
+    description:
+      "List skills this account can load (name and description). Call this after install_skill or refresh_skills before you tell the person a skill is available.",
+    surfaces: ["dispatcher", "worker"],
+    inputSchema: emptyToolInputSchema,
+  },
+  {
+    name: "install_skill",
+    description:
+      "Install one skill into this account's skill folder (not a global home directory). Pass source as owner/repo or owner/repo@skill, or markdown as a full SKILL.md. Then the catalog refreshes for the next turn. Prove it with list_skills or read_skill before saying it is installed.",
+    surfaces: ["dispatcher", "worker"],
+    inputSchema: installSkillInputSchema,
+  },
+  {
+    name: "refresh_skills",
+    description:
+      "Rescan the account skill folder and bump prompt versions so the next turn sees newly installed skills without a process restart.",
+    surfaces: ["dispatcher", "worker"],
+    inputSchema: emptyToolInputSchema,
+  },
+  {
     name: "send_message",
     description:
       'The only channel the person sees. Call first on every user turn. blocks: array of typed objects — kind text (short markdown: 1–3 sentences, bold the answer, lists only when listing), image (url), code (code), file (url+name), widget. Widgets MUST be real blocks — never markdown like [widget:secret {…}]. Shape: { "kind": "widget", "widget": "question"|"secret"|…, "props": {…} }. question: single decision with prompt + 1–6 short options {label, value?} (skip long descriptions). poll: multi-select only. secret: envName required, never ask in plain text; ends the turn. Ask rarely; every question option must be a verified choice. Up to 10 blocks per send. Never bare strings. Plain assistant text is invisible.',
@@ -315,6 +343,63 @@ export const allToolDefinitions: ToolDefinition[] = [
     surfaces: ["dispatcher", "worker"],
     requiresLinux: true,
     inputSchema: grepInputSchema,
+  },
+  {
+    name: "browser_list_pages",
+    description: "List open Chrome pages in this account's computer (localhost CDP only). Use before snapshot.",
+    surfaces: ["worker"],
+    requiresLinux: true,
+    inputSchema: emptyToolInputSchema,
+  },
+  {
+    name: "browser_navigate",
+    description: "Open an http(s) URL in this account's Chrome. Prefer the deepest URL you already know.",
+    surfaces: ["worker"],
+    requiresLinux: true,
+    inputSchema: browserNavigateInputSchema,
+  },
+  {
+    name: "browser_snapshot",
+    description:
+      "Text snapshot of the current page with uids for links, buttons, and inputs. Use this before click or fill. Dismiss ad overlays from the snapshot; do not treat a close button as a captcha.",
+    surfaces: ["worker"],
+    requiresLinux: true,
+    inputSchema: emptyToolInputSchema,
+  },
+  {
+    name: "browser_click",
+    description: "Click an element by uid from the latest browser_snapshot.",
+    surfaces: ["worker"],
+    requiresLinux: true,
+    inputSchema: browserUidInputSchema,
+  },
+  {
+    name: "browser_fill",
+    description: "Type into an input by uid from the latest browser_snapshot. Never type a password, 2FA code, or card.",
+    surfaces: ["worker"],
+    requiresLinux: true,
+    inputSchema: browserFillInputSchema,
+  },
+  {
+    name: "browser_press_key",
+    description: "Press a key in the page: Enter, Escape, Tab, PageDown, Home, ArrowDown. Use PageDown to scroll.",
+    surfaces: ["worker"],
+    requiresLinux: true,
+    inputSchema: browserPressKeyInputSchema,
+  },
+  {
+    name: "browser_handle_dialog",
+    description: "Accept or dismiss a JavaScript alert, confirm, or prompt. Use this for popup ads that are dialogs.",
+    surfaces: ["worker"],
+    requiresLinux: true,
+    inputSchema: browserDialogInputSchema,
+  },
+  {
+    name: "browser_wait_for",
+    description: "Wait until the page text contains a short string, or time out.",
+    surfaces: ["worker"],
+    requiresLinux: true,
+    inputSchema: browserWaitInputSchema,
   },
 ];
 
