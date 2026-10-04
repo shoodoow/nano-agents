@@ -17,6 +17,7 @@ import type { MessageBlock, Reaction, RosterAgent } from "../api";
 import { colors } from "../theme/tokens";
 import { Avatar, colorFor } from "../ui/Avatar";
 import { CircleButton } from "../ui/CircleButton";
+import { ContextUsageRing } from "../ui/ContextUsageRing";
 import { IconBack, IconMonitor, IconPlus } from "../ui/icons";
 import { BlockView } from "./blocks";
 import { Reactions } from "./Reactions";
@@ -104,7 +105,7 @@ export function ChatScreen({
   conversationId,
   title,
   subtitle,
-  contextLine,
+  contextRing,
   members,
   messages,
   draft,
@@ -139,7 +140,8 @@ export function ChatScreen({
   conversationId: string;
   title: string;
   subtitle: string;
-  contextLine?: string | null;
+  /** Shown inside the message field on the right when context stats loaded. */
+  contextRing?: { share: number; hint: string } | null;
   members: RosterAgent[];
   messages: Bubble[];
   draft: string;
@@ -254,9 +256,9 @@ export function ChatScreen({
           <View style={styles.headerSpacer} />
         )}
       </View>
-      {contextLine ? (
+      {contextRing?.hint ? (
         <Text style={styles.contextLine} numberOfLines={1}>
-          {contextLine}
+          {contextRing.hint}
         </Text>
       ) : null}
       <FlatList
@@ -424,19 +426,26 @@ export function ChatScreen({
         <CircleButton label="Attach" onPress={onAttach}>
           <IconPlus />
         </CircleButton>
-        <TextInput
-          value={draft}
-          onChangeText={onDraft}
-          placeholder={`Message ${title}`}
-          placeholderTextColor={colors.muted}
-          keyboardAppearance="dark"
-          style={styles.input}
-          multiline
-          maxLength={20000}
-          editable={!sending}
-          scrollEnabled
-          textAlignVertical="top"
-        />
+        <View style={styles.inputWrap}>
+          <TextInput
+            value={draft}
+            onChangeText={onDraft}
+            placeholder={`Message ${title}`}
+            placeholderTextColor={colors.muted}
+            keyboardAppearance="dark"
+            style={[styles.input, contextRing ? styles.inputWithRing : null]}
+            multiline
+            maxLength={20000}
+            editable={!sending}
+            scrollEnabled
+            textAlignVertical="top"
+          />
+          {contextRing ? (
+            <View style={styles.inputRing} pointerEvents="box-none">
+              <ContextUsageRing share={contextRing.share} hint={contextRing.hint} />
+            </View>
+          ) : null}
+        </View>
         <Pressable accessibilityLabel="Send" accessibilityRole="button" onPress={onSend} style={styles.send}>
           <Text style={styles.sendText}>Send</Text>
         </Pressable>
@@ -546,18 +555,35 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   sendText: { color: "#fff", fontSize: 16, fontWeight: "700" },
-  input: {
+  inputWrap: {
     flex: 1,
     minHeight: 44,
     maxHeight: INPUT_MAX_HEIGHT,
     borderRadius: 22,
     backgroundColor: colors.bubble,
+    position: "relative",
+  },
+  inputRing: {
+    position: "absolute",
+    right: 12,
+    top: 0,
+    bottom: 0,
+    justifyContent: "center",
+    zIndex: 2,
+    elevation: 2,
+  },
+  input: {
+    flex: 1,
+    minHeight: 44,
+    maxHeight: INPUT_MAX_HEIGHT,
     color: colors.text,
     paddingHorizontal: 16,
     paddingTop: 11,
     paddingBottom: 11,
     fontSize: 16,
+    backgroundColor: "transparent",
   },
+  inputWithRing: { paddingRight: 38 },
   sheetBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
   sheet: { backgroundColor: colors.control, borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 12, gap: 4 },
   sheetRow: { paddingVertical: 14, paddingHorizontal: 12, borderRadius: 10 },

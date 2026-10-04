@@ -7,6 +7,7 @@ import * as ImagePicker from "expo-image-picker";
 import {
   configureAuthCookie,
   contextLine as formatContextLine,
+  contextUsageShare,
   createCore,
   type MessageBlock,
   type Proposal,
@@ -162,7 +163,7 @@ export default function App() {
   const [profileFeed, setProfileFeed] = useState<(Bubble & { conversationId?: string })[]>([]);
   const [profile, setProfile] = useState<RosterAgent | null>(null);
   const [conversationId, setConversationId] = useState("");
-  const [contextLine, setContextLine] = useState<string | null>(null);
+  const [contextRing, setContextRing] = useState<{ share: number; hint: string } | null>(null);
   const [groups, setGroups] = useState<{ id: string; title: string; memberCount: number; members: GroupFace[] }[]>([]);
   // Last opened chat, so the desktop back-button returns to the right title.
   const [lastChat, setLastChat] = useState<{
@@ -464,9 +465,9 @@ export default function App() {
   async function loadContextLine(roomId: string): Promise<void> {
     try {
       const info = await core.chatContext(accountId.trim(), roomId);
-      setContextLine(formatContextLine(info));
+      setContextRing({ share: contextUsageShare(info), hint: formatContextLine(info) });
     } catch {
-      setContextLine(null);
+      setContextRing(null);
     }
   }
 
@@ -504,7 +505,7 @@ export default function App() {
     setConversationId(room.id);
     setLastChat(opened);
     setScreen({ name: "chat", ...opened });
-    setContextLine(null);
+    setContextRing(null);
     void loadContextLine(room.id);
     setMessages(toBubbles(history, taps, roster));
     setDraft("");
@@ -1148,7 +1149,7 @@ export default function App() {
           conversationId={screen.conversationId}
           title={screen.title}
           subtitle={screen.subtitle}
-          contextLine={contextLine}
+          contextRing={contextRing}
           members={
             screen.kind === "group" ? agents.filter((row) => screen.memberIds.includes(row.id)) : []
           }

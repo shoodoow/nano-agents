@@ -139,14 +139,47 @@ export type ChatContextInfo = {
   };
 };
 
-/** One-line header for the chat screen, e.g. "~12k ctx • 45k used • 9% of 128k". */
+/** Compact token counts for the chat header (ctx window vs lifetime billing). */
+export function formatTokenCount(tokens: number): string {
+  if (tokens >= 1_000_000) return `${Math.round(tokens / 100_000) / 10}M`;
+  if (tokens >= 1000) return `${Math.round(tokens / 100) / 10}k`;
+  return String(tokens);
+}
+
+function formatWindowSharePct(share: number): string {
+  if (share <= 0) return "0%";
+  if (share < 0.01) return "<1%";
+  return `${Math.round(share * 100)}%`;
+}
+
+/** Header line: window fill (matches the composer ring), then optional lifetime billing. */
 export function contextLine(info: ChatContextInfo): string {
-  const ctx = info.context.estTokens >= 1000 ? `${Math.round(info.context.estTokens / 100) / 10}k ctx` : `${info.context.estTokens} ctx`;
-  const used = info.usage.totalTokens >= 1000 ? `${Math.round(info.usage.totalTokens / 100) / 10}k used` : `${info.usage.totalTokens} used`;
-  const share = info.model.estTurnShare !== null ? ` • ${Math.max(1, Math.round(info.model.estTurnShare * 100))}% of ${Math.round((info.model.contextWindow ?? 0) / 1000)}k` : "";
+  const share = contextUsageShare(info);
+  const ctx = formatTokenCount(info.context.estTokens);
+  const parts: string[] = [];
+  const window = info.model.contextWindow;
+  if (window && window > 0) {
+    parts.push(`${formatWindowSharePct(share)} · ${ctx} of ${formatTokenCount(window)} window`);
+  } else {
+    parts.push(`${ctx} est ctx`);
+  }
+  const billed = info.usage.totalTokens;
+  if (billed > 0) {
+    parts.push(`${formatTokenCount(billed)} billed`);
+  }
   const untrackedCount = info.usage.runsUntracked + info.usage.delegationsUntracked;
-  const untracked = untrackedCount > 0 ? ` (+${untrackedCount} untracked)` : "";
-  return `${ctx} • ${used}${untracked}${share}`;
+  if (untrackedCount > 0) {
+    parts.push(`+${untrackedCount} untracked`);
+  }
+  return parts.join(" · ");
+}
+
+/** Normalized 0–1 fill for the composer ring — same ratio as the header window %. */
+export function contextUsageShare(info: ChatContextInfo): number {
+  const window = info.model.contextWindow;
+  if (!window || window <= 0) return 0;
+  const share = info.context.estTokens / window;
+  return Math.min(1, Math.max(0, share));
 }
 
 export type StreamEvent = {
