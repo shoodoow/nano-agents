@@ -79,7 +79,7 @@ export const MARK_DEFAULT: MarkLook = {
   shape: "cloud",
   color: "#FFCC38",
   material: "plush",
-  style: "gentleman",
+  style: "minimal",
   gender: "male",
 };
 

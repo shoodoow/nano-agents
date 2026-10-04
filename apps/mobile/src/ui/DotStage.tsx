@@ -58,7 +58,7 @@ function apply(job: Job): string {
       if(!sg) return true;
       return sg===(gg==='female'?'f':'m');
     }
-    if(!fits(st,g)) st= g==='female'?'lady':'gentleman';
+    if(!fits(st,g)) st= g==='female'?'lady':'minimal';
     d.setOption('shape',${JSON.stringify(shape)});
     d.setOption('material',${JSON.stringify(material)});
     d.setOption('style',st);
@@ -204,7 +204,7 @@ export function DotThumb({
   shape,
   color,
   material,
-  style = "gentleman",
+  style = "minimal",
   gender = "male",
   size,
 }: {
@@ -257,7 +257,7 @@ export function DotLive({
   shape,
   color,
   material,
-  style = "gentleman",
+  style = "minimal",
   gender = "male",
   size,
 }: {
