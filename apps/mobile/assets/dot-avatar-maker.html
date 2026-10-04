@@ -1,0 +1,1983 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>Dot Characters</title>
+<style>
+:root{
+  --bg:#F6F4EF;
+  --panel:#FFFFFF;
+  --ink:#1B1B1D;
+  --ink-2:#3A3935;
+  --muted:#77736B;
+  --faint:#A29D93;
+  --line:#E4E0D6;
+  --line-2:#D6D1C5;
+  --tile:#EFECE6;
+  --tile-2:#E7E3DB;
+  --stage-top:#F3F1EC;
+  --stage-bottom:#E2DED5;
+  --focus:#5B7A4C;
+  --radius-lg:28px;
+  --radius-md:18px;
+  --radius-sm:12px;
+  --shadow-1:0 1px 2px rgba(28,26,22,.06),0 6px 20px -8px rgba(28,26,22,.12);
+  --font:ui-sans-serif,-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,"Helvetica Neue","PingFang SC","Hiragino Sans","Noto Sans","Noto Sans CJK SC","Noto Sans Arabic","Noto Sans Devanagari","Noto Sans Thai",sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer;background:none;border:0;padding:0}
+button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--focus);outline-offset:3px}
+svg.i{width:18px;height:18px;flex:none;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+[hidden]{display:none!important}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+
+/* ---------- header ---------- */
+.top{max-width:1360px;margin:0 auto;padding:18px 28px;display:flex;align-items:center;justify-content:space-between;gap:16px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:650;font-size:16px;letter-spacing:-.01em;min-width:0}
+.brand svg{width:30px;height:30px;flex:none}
+.brand span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lang{position:relative;display:flex;align-items:center;gap:8px;height:38px;padding:0 12px 0 11px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--ink-2)}
+.lang svg.i{width:16px;height:16px;color:var(--muted)}
+.lang select{appearance:none;-webkit-appearance:none;border:0;background:transparent;padding:0 18px 0 0;font-size:13px;font-weight:550;max-width:200px;cursor:pointer}
+.lang .chev{position:absolute;inset-inline-end:10px;pointer-events:none;width:14px;height:14px;color:var(--muted)}
+.lang select:focus-visible{outline:none}
+.lang:focus-within{outline:2px solid var(--focus);outline-offset:2px}
+
+/* ---------- layout ---------- */
+.app{max-width:1360px;margin:0 auto;padding:4px 28px 40px;display:grid;grid-template-columns:minmax(0,1.12fr) minmax(360px,.88fr);gap:40px;align-items:start}
+.stage-col{position:sticky;top:16px}
+.stage{position:relative;border-radius:var(--radius-lg);overflow:hidden;background:linear-gradient(180deg,var(--stage-top),var(--stage-bottom));height:min(calc(100vh - 110px),800px);min-height:520px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.04);touch-action:pan-y}
+.stage canvas.gl{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:grab;touch-action:none}
+.stage canvas.gl:active{cursor:grabbing}
+.stage-tools{position:absolute;top:16px;inset-inline-end:16px;display:flex;gap:8px;z-index:2}
+.tool{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;background:rgba(255,255,255,.72);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);color:var(--ink-2);box-shadow:0 1px 0 rgba(255,255,255,.6) inset,0 1px 3px rgba(0,0,0,.08);transition:background .15s,transform .15s}
+.tool:hover{background:#fff;transform:translateY(-1px)}
+.tool{position:relative}
+.tool:active{transform:scale(.92)}
+.tool[data-tip]::after{content:attr(data-tip);position:absolute;top:calc(100% + 8px);left:50%;transform:translate(-50%,-4px);padding:5px 9px;border-radius:8px;background:rgba(27,27,29,.9);color:#fff;font-size:12px;font-weight:550;line-height:1.3;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .15s,transform .15s}
+.tool[data-tip]:last-child::after{left:auto;right:0;transform:translate(0,-4px)}
+.tool[data-tip]:hover::after,.tool[data-tip]:focus-visible::after{opacity:1;transform:translate(-50%,0)}
+.tool[data-tip]:last-child:hover::after,.tool[data-tip]:last-child:focus-visible::after{transform:translate(0,0)}
+@media (hover:none){.tool[data-tip]::after{display:none}}
+.flash{position:absolute;inset:0;z-index:3;background:#fff;opacity:0;pointer-events:none}
+.flash.on{animation:flash .5s ease-out}
+@keyframes flash{0%{opacity:.8}100%{opacity:0}}
+.toast{position:absolute;left:50%;top:70px;z-index:4;display:flex;align-items:center;gap:6px;padding:8px 14px 8px 11px;border-radius:999px;background:rgba(27,27,29,.9);color:#fff;font-size:13px;font-weight:600;white-space:nowrap;opacity:0;transform:translate(-50%,-6px);pointer-events:none;transition:opacity .2s,transform .2s}
+.toast.on{opacity:1;transform:translate(-50%,0)}
+.toast svg.i{width:16px;height:16px}
+.tool[aria-pressed="true"]{background:var(--ink);color:#fff}
+.stage-tag{position:absolute;top:22px;inset-inline-start:22px;display:flex;align-items:center;gap:8px;font-size:11px;font-weight:650;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);z-index:2}
+.stage-tag i{width:7px;height:7px;border-radius:50%;background:#6FAE72;box-shadow:0 0 0 3px rgba(111,174,114,.18)}
+.stage-foot{position:absolute;inset-inline:16px;bottom:16px;display:flex;align-items:flex-end;justify-content:space-between;gap:12px;z-index:2;pointer-events:none}
+.caption{pointer-events:auto;display:flex;flex-direction:column;gap:2px;padding:12px 16px;border-radius:16px;background:rgba(255,255,255,.72);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-shadow:0 1px 3px rgba(0,0,0,.06);min-width:0;max-width:72%}
+.caption strong{font-size:15px;font-weight:650;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.caption span{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dice{pointer-events:auto;display:flex;align-items:center;gap:8px;height:46px;padding:0 18px 0 14px;border-radius:999px;background:var(--ink);color:#fff;font-weight:600;font-size:14px;box-shadow:0 8px 20px -8px rgba(0,0,0,.45);transition:transform .15s,background .15s}
+.dice:hover{background:#34332F;transform:translateY(-1px)}
+.dice svg.i{width:18px;height:18px}
+.hint{position:absolute;left:50%;bottom:82px;transform:translateX(-50%);font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;opacity:.9;pointer-events:none;z-index:1;transition:opacity .6s}
+.hint.gone{opacity:0}
+.hint svg.i{width:14px;height:14px}
+.busy{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;opacity:0;transition:opacity .2s;z-index:1}
+.busy.on{opacity:1}
+.busy b{width:28px;height:28px;border-radius:50%;border:2px solid rgba(0,0,0,.08);border-top-color:var(--ink-2);animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.nogl{position:absolute;inset:0;display:grid;place-items:center;padding:32px;text-align:center;color:var(--muted);font-size:14px}
+.nogl .dot{width:160px;height:150px;border-radius:48% 52% 46% 54%/55% 55% 45% 45%;margin:0 auto 20px;box-shadow:inset -14px -18px 30px rgba(0,0,0,.12),inset 12px 14px 24px rgba(255,255,255,.35)}
+
+/* ---------- panel ---------- */
+.panel{min-width:0}
+.steps{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:14px;padding:5px;border-radius:18px;background:var(--tile)}
+.step-btn{display:flex;flex-direction:column;align-items:flex-start;gap:1px;padding:9px 12px 10px;border-radius:13px;text-align:start;min-width:0;transition:background .15s,box-shadow .15s}
+.step-btn:hover{background:rgba(255,255,255,.55)}
+.step-btn[aria-current="step"]{background:var(--panel);box-shadow:var(--shadow-1)}
+.step-btn small{font-size:11px;color:var(--faint);font-weight:650;display:flex;align-items:center;gap:6px;letter-spacing:.02em}
+.step-btn b{font-size:13.5px;font-weight:650;color:var(--ink-2)}
+.step-btn em{font-style:normal;font-size:12px;color:var(--muted);max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.step-btn .sw{width:10px;height:10px;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(0,0,0,.12)}
+.card{background:var(--panel);border-radius:22px;padding:20px 18px 18px;box-shadow:var(--shadow-1)}
+.card-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:2px 4px 14px}
+.card-head h2{margin:0;font-size:17px;font-weight:650;letter-spacing:-.01em}
+.card-head span{font-size:12px;color:var(--muted)}
+.card-head.has-seg{align-items:center;margin-top:-4px}
+.seg{display:inline-flex;flex:none;gap:4px;padding:4px;border-radius:999px;background:var(--tile)}
+.seg-btn{height:32px;padding:0 18px;border-radius:999px;font-size:13px;font-weight:600;color:var(--muted);transition:background .15s,color .15s}
+.seg-btn:hover{color:var(--ink-2)}
+.seg-btn[aria-pressed="true"]{background:var(--panel);color:var(--ink);box-shadow:var(--shadow-1)}
+.group-title{margin:18px 4px 10px;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--faint)}
+.group-title:first-child{margin-top:4px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:10px}
+.opt{display:flex;flex-direction:column;align-items:center;gap:7px;min-width:0;border-radius:var(--radius-md);padding:0 0 4px}
+.opt .thumb{position:relative;width:100%;aspect-ratio:1;border-radius:var(--radius-md);background:linear-gradient(180deg,var(--stage-top),var(--stage-bottom));overflow:hidden;box-shadow:inset 0 0 0 1px rgba(0,0,0,.035);transition:transform .18s,box-shadow .18s}
+.opt .thumb canvas{position:absolute;inset:0;width:100%;height:100%;opacity:0;transition:opacity .25s}
+.opt .thumb canvas.ready{opacity:1}
+.opt .thumb .ph{position:absolute;left:50%;top:52%;width:44%;aspect-ratio:1.08;transform:translate(-50%,-50%);border-radius:50%;background:rgba(0,0,0,.05)}
+.opt:hover .thumb{transform:translateY(-2px);box-shadow:inset 0 0 0 1px rgba(0,0,0,.06),0 8px 18px -10px rgba(0,0,0,.3)}
+.opt[aria-pressed="true"] .thumb{box-shadow:inset 0 0 0 2px var(--ink),0 8px 18px -12px rgba(0,0,0,.35)}
+.opt .lbl{font-size:12.5px;line-height:1.25;color:var(--ink-2);text-align:center;max-width:100%;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.opt[aria-pressed="true"] .lbl{color:var(--ink);font-weight:650}
+.badge{position:absolute;top:7px;inset-inline-end:7px;width:22px;height:22px;border-radius:50%;background:var(--ink);color:#fff;display:none;place-items:center}
+.badge svg.i{width:13px;height:13px;stroke-width:2.6}
+.opt[aria-pressed="true"] .badge{display:grid}
+
+/* colors */
+.swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(66px,1fr));gap:12px 8px}
+.swatch{display:flex;flex-direction:column;align-items:center;gap:7px;min-width:0;padding:2px 0}
+.chip{position:relative;width:46px;height:46px;border-radius:50%;background:var(--c);box-shadow:inset 0 0 0 1px rgba(0,0,0,.08),inset -5px -7px 12px rgba(0,0,0,.14),inset 5px 6px 10px rgba(255,255,255,.35);transition:transform .15s}
+.chip::after{content:"";position:absolute;top:8px;left:11px;width:13px;height:8px;border-radius:50%;background:rgba(255,255,255,.55);filter:blur(1.5px);transform:rotate(-24deg)}
+.swatch:hover .chip{transform:scale(1.06)}
+.swatch[aria-pressed="true"] .chip{box-shadow:0 0 0 3px var(--panel),0 0 0 5px var(--ink),inset -5px -7px 12px rgba(0,0,0,.14),inset 5px 6px 10px rgba(255,255,255,.35)}
+.swatch .lbl{font-size:12px;color:var(--ink-2);text-align:center;line-height:1.2;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.swatch[aria-pressed="true"] .lbl{font-weight:650;color:var(--ink)}
+.row-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.pill{display:inline-flex;align-items:center;gap:7px;height:36px;padding:0 14px;border-radius:999px;border:1px solid var(--line);background:var(--panel);font-size:13px;font-weight:550;color:var(--ink-2);transition:background .15s,border-color .15s}
+.pill:hover{background:var(--tile);border-color:var(--line-2)}
+.pill[aria-expanded="true"]{background:var(--ink);border-color:var(--ink);color:#fff}
+.pill svg.i{width:15px;height:15px}
+.pill .mini{width:14px;height:14px;border-radius:50%;background:conic-gradient(from 90deg,#e8645a,#eab54a,#9cc26a,#4fb3a3,#4e7fd1,#9a6fd0,#e36aa4,#e8645a)}
+.tone{aspect-ratio:1;border-radius:50%;background:var(--c);box-shadow:inset 0 0 0 1px rgba(0,0,0,.08);transition:transform .12s}
+.tone:hover{transform:scale(1.15)}
+.tone[aria-pressed="true"]{box-shadow:0 0 0 2px var(--tile),0 0 0 3.5px var(--ink)}
+.custom{margin-top:14px;padding:16px;border-radius:16px;background:var(--tile);display:grid;grid-template-columns:auto 1fr;gap:14px 16px;align-items:center}
+.custom .preview{width:64px;height:64px;border-radius:50%;background:var(--c);box-shadow:inset 0 0 0 1px rgba(0,0,0,.08),inset -6px -8px 14px rgba(0,0,0,.16),inset 6px 7px 12px rgba(255,255,255,.35)}
+.hexrow{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.hexin{display:flex;align-items:center;height:36px;border:1px solid var(--line-2);border-radius:10px;background:#fff;padding:0 10px;gap:4px;direction:ltr}
+.hexin span{color:var(--faint);font-family:var(--mono);font-size:13px}
+.hexin input{width:78px;border:0;outline:0;background:transparent;font-family:var(--mono);font-size:13.5px;text-transform:uppercase;letter-spacing:.04em}
+.hexin:focus-within{outline:2px solid var(--focus);outline-offset:2px}
+.sliders{grid-column:1/-1;display:grid;gap:12px}
+.slider{display:grid;grid-template-columns:86px 1fr 44px;gap:12px;align-items:center;font-size:12.5px;color:var(--muted)}
+.slider output{font-family:var(--mono);font-size:12px;text-align:end;color:var(--ink-2)}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:14px;border-radius:999px;background:var(--track,#ddd);outline-offset:4px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.06);direction:ltr}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;border-radius:50%;background:#fff;border:0;box-shadow:0 0 0 1px rgba(0,0,0,.14),0 2px 6px rgba(0,0,0,.2);cursor:grab}
+input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;background:#fff;border:0;box-shadow:0 0 0 1px rgba(0,0,0,.14),0 2px 6px rgba(0,0,0,.2);cursor:grab}
+.native{position:absolute;opacity:0;pointer-events:none;width:1px;height:1px}
+
+/* actions */
+.actions{position:sticky;bottom:0;z-index:5;margin-top:14px;padding:12px 0 calc(12px + env(safe-area-inset-bottom));background:linear-gradient(180deg,rgba(246,244,239,0),var(--bg) 30%);display:flex;gap:10px}
+.btn{height:50px;border-radius:14px;padding:0 18px;display:inline-flex;align-items:center;justify-content:center;gap:8px;font-weight:620;font-size:14.5px;transition:background .15s,transform .15s,border-color .15s}
+.btn svg.i{width:18px;height:18px}
+.btn.primary{flex:1;background:var(--ink);color:#fff;box-shadow:0 10px 24px -14px rgba(0,0,0,.6)}
+.btn.primary:hover{background:#34332F}
+.btn.ghost{background:var(--panel);border:1px solid var(--line);color:var(--ink-2)}
+.btn.ghost:hover{border-color:var(--line-2);background:#FBFAF7}
+[dir=rtl] .flip{transform:scaleX(-1)}
+.note{margin:4px 2px 0;font-size:12px;color:var(--faint);line-height:1.6}
+footer{max-width:1360px;margin:0 auto;padding:18px 28px 36px;display:flex;justify-content:space-between;gap:16px;font-size:12px;color:var(--faint);border-top:1px solid var(--line)}
+
+/* dialog */
+dialog{width:min(680px,calc(100% - 28px));max-height:calc(100vh - 40px);border:0;border-radius:24px;padding:0;background:var(--panel);color:var(--ink);box-shadow:0 30px 80px -20px rgba(0,0,0,.4)}
+dialog::backdrop{background:rgba(30,28,24,.36);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.dlg{display:grid;grid-template-columns:240px 1fr;min-height:0}
+.dlg-art{background:linear-gradient(180deg,var(--stage-top),var(--stage-bottom));display:grid;place-items:center;padding:18px}
+.dlg-art img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:16px}
+.dlg-body{padding:24px 24px 20px;min-width:0;display:flex;flex-direction:column;gap:12px;overflow:auto;max-height:calc(100vh - 40px)}
+.dlg-body h2{margin:0;font-size:21px;letter-spacing:-.015em;padding-inline-end:36px}
+.dlg-body p{margin:0;color:var(--muted);font-size:13.5px;line-height:1.6}
+.tags{display:flex;flex-wrap:wrap;gap:6px}
+.tag{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:999px;background:var(--tile);font-size:12.5px;color:var(--ink-2)}
+.tag i{width:10px;height:10px;border-radius:50%;background:var(--c);box-shadow:inset 0 0 0 1px rgba(0,0,0,.12)}
+.dl-opts{display:grid;gap:10px;margin-top:6px}
+.dl-opt{display:grid;grid-template-columns:40px minmax(0,1fr) 18px;align-items:center;gap:12px;padding:12px 14px;border-radius:16px;border:1px solid var(--line);background:var(--panel);text-align:start;transition:background .15s,border-color .15s}
+.dl-opt:hover{border-color:var(--line-2);background:#FBFAF7}
+.dl-opt .ic{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;background:var(--tile);color:var(--ink-2)}
+.dl-opt b{display:block;font-size:14.5px;font-weight:650;color:var(--ink)}
+.dl-opt small{display:block;margin-top:1px;font-size:12px;color:var(--muted)}
+.dl-opt svg.go{width:18px;height:18px;color:var(--faint)}
+.dl-opt.primary{background:var(--ink);border-color:var(--ink)}
+.dl-opt.primary:hover{background:#34332F}
+.dl-opt.primary .ic{background:rgba(255,255,255,.12);color:#fff}
+.dl-opt.primary b{color:#fff}
+.dl-opt.primary small,.dl-opt.primary svg.go{color:rgba(255,255,255,.66)}
+.x{position:absolute;top:14px;inset-inline-end:14px;width:36px;height:36px;border-radius:50%;display:grid;place-items:center;color:var(--muted);background:var(--tile)}
+.x:hover{color:var(--ink)}
+.status{min-height:18px;font-size:12.5px;color:#4E7A43}
+
+/* off screen (e.g. the host page is scrolled down): no animation keeps running */
+.offscreen *,.offscreen *::before,.offscreen *::after{animation-play-state:paused!important}
+
+/* embed: the studio inside a host page's iframe fills the frame exactly; only the option list scrolls */
+.embed body{background:transparent}
+.embed .top,.embed footer,.embed .note{display:none}
+.embed .app{max-width:none;height:100vh;height:100dvh;padding:0;gap:16px;grid-template-columns:minmax(0,1.18fr) minmax(360px,.82fr);align-items:stretch}
+.embed .stage-col{position:relative;top:auto;min-height:0}
+.embed .stage{height:100%;min-height:0;max-height:none;aspect-ratio:auto}
+.embed .panel{min-height:0;display:flex;flex-direction:column}
+.embed .steps{flex:none}
+.embed .card{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain}
+.embed .actions{position:static;flex:none;margin-top:12px;padding:0;background:none}
+
+/* viewer: the downloaded HTML opens straight into a full-window 3D view of one character */
+.viewer .top,.viewer .panel,.viewer footer,.viewer #btn-random{display:none}
+.viewer .app{display:block;max-width:none;padding:0}
+.viewer .stage-col{position:static}
+.viewer .stage{height:100vh;height:100dvh;min-height:0;max-height:none;aspect-ratio:auto;border-radius:0}
+
+/* mark: the same viewer, transparent, with no studio chrome — embedded as an app avatar */
+.mark,.mark body{background:transparent}
+.mark .stage{background:transparent;box-shadow:none}
+.mark .stage-tag,.mark .stage-tools,.mark .hint,.mark .stage-foot,.mark .busy,.mark .toast,.mark .flash{display:none}
+
+/* responsive */
+@media (max-width:1100px){.app{grid-template-columns:minmax(0,1fr) minmax(340px,.95fr);gap:28px}}
+@media (max-width:860px){
+  .top{padding:14px 16px}
+  .app{grid-template-columns:1fr;padding:0 16px 24px;gap:18px}
+  .stage-col{position:relative;top:auto}
+  .stage{height:auto;min-height:0;aspect-ratio:1/1;max-height:66vh;width:100%}
+  .steps{gap:4px;padding:4px}
+  .step-btn{padding:8px 8px 9px}
+  .step-btn em{display:none}
+  .grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+  .card{padding:16px 12px 14px}
+  .dice span{display:none}
+  .dice{width:46px;padding:0;justify-content:center}
+  .caption{max-width:calc(100% - 64px)}
+  .hint{display:none}
+  .caption{padding:9px 12px}
+  .caption strong{font-size:14px}
+  .lang select{max-width:118px;text-overflow:ellipsis}
+  .brand{font-size:15px}
+  footer{flex-direction:column;padding:16px}
+  .dlg{grid-template-columns:1fr}
+  .dlg-art{padding:14px 14px 0;background:none}
+  .dlg-art img{width:120px}
+}
+@media (max-width:860px){
+  .embed .app{display:flex;flex-direction:column;gap:10px;padding:0}
+  .embed .stage-col{flex:0 0 44%}
+  .embed .stage{width:100%}
+  .embed .panel{flex:1}
+  .embed .steps{margin-bottom:10px}
+  .embed .card{overscroll-behavior:auto}   /* on phones a finished list hands the swipe back to the host page */
+}
+@media (max-width:420px){
+  .grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .slider{grid-template-columns:70px 1fr 40px}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><svg viewBox="0 0 32 32" aria-hidden="true"><defs><radialGradient id="bm" cx="35%" cy="30%" r="75%"><stop offset="0" stop-color="#FFE483"/><stop offset=".55" stop-color="#FFCC38"/><stop offset="1" stop-color="#D49A12"/></radialGradient></defs><path d="M16 4.5c7.3 0 11.5 4.6 11.5 11.2 0 7-4.6 11.8-11.5 11.8S4.5 22.7 4.5 15.7C4.5 9.1 8.7 4.5 16 4.5Z" fill="url(#bm)"/><ellipse cx="12.6" cy="16.2" rx="1.35" ry="1.9" fill="#1B1B1D"/><ellipse cx="19.4" cy="16.2" rx="1.35" ry="1.9" fill="#1B1B1D"/><ellipse cx="11.5" cy="10" rx="3" ry="1.6" fill="#fff" opacity=".55" transform="rotate(-20 11.5 10)"/></svg><span id="brand"></span></div>
+  <label class="lang"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg><span class="sr-only" id="lang-label"></span><select id="lang"></select><svg class="i chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></label>
+</header>
+
+<main class="app">
+  <section class="stage-col" aria-labelledby="caption-title">
+    <div class="stage" id="stage">
+      <div class="stage-tag"><i></i><span id="t-live"></span></div>
+      <div class="stage-tools">
+        <button class="tool" id="btn-motion" aria-pressed="true"></button>
+        <button class="tool" id="btn-reset"></button>
+        <button class="tool" id="btn-png"></button>
+      </div>
+      <div class="busy" id="busy"><b></b></div>
+      <div class="flash" id="flash"></div>
+      <div class="toast" id="toast" role="status" aria-live="polite"></div>
+      <div class="hint" id="hint"></div>
+      <div class="stage-foot">
+        <div class="caption" aria-live="polite"><strong id="caption-title"></strong><span id="caption-sub"></span></div>
+        <button class="dice" id="btn-random"></button>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h1 class="sr-only" id="t-title"></h1>
+    <nav class="steps" id="steps"></nav>
+    <div class="card" id="card"></div>
+    <div class="actions">
+      <button class="btn ghost" id="btn-back"></button>
+      <button class="btn primary" id="btn-next"></button>
+    </div>
+    <p class="note" id="t-note"></p>
+  </section>
+</main>
+<footer><span id="t-footer"></span><span>bs-dot-avatar-maker · v1</span></footer>
+
+<dialog id="dlg" aria-labelledby="dlg-title">
+  <button class="x" id="dlg-close"></button>
+  <div class="dlg">
+    <div class="dlg-art"><img id="dlg-img" alt=""></div>
+    <div class="dlg-body">
+      <h2 id="dlg-title"></h2>
+      <p id="dlg-note"></p>
+      <div class="tags" id="dlg-tags"></div>
+      <div class="dl-opts">
+        <button class="dl-opt primary" id="dlg-html"></button>
+        <button class="dl-opt" id="dlg-png"></button>
+      </div>
+      <div class="status" id="dlg-status" role="status"></div>
+    </div>
+  </div>
+</dialog>
+
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+// Pristine copy of this page, taken before anything touches the DOM: "Download HTML" reuses it.
+const PAGE_SRC = '<!doctype html>\n' + document.documentElement.outerHTML;
+// Viewer mode: set by a downloaded character page (window.DOT_VIEW) or ?view=1.
+const VIEW = window.DOT_VIEW || (new URLSearchParams(location.search).get('view') === '1' ? {} : null);
+if(VIEW) document.documentElement.classList.add('viewer');
+const MARK = window.DOT_MARK === true || new URLSearchParams(location.search).get('mark') === '1';
+if(MARK) document.documentElement.classList.add('mark');
+// Studio preset: a launcher may write window.DOT_PRESET = {shape, color, material, style, gender, lang, step} into the page.
+const PRESET = window.DOT_PRESET || null;
+// Embed mode: the studio inside a host page's iframe (?embed=1), without its own header and footer.
+const EMBED = !VIEW && new URLSearchParams(location.search).get('embed') === '1';
+if(EMBED) document.documentElement.classList.add('embed');
+
+/* =====================================================================
+   1. Internationalisation
+   Every language carries the full UI plus translated option names.
+   Option lists follow the id order of SHAPES / STYLE_IDS / MATERIALS / COLOR_PRESETS.
+   ===================================================================== */
+const I18N = {
+en:{name:'English',
+ ui:{gender:'Gender',boy:'Boy',girl:'Girl',forBoys:'Boy styles',forGirls:'Girl styles',forAll:'For everyone',brand:'Dot Avatar Maker',eyebrow:'Character studio',title:'A little dot. A lot of personality.',language:'Language',auto:'Automatic',live:'Live 3D',motion:'Idle motion',resetView:'Reset view',savePng:'Download transparent PNG',dragHint:'Drag to rotate',random:'Surprise me',stepShape:'Form',stepColor:'Color',stepMaterial:'Material',stepStyle:'Style',chooseShape:'Choose a form',chooseColor:'Choose a color',chooseMaterial:'Choose a material',chooseStyle:'Choose a style',next:'Next',back:'Back',create:'Download',groupClassic:'Classic dots',groupAnimals:'Animals',groupFantasy:'Fantasy',groupCeramic:'Ceramic',groupSoft:'Soft & handmade',groupClear:'Glossy & clear',palette:'Glaze palette',custom:'Custom color',hue:'Hue',chroma:'Saturation',lightness:'Lightness',eyedropper:'Pick from screen',system:'System picker',readyTitle:'Your character is ready',readyNote:'Download it as a live 3D web page you can spin around, or as a transparent image.',savePreview:'Download PNG',saveHtml:'Download HTML',saveHtmlNote:'Live 3D · drag to rotate · needs internet',savePngNote:'1024 × 1024 · transparent background',saved:'Saved to your downloads.',close:'Close',note:'Everything renders right in your browser. Download a live 3D page or a transparent PNG — no AI generation, no cost.',footer:'Soft forms. Tiny accessories. Endless characters.',noGL:'3D preview isn’t available in this browser, so the character can’t be rendered or downloaded here.'},
+ shapes:'Round,Triangle,Pill,Little ears,Cloud,Heart,Butterfly,Sprout,Scallop,Hexagon,Diamond,Bunny,Cat,Bear,Panda,Fox,Shiba Inu,Frog,Penguin,Owl,Chick,Hamster,Octopus,Alien,Robot',
+ styles:'Artist,Scholar,Cool kid,Music lover,Gentleman,Outdoor,Dreamer,Minimal,Gardener,Sweetheart,Playful,Futuristic,Cosmic,Wizard,Pirate,Detective,Chef,Astronaut,Royal,Ninja,Gamer,Athlete,Sleepyhead,Flower sprite,Lady,Hair bow,Princess,Flower crown,Heart shades,Kitty headphones,Little witch,Sun hat',
+ materials:'Glazed ceramic,Crackle glaze,Matte stoneware,Pearl glaze,Short plush,Long plush,Wool felt,Soft clay,Soft vinyl,Jelly,Glass,Chrome',
+ colors:'Pink,Orchid,Violet,Blue,Cyan,Teal,Lime,Yellow,Coral'},
+'zh-Hans':{name:'简体中文',
+ ui:{gender:'性别',boy:'男生',girl:'女生',forBoys:'男生风格',forGirls:'女生风格',forAll:'通用风格',brand:'团子头像工坊',eyebrow:'角色工作室',title:'小小团子，大大个性。',language:'语言',auto:'自动',live:'实时 3D',motion:'待机动画',resetView:'重置视角',savePng:'下载透明 PNG',dragHint:'拖动旋转',random:'随机搭配',stepShape:'形象',stepColor:'颜色',stepMaterial:'材质',stepStyle:'风格',chooseShape:'选择角色形象',chooseColor:'选择颜色',chooseMaterial:'选择材质',chooseStyle:'选择角色风格',next:'下一步',back:'上一步',create:'下载角色',groupClassic:'经典团子',groupAnimals:'动物',groupFantasy:'奇想',groupCeramic:'陶瓷',groupSoft:'柔软手作',groupClear:'光泽通透',palette:'釉色',custom:'自定义颜色',hue:'色相',chroma:'饱和度',lightness:'明度',eyedropper:'屏幕取色',system:'系统取色器',readyTitle:'你的角色已就绪',readyNote:'可以下载成能拖动旋转的 3D 网页，也可以下载透明背景的图片。',savePreview:'下载 PNG',saveHtml:'下载 HTML',saveHtmlNote:'实时 3D 网页 · 可拖动旋转 · 需联网打开',savePngNote:'1024 × 1024 · 透明背景',saved:'已保存到下载文件夹。',close:'关闭',note:'角色直接在浏览器里渲染，可下载 3D 网页或透明 PNG，不调用 AI，也不产生费用。',footer:'柔软轮廓，小小配饰，无限角色。',noGL:'当前浏览器无法显示 3D 预览，因此无法在这里渲染或下载角色。'},
+ shapes:'圆团子,三角团,胶囊团,耳朵团,云朵,爱心,蝴蝶团,小芽团,花边团,六角团,菱形团,兔子,猫咪,小熊,熊猫,狐狸,柴犬,青蛙,企鹅,猫头鹰,小鸡,仓鼠,章鱼,外星人,机器人',
+ styles:'艺术家,学者,酷小子,音乐迷,绅士,户外风,梦想家,极简,园艺风,甜心风,俏皮风,未来风,星际风,魔法师,海盗,侦探,厨师,宇航员,小王子,忍者,游戏玩家,运动员,瞌睡虫,小花精灵,淑女,蝴蝶结,小公主,花环,爱心墨镜,猫耳耳机,小魔女,度假遮阳帽',
+ materials:'釉面陶瓷,冰裂釉,哑光粗陶,珠光釉,短毛绒,长毛绒,羊毛毡,黏土,软胶,果冻,玻璃,镀铬金属',
+ colors:'粉色,兰紫,紫色,蓝色,青蓝,青绿,黄绿,黄色,珊瑚'},
+'zh-Hant':{name:'繁體中文',
+ ui:{gender:'性別',boy:'男生',girl:'女生',forBoys:'男生風格',forGirls:'女生風格',forAll:'通用風格',brand:'團子頭像工坊',eyebrow:'角色工作室',title:'小小團子，大大個性。',language:'語言',auto:'自動',live:'即時 3D',motion:'待機動畫',resetView:'重設視角',savePng:'下載透明 PNG',dragHint:'拖曳旋轉',random:'隨機搭配',stepShape:'形象',stepColor:'顏色',stepMaterial:'材質',stepStyle:'風格',chooseShape:'選擇角色形象',chooseColor:'選擇顏色',chooseMaterial:'選擇材質',chooseStyle:'選擇角色風格',next:'下一步',back:'上一步',create:'下載角色',groupClassic:'經典團子',groupAnimals:'動物',groupFantasy:'奇想',groupCeramic:'陶瓷',groupSoft:'柔軟手作',groupClear:'光澤通透',palette:'釉色',custom:'自訂顏色',hue:'色相',chroma:'飽和度',lightness:'明度',eyedropper:'螢幕取色',system:'系統取色器',readyTitle:'你的角色已就緒',readyNote:'可以下載成能拖曳旋轉的 3D 網頁，也可以下載透明背景的圖片。',savePreview:'下載 PNG',saveHtml:'下載 HTML',saveHtmlNote:'即時 3D 網頁 · 可拖曳旋轉 · 需連網開啟',savePngNote:'1024 × 1024 · 透明背景',saved:'已儲存到下載資料夾。',close:'關閉',note:'角色直接在瀏覽器裡算繪，可下載 3D 網頁或透明 PNG，不呼叫 AI，也不產生費用。',footer:'柔軟輪廓，小小配飾，無限角色。',noGL:'目前的瀏覽器無法顯示 3D 預覽，因此無法在這裡算繪或下載角色。'},
+ shapes:'圓團子,三角團,膠囊團,耳朵團,雲朵,愛心,蝴蝶團,小芽團,花邊團,六角團,菱形團,兔子,貓咪,小熊,熊貓,狐狸,柴犬,青蛙,企鵝,貓頭鷹,小雞,倉鼠,章魚,外星人,機器人',
+ styles:'藝術家,學者,酷小子,音樂迷,紳士,戶外風,夢想家,極簡,園藝風,甜心風,俏皮風,未來風,星際風,魔法師,海盜,偵探,廚師,太空人,小王子,忍者,遊戲玩家,運動員,瞌睡蟲,小花精靈,淑女,蝴蝶結,小公主,花環,愛心墨鏡,貓耳耳機,小魔女,度假遮陽帽',
+ materials:'釉面陶瓷,冰裂釉,霧面粗陶,珠光釉,短毛絨,長毛絨,羊毛氈,黏土,軟膠,果凍,玻璃,鍍鉻金屬',
+ colors:'粉色,蘭紫,紫色,藍色,青藍,青綠,黃綠,黃色,珊瑚'},
+ja:{name:'日本語',
+ ui:{gender:'性別',boy:'男の子',girl:'女の子',forBoys:'男の子スタイル',forGirls:'女の子スタイル',forAll:'みんなのスタイル',brand:'ドットアバターメーカー',eyebrow:'キャラクタースタジオ',title:'小さな姿、大きな個性。',language:'言語',auto:'自動',live:'ライブ 3D',motion:'待機モーション',resetView:'視点をリセット',savePng:'透過 PNG をダウンロード',dragHint:'ドラッグで回転',random:'おまかせ',stepShape:'形',stepColor:'色',stepMaterial:'素材',stepStyle:'スタイル',chooseShape:'形を選ぶ',chooseColor:'色を選ぶ',chooseMaterial:'素材を選ぶ',chooseStyle:'スタイルを選ぶ',next:'次へ',back:'戻る',create:'ダウンロード',groupClassic:'クラシック',groupAnimals:'どうぶつ',groupFantasy:'ファンタジー',groupCeramic:'陶磁器',groupSoft:'やわらか・手づくり',groupClear:'つや・透明',palette:'釉薬カラー',custom:'カスタムカラー',hue:'色相',chroma:'彩度',lightness:'明度',eyedropper:'画面から取得',system:'システムのカラーピッカー',readyTitle:'キャラクターが完成しました',readyNote:'ドラッグで回せる 3D ウェブページ、または背景透過の画像としてダウンロードできます。',savePreview:'PNG をダウンロード',saveHtml:'HTML をダウンロード',saveHtmlNote:'リアルタイム 3D · ドラッグで回転 · 表示にはネット接続が必要',savePngNote:'1024 × 1024 · 背景透過',saved:'ダウンロードに保存しました。',close:'閉じる',note:'キャラクターはブラウザ内で描画されます。3D ページまたは透過 PNG をダウンロードでき、AI 生成や料金は発生しません。',footer:'やわらかな形。小さな小物。無限のキャラクター。',noGL:'このブラウザでは 3D プレビューを表示できないため、ここではキャラクターの描画やダウンロードができません。'},
+ shapes:'まんまる,三角,カプセル,耳つき,雲,ハート,ちょうちょ,ふたば,スカラップ,六角形,ひし形,ウサギ,ネコ,クマ,パンダ,キツネ,柴犬,カエル,ペンギン,フクロウ,ヒヨコ,ハムスター,タコ,宇宙人,ロボット',
+ styles:'アーティスト,学者,クール,音楽好き,紳士,アウトドア,夢想家,ミニマル,園芸,スイート,いたずら,未来,宇宙,魔法使い,海賊,探偵,シェフ,宇宙飛行士,王子,忍者,ゲーマー,スポーツ選手,眠りんぼ,花の妖精,レディ,リボン,お姫さま,花かんむり,ハートサングラス,ネコ耳ヘッドホン,小さな魔女,サンハット',
+ materials:'釉薬陶器,貫入釉,マット炻器,パール釉,ショートファー,ロングファー,羊毛フェルト,ねんど,ソフビ,ゼリー,ガラス,クロム',
+ colors:'ピンク,オーキッド,バイオレット,ブルー,シアン,ティール,ライム,イエロー,コーラル'},
+ko:{name:'한국어',
+ ui:{gender:'성별',boy:'남자',girl:'여자',forBoys:'남자 스타일',forGirls:'여자 스타일',forAll:'공용 스타일',brand:'도트 아바타 메이커',eyebrow:'캐릭터 스튜디오',title:'작은 모습, 커다란 개성.',language:'언어',auto:'자동',live:'실시간 3D',motion:'대기 모션',resetView:'시점 초기화',savePng:'투명 PNG 다운로드',dragHint:'드래그해서 회전',random:'무작위',stepShape:'형태',stepColor:'색상',stepMaterial:'소재',stepStyle:'스타일',chooseShape:'형태 선택',chooseColor:'색상 선택',chooseMaterial:'소재 선택',chooseStyle:'스타일 선택',next:'다음',back:'이전',create:'다운로드',groupClassic:'클래식 도트',groupAnimals:'동물',groupFantasy:'판타지',groupCeramic:'도자기',groupSoft:'부드러운 수공예',groupClear:'광택·투명',palette:'유약 색상',custom:'사용자 지정 색상',hue:'색조',chroma:'채도',lightness:'명도',eyedropper:'화면에서 색 추출',system:'시스템 색상 선택기',readyTitle:'캐릭터가 완성됐어요',readyNote:'드래그로 돌려 볼 수 있는 3D 웹페이지나 배경이 투명한 이미지로 내려받을 수 있어요.',savePreview:'PNG 다운로드',saveHtml:'HTML 다운로드',saveHtmlNote:'실시간 3D · 드래그로 회전 · 인터넷 연결 필요',savePngNote:'1024 × 1024 · 투명 배경',saved:'다운로드 폴더에 저장했습니다.',close:'닫기',note:'캐릭터는 브라우저에서 바로 렌더링됩니다. 3D 페이지나 투명 PNG로 내려받을 수 있으며 AI 생성이나 비용은 없습니다.',footer:'부드러운 형태, 작은 소품, 끝없는 캐릭터.',noGL:'이 브라우저에서는 3D 미리보기를 사용할 수 없어 캐릭터를 렌더링하거나 다운로드할 수 없어요.'},
+ shapes:'동그라미,삼각형,캡슐,귀 달린,구름,하트,나비,새싹,스캘럽,육각형,마름모,토끼,고양이,곰,판다,여우,시바견,개구리,펭귄,부엉이,병아리,햄스터,문어,외계인,로봇',
+ styles:'예술가,학자,멋쟁이,음악 애호가,신사,아웃도어,몽상가,미니멀,정원사,스위트,장난꾸러기,미래,우주,마법사,해적,탐정,요리사,우주비행사,왕자,닌자,게이머,운동선수,잠꾸러기,꽃 요정,숙녀,리본,공주,꽃 화관,하트 선글라스,고양이 귀 헤드폰,꼬마 마녀,선햇',
+ materials:'유약 도자기,빙렬유,무광 석기,진주 유약,짧은 털 봉제,긴 털 봉제,양모 펠트,점토,소프트 비닐,젤리,유리,크롬',
+ colors:'핑크,오키드,바이올렛,블루,시안,틸,라임,옐로,코랄'},
+es:{name:'Español',
+ ui:{gender:'Género',boy:'Chico',girl:'Chica',forBoys:'Estilos de chico',forGirls:'Estilos de chica',forAll:'Para todos',brand:'Dot Avatar Maker',eyebrow:'Estudio de personajes',title:'Un puntito. Mucha personalidad.',language:'Idioma',auto:'Automático',live:'3D en vivo',motion:'Movimiento',resetView:'Restablecer vista',savePng:'Descargar PNG transparente',dragHint:'Arrastra para girar',random:'Sorpréndeme',stepShape:'Forma',stepColor:'Color',stepMaterial:'Material',stepStyle:'Estilo',chooseShape:'Elige una forma',chooseColor:'Elige un color',chooseMaterial:'Elige un material',chooseStyle:'Elige un estilo',next:'Siguiente',back:'Atrás',create:'Descargar',groupClassic:'Clásicos',groupAnimals:'Animales',groupFantasy:'Fantasía',groupCeramic:'Cerámica',groupSoft:'Suave y artesanal',groupClear:'Brillante y translúcido',palette:'Paleta de esmaltes',custom:'Color personalizado',hue:'Tono',chroma:'Saturación',lightness:'Luminosidad',eyedropper:'Tomar de la pantalla',system:'Selector del sistema',readyTitle:'Tu personaje está listo',readyNote:'Descárgalo como una página web 3D que puedes girar o como una imagen con fondo transparente.',savePreview:'Descargar PNG',saveHtml:'Descargar HTML',saveHtmlNote:'3D en vivo · arrastra para girar · requiere internet',savePngNote:'1024 × 1024 · fondo transparente',saved:'Guardado en tus descargas.',close:'Cerrar',note:'Todo se renderiza en tu navegador. Descarga una página 3D o un PNG transparente, sin IA generativa y sin coste.',footer:'Formas suaves. Pequeños accesorios. Personajes infinitos.',noGL:'La vista previa 3D no está disponible en este navegador, así que aquí no se puede renderizar ni descargar el personaje.'},
+ shapes:'Redondo,Triángulo,Píldora,Orejitas,Nube,Corazón,Mariposa,Brote,Festón,Hexágono,Rombo,Conejo,Gato,Oso,Panda,Zorro,Shiba inu,Rana,Pingüino,Búho,Pollito,Hámster,Pulpo,Alienígena,Robot',
+ styles:'Artista,Académico,Moderno,Melómano,Caballero,Aire libre,Soñador,Minimalista,Jardinero,Dulce,Juguetón,Futurista,Cósmico,Mago,Pirata,Detective,Chef,Astronauta,Príncipe,Ninja,Gamer,Deportista,Dormilón,Hada floral,Dama,Lazo,Princesa,Corona de flores,Gafas de corazón,Auriculares de gatita,Brujita,Pamela',
+ materials:'Cerámica esmaltada,Esmalte craquelado,Gres mate,Esmalte perlado,Peluche corto,Peluche de pelo largo,Fieltro de lana,Arcilla suave,Vinilo suave,Gelatina,Vidrio,Cromo',
+ colors:'Rosa,Orquídea,Violeta,Azul,Cian,Verde azulado,Lima,Amarillo,Coral'},
+fr:{name:'Français',
+ ui:{gender:'Genre',boy:'Garçon',girl:'Fille',forBoys:'Styles garçon',forGirls:'Styles fille',forAll:'Pour tous',brand:'Dot Avatar Maker',eyebrow:'Atelier de personnages',title:'Une petite boule. Tant de personnalité.',language:'Langue',auto:'Automatique',live:'3D en direct',motion:'Animation',resetView:'Réinitialiser la vue',savePng:'Télécharger le PNG transparent',dragHint:'Faites glisser pour tourner',random:'Surprenez-moi',stepShape:'Forme',stepColor:'Couleur',stepMaterial:'Matière',stepStyle:'Style',chooseShape:'Choisir une forme',chooseColor:'Choisir une couleur',chooseMaterial:'Choisir une matière',chooseStyle:'Choisir un style',next:'Suivant',back:'Retour',create:'Télécharger',groupClassic:'Classiques',groupAnimals:'Animaux',groupFantasy:'Fantaisie',groupCeramic:'Céramique',groupSoft:'Doux et fait main',groupClear:'Brillant et translucide',palette:'Palette d’émaux',custom:'Couleur personnalisée',hue:'Teinte',chroma:'Saturation',lightness:'Luminosité',eyedropper:'Prélever à l’écran',system:'Sélecteur du système',readyTitle:'Votre personnage est prêt',readyNote:'Téléchargez-le sous forme de page web 3D à faire tourner, ou d’image à fond transparent.',savePreview:'Télécharger le PNG',saveHtml:'Télécharger le HTML',saveHtmlNote:'3D en direct · glisser pour pivoter · connexion requise',savePngNote:'1024 × 1024 · fond transparent',saved:'Enregistré dans vos téléchargements.',close:'Fermer',note:'Tout est rendu dans votre navigateur. Téléchargez une page 3D ou un PNG transparent, sans IA générative ni frais.',footer:'Formes douces. Petits accessoires. Personnages infinis.',noGL:'L’aperçu 3D n’est pas disponible dans ce navigateur : impossible d’afficher ou de télécharger le personnage ici.'},
+ shapes:'Rond,Triangle,Gélule,Oreilles,Nuage,Cœur,Papillon,Pousse,Festonné,Hexagone,Losange,Lapin,Chat,Ours,Panda,Renard,Shiba inu,Grenouille,Manchot,Hibou,Poussin,Hamster,Poulpe,Alien,Robot',
+ styles:'Artiste,Savant,Branché,Mélomane,Gentleman,Plein air,Rêveur,Minimaliste,Jardinier,Tendre,Espiègle,Futuriste,Cosmique,Magicien,Pirate,Détective,Chef,Astronaute,Prince,Ninja,Gamer,Athlète,Dormeur,Fée des fleurs,Dame,Nœud,Princesse,Couronne de fleurs,Lunettes cœur,Casque oreilles de chat,Petite sorcière,Capeline',
+ materials:'Céramique émaillée,Émail craquelé,Grès mat,Émail nacré,Peluche rase,Peluche à poils longs,Feutre de laine,Pâte à modeler,Vinyle souple,Gelée,Verre,Chrome',
+ colors:'Rose,Orchidée,Violet,Bleu,Cyan,Sarcelle,Citron vert,Jaune,Corail'},
+de:{name:'Deutsch',
+ ui:{gender:'Geschlecht',boy:'Junge',girl:'Mädchen',forBoys:'Jungen-Stile',forGirls:'Mädchen-Stile',forAll:'Für alle',brand:'Dot Avatar Maker',eyebrow:'Figurenstudio',title:'Kleine Form. Große Persönlichkeit.',language:'Sprache',auto:'Automatisch',live:'Live-3D',motion:'Bewegung',resetView:'Ansicht zurücksetzen',savePng:'Transparentes PNG herunterladen',dragHint:'Zum Drehen ziehen',random:'Überrasch mich',stepShape:'Form',stepColor:'Farbe',stepMaterial:'Material',stepStyle:'Stil',chooseShape:'Form wählen',chooseColor:'Farbe wählen',chooseMaterial:'Material wählen',chooseStyle:'Stil wählen',next:'Weiter',back:'Zurück',create:'Herunterladen',groupClassic:'Klassiker',groupAnimals:'Tiere',groupFantasy:'Fantasie',groupCeramic:'Keramik',groupSoft:'Weich & handgemacht',groupClear:'Glänzend & klar',palette:'Glasurfarben',custom:'Eigene Farbe',hue:'Farbton',chroma:'Sättigung',lightness:'Helligkeit',eyedropper:'Vom Bildschirm aufnehmen',system:'Systemfarbwähler',readyTitle:'Deine Figur ist fertig',readyNote:'Lade sie als 3D-Webseite zum Drehen oder als Bild mit transparentem Hintergrund herunter.',savePreview:'PNG herunterladen',saveHtml:'HTML herunterladen',saveHtmlNote:'Live-3D · zum Drehen ziehen · Internet nötig',savePngNote:'1024 × 1024 · transparenter Hintergrund',saved:'In deinen Downloads gespeichert.',close:'Schließen',note:'Alles wird direkt im Browser gerendert. Lade eine 3D-Seite oder ein transparentes PNG herunter – ohne KI-Generierung und kostenlos.',footer:'Weiche Formen. Kleine Accessoires. Unendlich viele Figuren.',noGL:'Die 3D-Vorschau ist in diesem Browser nicht verfügbar, daher kann die Figur hier nicht gerendert oder heruntergeladen werden.'},
+ shapes:'Rund,Dreieck,Kapsel,Öhrchen,Wolke,Herz,Schmetterling,Spross,Wellenrand,Sechseck,Raute,Hase,Katze,Bär,Panda,Fuchs,Shiba Inu,Frosch,Pinguin,Eule,Küken,Hamster,Oktopus,Alien,Roboter',
+ styles:'Künstler,Gelehrter,Cooler Typ,Musikfan,Gentleman,Outdoor,Träumer,Minimal,Gärtner,Herzlich,Verspielt,Futuristisch,Kosmisch,Zauberer,Pirat,Detektiv,Koch,Astronaut,Prinz,Ninja,Gamer,Sportler,Schlafmütze,Blumenfee,Dame,Haarschleife,Prinzessin,Blumenkranz,Herzbrille,Katzenohr-Kopfhörer,Kleine Hexe,Sonnenhut',
+ materials:'Glasierte Keramik,Craquelé-Glasur,Mattes Steinzeug,Perlmuttglasur,Kurzflor-Plüsch,Langflor-Plüsch,Wollfilz,Modelliermasse,Weichvinyl,Gelee,Glas,Chrom',
+ colors:'Pink,Orchidee,Violett,Blau,Cyan,Petrol,Limette,Gelb,Koralle'},
+pt:{name:'Português',
+ ui:{gender:'Gênero',boy:'Menino',girl:'Menina',forBoys:'Estilos de menino',forGirls:'Estilos de menina',forAll:'Para todos',brand:'Dot Avatar Maker',eyebrow:'Estúdio de personagens',title:'Pequeno ponto. Grande personalidade.',language:'Idioma',auto:'Automático',live:'3D ao vivo',motion:'Movimento',resetView:'Redefinir visão',savePng:'Baixar PNG transparente',dragHint:'Arraste para girar',random:'Surpreenda-me',stepShape:'Forma',stepColor:'Cor',stepMaterial:'Material',stepStyle:'Estilo',chooseShape:'Escolha uma forma',chooseColor:'Escolha uma cor',chooseMaterial:'Escolha um material',chooseStyle:'Escolha um estilo',next:'Próximo',back:'Voltar',create:'Baixar',groupClassic:'Clássicos',groupAnimals:'Animais',groupFantasy:'Fantasia',groupCeramic:'Cerâmica',groupSoft:'Macio e artesanal',groupClear:'Brilhante e translúcido',palette:'Paleta de esmaltes',custom:'Cor personalizada',hue:'Matiz',chroma:'Saturação',lightness:'Luminosidade',eyedropper:'Capturar da tela',system:'Seletor do sistema',readyTitle:'Seu personagem está pronto',readyNote:'Baixe como uma página web 3D que você pode girar ou como uma imagem com fundo transparente.',savePreview:'Baixar PNG',saveHtml:'Baixar HTML',saveHtmlNote:'3D ao vivo · arraste para girar · requer internet',savePngNote:'1024 × 1024 · fundo transparente',saved:'Salvo nos seus downloads.',close:'Fechar',note:'Tudo é renderizado no seu navegador. Baixe uma página 3D ou um PNG transparente, sem IA generativa e sem custo.',footer:'Formas suaves. Pequenos acessórios. Personagens infinitos.',noGL:'A prévia 3D não está disponível neste navegador, então não é possível renderizar nem baixar o personagem aqui.'},
+ shapes:'Redondo,Triângulo,Cápsula,Orelhinhas,Nuvem,Coração,Borboleta,Broto,Recortado,Hexágono,Losango,Coelho,Gato,Urso,Panda,Raposa,Shiba inu,Sapo,Pinguim,Coruja,Pintinho,Hamster,Polvo,Alienígena,Robô',
+ styles:'Artista,Estudioso,Descolado,Fã de música,Cavalheiro,Ao ar livre,Sonhador,Minimalista,Jardineiro,Doce,Brincalhão,Futurista,Cósmico,Mago,Pirata,Detetive,Chef,Astronauta,Príncipe,Ninja,Gamer,Atleta,Dorminhoco,Fada floral,Dama,Laço,Princesa,Coroa de flores,Óculos de coração,Fones de gatinha,Bruxinha,Chapéu de sol',
+ materials:'Cerâmica vitrificada,Esmalte craquelado,Grés fosco,Esmalte perolado,Pelúcia curta,Pelúcia de pelo longo,Feltro de lã,Argila macia,Vinil macio,Gelatina,Vidro,Cromo',
+ colors:'Rosa,Orquídea,Violeta,Azul,Ciano,Verde-azulado,Lima,Amarelo,Coral'},
+it:{name:'Italiano',
+ ui:{gender:'Genere',boy:'Ragazzo',girl:'Ragazza',forBoys:'Stili da ragazzo',forGirls:'Stili da ragazza',forAll:'Per tutti',brand:'Dot Avatar Maker',eyebrow:'Studio dei personaggi',title:'Un puntino. Tanta personalità.',language:'Lingua',auto:'Automatico',live:'3D dal vivo',motion:'Movimento',resetView:'Ripristina vista',savePng:'Scarica PNG trasparente',dragHint:'Trascina per ruotare',random:'Sorprendimi',stepShape:'Forma',stepColor:'Colore',stepMaterial:'Materiale',stepStyle:'Stile',chooseShape:'Scegli una forma',chooseColor:'Scegli un colore',chooseMaterial:'Scegli un materiale',chooseStyle:'Scegli uno stile',next:'Avanti',back:'Indietro',create:'Scarica',groupClassic:'Classici',groupAnimals:'Animali',groupFantasy:'Fantasia',groupCeramic:'Ceramica',groupSoft:'Morbido e artigianale',groupClear:'Lucido e trasparente',palette:'Tavolozza di smalti',custom:'Colore personalizzato',hue:'Tonalità',chroma:'Saturazione',lightness:'Luminosità',eyedropper:'Preleva dallo schermo',system:'Selettore di sistema',readyTitle:'Il tuo personaggio è pronto',readyNote:'Scaricalo come pagina web 3D da far ruotare o come immagine con sfondo trasparente.',savePreview:'Scarica PNG',saveHtml:'Scarica HTML',saveHtmlNote:'3D dal vivo · trascina per ruotare · serve internet',savePngNote:'1024 × 1024 · sfondo trasparente',saved:'Salvato nei tuoi download.',close:'Chiudi',note:'Tutto viene renderizzato nel browser. Scarica una pagina 3D o un PNG trasparente, senza IA generativa e senza costi.',footer:'Forme morbide. Piccoli accessori. Personaggi infiniti.',noGL:'L’anteprima 3D non è disponibile in questo browser, quindi qui non è possibile renderizzare o scaricare il personaggio.'},
+ shapes:'Tondo,Triangolo,Pillola,Orecchiette,Nuvola,Cuore,Farfalla,Germoglio,Smerlato,Esagono,Rombo,Coniglio,Gatto,Orso,Panda,Volpe,Shiba inu,Rana,Pinguino,Gufo,Pulcino,Criceto,Polpo,Alieno,Robot',
+ styles:'Artista,Studioso,Tipo cool,Melomane,Gentiluomo,Outdoor,Sognatore,Minimale,Giardiniere,Dolce,Giocoso,Futuristico,Cosmico,Mago,Pirata,Detective,Chef,Astronauta,Principe,Ninja,Gamer,Atleta,Dormiglione,Fata dei fiori,Signora,Fiocco,Principessa,Coroncina di fiori,Occhiali a cuore,Cuffie con orecchie da gatto,Streghetta,Cappello da sole',
+ materials:'Ceramica smaltata,Smalto craquelé,Gres opaco,Smalto perlato,Peluche corto,Peluche a pelo lungo,Feltro di lana,Argilla morbida,Vinile morbido,Gelatina,Vetro,Cromo',
+ colors:'Rosa,Orchidea,Viola,Blu,Ciano,Verde acqua,Lime,Giallo,Corallo'},
+nl:{name:'Nederlands',
+ ui:{gender:'Geslacht',boy:'Jongen',girl:'Meisje',forBoys:'Jongensstijlen',forGirls:'Meisjesstijlen',forAll:'Voor iedereen',brand:'Dot Avatar Maker',eyebrow:'Personagestudio',title:'Klein bolletje. Grote persoonlijkheid.',language:'Taal',auto:'Automatisch',live:'Live 3D',motion:'Beweging',resetView:'Weergave herstellen',savePng:'Transparante PNG downloaden',dragHint:'Sleep om te draaien',random:'Verras me',stepShape:'Vorm',stepColor:'Kleur',stepMaterial:'Materiaal',stepStyle:'Stijl',chooseShape:'Kies een vorm',chooseColor:'Kies een kleur',chooseMaterial:'Kies een materiaal',chooseStyle:'Kies een stijl',next:'Volgende',back:'Terug',create:'Downloaden',groupClassic:'Klassiek',groupAnimals:'Dieren',groupFantasy:'Fantasie',groupCeramic:'Keramiek',groupSoft:'Zacht & handgemaakt',groupClear:'Glanzend & helder',palette:'Glazuurkleuren',custom:'Eigen kleur',hue:'Tint',chroma:'Verzadiging',lightness:'Helderheid',eyedropper:'Van scherm kiezen',system:'Systeemkleurkiezer',readyTitle:'Je personage is klaar',readyNote:'Download het als 3D-webpagina die je kunt ronddraaien, of als afbeelding met transparante achtergrond.',savePreview:'PNG downloaden',saveHtml:'HTML downloaden',saveHtmlNote:'Live 3D · sleep om te draaien · internet nodig',savePngNote:'1024 × 1024 · transparante achtergrond',saved:'Opgeslagen in je downloads.',close:'Sluiten',note:'Alles wordt in je browser gerenderd. Download een 3D-pagina of een transparante PNG, zonder AI-generatie en zonder kosten.',footer:'Zachte vormen. Kleine accessoires. Eindeloze personages.',noGL:'De 3D-voorvertoning is niet beschikbaar in deze browser, dus het personage kan hier niet worden gerenderd of gedownload.'},
+ shapes:'Rond,Driehoek,Pil,Oortjes,Wolk,Hart,Vlinder,Spruit,Geschulpt,Zeshoek,Ruit,Konijn,Kat,Beer,Panda,Vos,Shiba inu,Kikker,Pinguïn,Uil,Kuiken,Hamster,Octopus,Alien,Robot',
+ styles:'Kunstenaar,Geleerde,Cool type,Muziekfan,Heer,Buitenleven,Dromer,Minimaal,Tuinier,Lief,Speels,Futuristisch,Kosmisch,Tovenaar,Piraat,Detective,Kok,Astronaut,Prins,Ninja,Gamer,Atleet,Slaapkop,Bloemenfee,Dame,Haarstrik,Prinses,Bloemenkrans,Hartjesbril,Kattenoor-koptelefoon,Heksje,Zonnehoed',
+ materials:'Geglazuurd keramiek,Craquelé-glazuur,Mat steengoed,Parelglazuur,Kort pluche,Langharig pluche,Wolvilt,Zachte klei,Zacht vinyl,Gelei,Glas,Chroom',
+ colors:'Roze,Orchidee,Violet,Blauw,Cyaan,Petrol,Limoen,Geel,Koraal'},
+ru:{name:'Русский',
+ ui:{gender:'Пол',boy:'Мальчик',girl:'Девочка',forBoys:'Для мальчика',forGirls:'Для девочки',forAll:'Для всех',brand:'Dot Avatar Maker',eyebrow:'Студия персонажей',title:'Маленький комочек. Большая личность.',language:'Язык',auto:'Автоматически',live:'3D в реальном времени',motion:'Анимация',resetView:'Сбросить вид',savePng:'Скачать прозрачный PNG',dragHint:'Потяните, чтобы повернуть',random:'Случайный образ',stepShape:'Форма',stepColor:'Цвет',stepMaterial:'Материал',stepStyle:'Стиль',chooseShape:'Выберите форму',chooseColor:'Выберите цвет',chooseMaterial:'Выберите материал',chooseStyle:'Выберите стиль',next:'Далее',back:'Назад',create:'Скачать',groupClassic:'Классика',groupAnimals:'Животные',groupFantasy:'Фантазия',groupCeramic:'Керамика',groupSoft:'Мягкое и ручное',groupClear:'Глянец и прозрачность',palette:'Палитра глазурей',custom:'Свой цвет',hue:'Тон',chroma:'Насыщенность',lightness:'Яркость',eyedropper:'Взять с экрана',system:'Системная палитра',readyTitle:'Ваш персонаж готов',readyNote:'Скачайте его как 3D-страницу, которую можно вращать, или как изображение с прозрачным фоном.',savePreview:'Скачать PNG',saveHtml:'Скачать HTML',saveHtmlNote:'Живое 3D · перетащите, чтобы вращать · нужен интернет',savePngNote:'1024 × 1024 · прозрачный фон',saved:'Сохранено в загрузки.',close:'Закрыть',note:'Всё отрисовывается прямо в браузере. Скачайте 3D-страницу или прозрачный PNG — без генерации ИИ и бесплатно.',footer:'Мягкие формы. Маленькие аксессуары. Бесконечные персонажи.',noGL:'В этом браузере 3D-просмотр недоступен, поэтому здесь нельзя отрисовать или скачать персонажа.'},
+ shapes:'Круг,Треугольник,Капсула,Ушки,Облако,Сердце,Бабочка,Росток,Фестон,Шестиугольник,Ромб,Кролик,Кот,Медведь,Панда,Лиса,Сиба-ину,Лягушка,Пингвин,Сова,Цыплёнок,Хомяк,Осьминог,Пришелец,Робот',
+ styles:'Художник,Учёный,Стиляга,Меломан,Джентльмен,Походный,Мечтатель,Минимализм,Садовник,Милашка,Озорник,Футуризм,Космос,Волшебник,Пират,Детектив,Повар,Космонавт,Принц,Ниндзя,Геймер,Спортсмен,Соня,Цветочная фея,Леди,Бантик,Принцесса,Цветочный венок,Очки-сердечки,Наушники с ушками,Маленькая ведьма,Шляпа от солнца',
+ materials:'Глазурованная керамика,Кракелюр,Матовая керамика,Перламутровая глазурь,Короткий плюш,Длинный плюш,Шерстяной войлок,Мягкая глина,Мягкий винил,Желе,Стекло,Хром',
+ colors:'Розовый,Орхидея,Фиолетовый,Синий,Голубой,Бирюзовый,Лайм,Жёлтый,Коралловый'},
+ar:{name:'العربية',
+ ui:{gender:'الجنس',boy:'ولد',girl:'بنت',forBoys:'أنماط الأولاد',forGirls:'أنماط البنات',forAll:'للجميع',brand:'Dot Avatar Maker',eyebrow:'استوديو الشخصيات',title:'حجم صغير. شخصية كبيرة.',language:'اللغة',auto:'تلقائي',live:'ثلاثي الأبعاد مباشر',motion:'الحركة',resetView:'إعادة ضبط العرض',savePng:'تنزيل PNG شفاف',dragHint:'اسحب للتدوير',random:'فاجئني',stepShape:'الشكل',stepColor:'اللون',stepMaterial:'الخامة',stepStyle:'الأسلوب',chooseShape:'اختر شكلًا',chooseColor:'اختر لونًا',chooseMaterial:'اختر خامة',chooseStyle:'اختر أسلوبًا',next:'التالي',back:'السابق',create:'تنزيل',groupClassic:'كلاسيكية',groupAnimals:'حيوانات',groupFantasy:'خيال',groupCeramic:'خزف',groupSoft:'ناعم ومصنوع يدويًا',groupClear:'لامع وشفاف',palette:'ألوان الطلاء الزجاجي',custom:'لون مخصص',hue:'الصبغة',chroma:'التشبع',lightness:'السطوع',eyedropper:'التقاط من الشاشة',system:'منتقي النظام',readyTitle:'شخصيتك جاهزة',readyNote:'نزّلها كصفحة ويب ثلاثية الأبعاد يمكنك تدويرها، أو كصورة بخلفية شفافة.',savePreview:'تنزيل PNG',saveHtml:'تنزيل HTML',saveHtmlNote:'ثلاثي الأبعاد مباشر · اسحب للتدوير · يتطلب الإنترنت',savePngNote:'1024 × 1024 · خلفية شفافة',saved:'تم الحفظ في التنزيلات.',close:'إغلاق',note:'يُعرض كل شيء داخل متصفحك. نزّل صفحة ثلاثية الأبعاد أو صورة PNG شفافة، دون توليد بالذكاء الاصطناعي ودون تكلفة.',footer:'أشكال ناعمة. إكسسوارات صغيرة. شخصيات لا تنتهي.',noGL:'المعاينة ثلاثية الأبعاد غير متاحة في هذا المتصفح، لذا لا يمكن عرض الشخصية أو تنزيلها هنا.'},
+ shapes:'دائري,مثلث,كبسولة,آذان صغيرة,سحابة,قلب,فراشة,برعم,مموّج,سداسي,معين,أرنب,قط,دب,باندا,ثعلب,شيبا إينو,ضفدع,بطريق,بومة,كتكوت,هامستر,أخطبوط,فضائي,روبوت',
+ styles:'فنان,عالم,أنيق,محب الموسيقى,نبيل,في الهواء الطلق,حالم,بسيط,بستاني,لطيف,مرح,مستقبلي,كوني,ساحر,قرصان,محقق,طاهٍ,رائد فضاء,أمير,نينجا,لاعب ألعاب,رياضي,نعسان,جنية الزهور,سيدة أنيقة,فيونكة,أميرة,إكليل زهور,نظارة قلوب,سماعات بأذني قطة,ساحرة صغيرة,قبعة شمس',
+ materials:'خزف مزجج,طلاء متشقق,فخار مطفأ,طلاء لؤلؤي,قطيفة قصيرة الوبر,قطيفة طويلة الوبر,لباد صوفي,صلصال,فينيل ناعم,جيلي,زجاج,كروم',
+ colors:'وردي,أوركيد,بنفسجي,أزرق,سماوي,أخضر مزرق,ليموني,أصفر,مرجاني'},
+hi:{name:'हिन्दी',
+ ui:{gender:'लिंग',boy:'लड़का',girl:'लड़की',forBoys:'लड़कों के स्टाइल',forGirls:'लड़कियों के स्टाइल',forAll:'सबके लिए',brand:'Dot Avatar Maker',eyebrow:'किरदार स्टूडियो',title:'छोटा आकार। बड़ी शख्सियत।',language:'भाषा',auto:'स्वचालित',live:'लाइव 3D',motion:'गति',resetView:'दृश्य रीसेट करें',savePng:'पारदर्शी PNG डाउनलोड करें',dragHint:'घुमाने के लिए खींचें',random:'कुछ भी चुनें',stepShape:'आकार',stepColor:'रंग',stepMaterial:'सामग्री',stepStyle:'शैली',chooseShape:'आकार चुनें',chooseColor:'रंग चुनें',chooseMaterial:'सामग्री चुनें',chooseStyle:'शैली चुनें',next:'अगला',back:'पिछला',create:'डाउनलोड करें',groupClassic:'क्लासिक',groupAnimals:'जानवर',groupFantasy:'कल्पना',groupCeramic:'सिरेमिक',groupSoft:'मुलायम और हस्तनिर्मित',groupClear:'चमकदार और पारदर्शी',palette:'ग्लेज़ रंग',custom:'कस्टम रंग',hue:'रंगत',chroma:'संतृप्ति',lightness:'चमक',eyedropper:'स्क्रीन से चुनें',system:'सिस्टम रंग चयनकर्ता',readyTitle:'आपका किरदार तैयार है',readyNote:'इसे घुमाए जा सकने वाले 3D वेब पेज के रूप में या पारदर्शी बैकग्राउंड वाली इमेज के रूप में डाउनलोड करें।',savePreview:'PNG डाउनलोड करें',saveHtml:'HTML डाउनलोड करें',saveHtmlNote:'लाइव 3D · घुमाने के लिए खींचें · इंटरनेट ज़रूरी',savePngNote:'1024 × 1024 · पारदर्शी बैकग्राउंड',saved:'डाउनलोड में सहेजा गया।',close:'बंद करें',note:'सब कुछ आपके ब्राउज़र में ही रेंडर होता है। 3D पेज या पारदर्शी PNG डाउनलोड करें — कोई AI जनरेशन नहीं, कोई शुल्क नहीं।',footer:'मुलायम आकार। छोटे सामान। अनगिनत किरदार।',noGL:'इस ब्राउज़र में 3D प्रीव्यू उपलब्ध नहीं है, इसलिए यहाँ किरदार को रेंडर या डाउनलोड नहीं किया जा सकता।'},
+ shapes:'गोल,त्रिकोण,कैप्सूल,छोटे कान,बादल,दिल,तितली,अंकुर,लहरदार,षट्कोण,हीरा,खरगोश,बिल्ली,भालू,पांडा,लोमड़ी,शीबा इनु,मेंढक,पेंगुइन,उल्लू,चूज़ा,हम्स्टर,ऑक्टोपस,एलियन,रोबोट',
+ styles:'कलाकार,विद्वान,कूल,संगीत प्रेमी,सज्जन,आउटडोर,सपने देखने वाला,सरल,माली,प्यारा,चंचल,भविष्य,ब्रह्मांड,जादूगर,समुद्री डाकू,जासूस,शेफ,अंतरिक्ष यात्री,राजकुमार,निंजा,गेमर,खिलाड़ी,नींदू,फूल परी,शालीन,बालों का रिबन,राजकुमारी,फूलों का ताज,दिल वाला चश्मा,बिल्ली-कान हेडफ़ोन,नन्ही जादूगरनी,धूप टोपी',
+ materials:'चमकदार सिरेमिक,क्रैकल ग्लेज़,मैट स्टोनवेयर,मोती ग्लेज़,छोटे रोएँदार,लंबे रोएँदार,ऊनी फेल्ट,नरम मिट्टी,सॉफ़्ट विनाइल,जेली,काँच,क्रोम',
+ colors:'गुलाबी,ऑर्किड,बैंगनी,नीला,सियान,टील,लाइम,पीला,कोरल'},
+id:{name:'Bahasa Indonesia',
+ ui:{gender:'Gender',boy:'Laki-laki',girl:'Perempuan',forBoys:'Gaya laki-laki',forGirls:'Gaya perempuan',forAll:'Untuk semua',brand:'Dot Avatar Maker',eyebrow:'Studio karakter',title:'Bentuk kecil. Kepribadian besar.',language:'Bahasa',auto:'Otomatis',live:'3D langsung',motion:'Gerakan',resetView:'Atur ulang tampilan',savePng:'Unduh PNG transparan',dragHint:'Seret untuk memutar',random:'Kejutkan aku',stepShape:'Bentuk',stepColor:'Warna',stepMaterial:'Bahan',stepStyle:'Gaya',chooseShape:'Pilih bentuk',chooseColor:'Pilih warna',chooseMaterial:'Pilih bahan',chooseStyle:'Pilih gaya',next:'Berikutnya',back:'Kembali',create:'Unduh',groupClassic:'Klasik',groupAnimals:'Hewan',groupFantasy:'Fantasi',groupCeramic:'Keramik',groupSoft:'Lembut & buatan tangan',groupClear:'Mengilap & bening',palette:'Palet glasir',custom:'Warna kustom',hue:'Rona',chroma:'Saturasi',lightness:'Kecerahan',eyedropper:'Ambil dari layar',system:'Pemilih sistem',readyTitle:'Karaktermu sudah siap',readyNote:'Unduh sebagai halaman web 3D yang bisa diputar, atau sebagai gambar berlatar transparan.',savePreview:'Unduh PNG',saveHtml:'Unduh HTML',saveHtmlNote:'3D langsung · seret untuk memutar · perlu internet',savePngNote:'1024 × 1024 · latar transparan',saved:'Tersimpan di unduhan.',close:'Tutup',note:'Semuanya dirender di browsermu. Unduh halaman 3D atau PNG transparan, tanpa pembuatan AI dan tanpa biaya.',footer:'Bentuk lembut. Aksesori kecil. Karakter tanpa batas.',noGL:'Pratinjau 3D tidak tersedia di browser ini, jadi karakter tidak bisa dirender atau diunduh di sini.'},
+ shapes:'Bulat,Segitiga,Kapsul,Telinga kecil,Awan,Hati,Kupu-kupu,Tunas,Bergelombang,Segi enam,Berlian,Kelinci,Kucing,Beruang,Panda,Rubah,Shiba Inu,Katak,Penguin,Burung hantu,Anak ayam,Hamster,Gurita,Alien,Robot',
+ styles:'Seniman,Cendekia,Keren,Pencinta musik,Pria sopan,Outdoor,Pemimpi,Minimalis,Pekebun,Manis,Ceria,Futuristik,Kosmik,Penyihir,Bajak laut,Detektif,Koki,Astronaut,Pangeran,Ninja,Gamer,Atlet,Tukang tidur,Peri bunga,Nona anggun,Pita rambut,Putri,Mahkota bunga,Kacamata hati,Headphone kuping kucing,Penyihir cilik,Topi pantai',
+ materials:'Keramik berglasir,Glasir retak,Stoneware doff,Glasir mutiara,Plush bulu pendek,Plush bulu panjang,Felt wol,Tanah liat,Vinil lembut,Jeli,Kaca,Krom',
+ colors:'Merah muda,Anggrek,Ungu,Biru,Sian,Hijau toska,Limau,Kuning,Koral'},
+tr:{name:'Türkçe',
+ ui:{gender:'Cinsiyet',boy:'Erkek',girl:'Kız',forBoys:'Erkek stilleri',forGirls:'Kız stilleri',forAll:'Herkes için',brand:'Dot Avatar Maker',eyebrow:'Karakter stüdyosu',title:'Küçük şekil. Büyük kişilik.',language:'Dil',auto:'Otomatik',live:'Canlı 3D',motion:'Hareket',resetView:'Görünümü sıfırla',savePng:'Şeffaf PNG indir',dragHint:'Döndürmek için sürükle',random:'Beni şaşırt',stepShape:'Şekil',stepColor:'Renk',stepMaterial:'Malzeme',stepStyle:'Stil',chooseShape:'Şekil seç',chooseColor:'Renk seç',chooseMaterial:'Malzeme seç',chooseStyle:'Stil seç',next:'İleri',back:'Geri',create:'İndir',groupClassic:'Klasik',groupAnimals:'Hayvanlar',groupFantasy:'Fantastik',groupCeramic:'Seramik',groupSoft:'Yumuşak ve el yapımı',groupClear:'Parlak ve şeffaf',palette:'Sır renkleri',custom:'Özel renk',hue:'Ton',chroma:'Doygunluk',lightness:'Açıklık',eyedropper:'Ekrandan seç',system:'Sistem renk seçici',readyTitle:'Karakterin hazır',readyNote:'Döndürebileceğin bir 3D web sayfası ya da şeffaf arka planlı bir görsel olarak indir.',savePreview:'PNG indir',saveHtml:'HTML indir',saveHtmlNote:'Canlı 3D · döndürmek için sürükle · internet gerekir',savePngNote:'1024 × 1024 · şeffaf arka plan',saved:'İndirilenlere kaydedildi.',close:'Kapat',note:'Her şey tarayıcında oluşturulur. 3D sayfa ya da şeffaf PNG indir; yapay zekâ üretimi yok, ücret yok.',footer:'Yumuşak şekiller. Küçük aksesuarlar. Sonsuz karakter.',noGL:'Bu tarayıcıda 3D önizleme kullanılamadığı için karakter burada oluşturulamaz veya indirilemez.'},
+ shapes:'Yuvarlak,Üçgen,Kapsül,Kulaklı,Bulut,Kalp,Kelebek,Filiz,Fistolu,Altıgen,Baklava,Tavşan,Kedi,Ayı,Panda,Tilki,Shiba Inu,Kurbağa,Penguen,Baykuş,Civciv,Hamster,Ahtapot,Uzaylı,Robot',
+ styles:'Sanatçı,Bilgin,Havalı,Müziksever,Centilmen,Açık hava,Hayalperest,Minimal,Bahçıvan,Tatlı,Şakacı,Fütüristik,Kozmik,Büyücü,Korsan,Dedektif,Aşçı,Astronot,Prens,Ninja,Oyuncu,Sporcu,Uykucu,Çiçek perisi,Hanımefendi,Saç fiyonku,Prenses,Çiçek tacı,Kalpli gözlük,Kedi kulaklı kulaklık,Küçük cadı,Güneş şapkası',
+ materials:'Sırlı seramik,Çatlak sır,Mat taş seramik,İnci sır,Kısa tüylü pelüş,Uzun tüylü pelüş,Yün keçe,Yumuşak kil,Yumuşak vinil,Jöle,Cam,Krom',
+ colors:'Pembe,Orkide,Mor,Mavi,Camgöbeği,Deniz yeşili,Misket limonu,Sarı,Mercan'},
+th:{name:'ไทย',
+ ui:{gender:'เพศ',boy:'ผู้ชาย',girl:'ผู้หญิง',forBoys:'สไตล์ผู้ชาย',forGirls:'สไตล์ผู้หญิง',forAll:'สำหรับทุกคน',brand:'Dot Avatar Maker',eyebrow:'สตูดิโอตัวละคร',title:'ตัวเล็ก บุคลิกใหญ่',language:'ภาษา',auto:'อัตโนมัติ',live:'3D สด',motion:'การเคลื่อนไหว',resetView:'รีเซ็ตมุมมอง',savePng:'ดาวน์โหลด PNG พื้นใส',dragHint:'ลากเพื่อหมุน',random:'สุ่มให้หน่อย',stepShape:'รูปทรง',stepColor:'สี',stepMaterial:'วัสดุ',stepStyle:'สไตล์',chooseShape:'เลือกรูปทรง',chooseColor:'เลือกสี',chooseMaterial:'เลือกวัสดุ',chooseStyle:'เลือกสไตล์',next:'ถัดไป',back:'ย้อนกลับ',create:'ดาวน์โหลด',groupClassic:'คลาสสิก',groupAnimals:'สัตว์',groupFantasy:'แฟนตาซี',groupCeramic:'เซรามิก',groupSoft:'นุ่มและทำมือ',groupClear:'เงาและใส',palette:'สีเคลือบ',custom:'สีกำหนดเอง',hue:'เฉดสี',chroma:'ความสด',lightness:'ความสว่าง',eyedropper:'ดูดสีจากหน้าจอ',system:'ตัวเลือกสีของระบบ',readyTitle:'ตัวละครของคุณพร้อมแล้ว',readyNote:'ดาวน์โหลดเป็นหน้าเว็บ 3D ที่หมุนดูได้ หรือเป็นรูปภาพพื้นหลังโปร่งใส',savePreview:'ดาวน์โหลด PNG',saveHtml:'ดาวน์โหลด HTML',saveHtmlNote:'3D แบบเรียลไทม์ · ลากเพื่อหมุน · ต้องใช้อินเทอร์เน็ต',savePngNote:'1024 × 1024 · พื้นหลังโปร่งใส',saved:'บันทึกไว้ในโฟลเดอร์ดาวน์โหลดแล้ว',close:'ปิด',note:'ทุกอย่างเรนเดอร์ในเบราว์เซอร์ของคุณ ดาวน์โหลดหน้า 3D หรือ PNG โปร่งใสได้ ไม่ใช้ AI สร้างภาพ และไม่มีค่าใช้จ่าย',footer:'รูปทรงนุ่ม อุปกรณ์เล็ก ตัวละครไม่รู้จบ',noGL:'เบราว์เซอร์นี้แสดงตัวอย่าง 3D ไม่ได้ จึงไม่สามารถเรนเดอร์หรือดาวน์โหลดตัวละครที่นี่ได้'},
+ shapes:'กลม,สามเหลี่ยม,แคปซูล,หูเล็ก,เมฆ,หัวใจ,ผีเสื้อ,ต้นอ่อน,ขอบหยัก,หกเหลี่ยม,ข้าวหลามตัด,กระต่าย,แมว,หมี,แพนด้า,จิ้งจอก,ชิบะอินุ,กบ,เพนกวิน,นกฮูก,ลูกไก่,แฮมสเตอร์,หมึก,เอเลี่ยน,หุ่นยนต์',
+ styles:'ศิลปิน,นักวิชาการ,สุดเท่,คนรักดนตรี,สุภาพบุรุษ,กลางแจ้ง,นักฝัน,มินิมอล,ชาวสวน,หวาน,ขี้เล่น,อนาคต,จักรวาล,พ่อมด,โจรสลัด,นักสืบ,เชฟ,นักบินอวกาศ,เจ้าชาย,นินจา,เกมเมอร์,นักกีฬา,ขี้เซา,ภูตดอกไม้,สุภาพสตรี,โบว์ผม,เจ้าหญิง,มงกุฎดอกไม้,แว่นหัวใจ,หูฟังหูแมว,แม่มดน้อย,หมวกกันแดด',
+ materials:'เซรามิกเคลือบ,เคลือบลายราน,สโตนแวร์ด้าน,เคลือบมุก,ผ้าขนสั้น,ผ้าขนยาว,สักหลาดขนแกะ,ดินปั้น,ไวนิลนุ่ม,เจลลี่,แก้ว,โครเมียม',
+ colors:'ชมพู,กล้วยไม้,ม่วง,น้ำเงิน,ฟ้าอมเขียว,เขียวหัวเป็ด,เขียวมะนาว,เหลือง,ปะการัง'},
+vi:{name:'Tiếng Việt',
+ ui:{gender:'Giới tính',boy:'Nam',girl:'Nữ',forBoys:'Phong cách nam',forGirls:'Phong cách nữ',forAll:'Dành cho mọi người',brand:'Dot Avatar Maker',eyebrow:'Xưởng nhân vật',title:'Hình dáng nhỏ. Cá tính lớn.',language:'Ngôn ngữ',auto:'Tự động',live:'3D trực tiếp',motion:'Chuyển động',resetView:'Đặt lại góc nhìn',savePng:'Tải PNG nền trong suốt',dragHint:'Kéo để xoay',random:'Chọn ngẫu nhiên',stepShape:'Hình dáng',stepColor:'Màu sắc',stepMaterial:'Chất liệu',stepStyle:'Phong cách',chooseShape:'Chọn hình dáng',chooseColor:'Chọn màu',chooseMaterial:'Chọn chất liệu',chooseStyle:'Chọn phong cách',next:'Tiếp theo',back:'Quay lại',create:'Tải xuống',groupClassic:'Cổ điển',groupAnimals:'Động vật',groupFantasy:'Kỳ ảo',groupCeramic:'Gốm sứ',groupSoft:'Mềm mại & thủ công',groupClear:'Bóng & trong suốt',palette:'Bảng màu men',custom:'Màu tùy chỉnh',hue:'Sắc độ',chroma:'Độ bão hòa',lightness:'Độ sáng',eyedropper:'Lấy màu từ màn hình',system:'Bộ chọn màu hệ thống',readyTitle:'Nhân vật của bạn đã sẵn sàng',readyNote:'Tải xuống dưới dạng trang web 3D có thể xoay, hoặc hình ảnh nền trong suốt.',savePreview:'Tải PNG',saveHtml:'Tải HTML',saveHtmlNote:'3D trực tiếp · kéo để xoay · cần internet',savePngNote:'1024 × 1024 · nền trong suốt',saved:'Đã lưu vào thư mục tải xuống.',close:'Đóng',note:'Mọi thứ được kết xuất ngay trong trình duyệt. Tải trang 3D hoặc PNG trong suốt, không dùng AI tạo ảnh và không mất phí.',footer:'Hình dáng mềm. Phụ kiện nhỏ. Nhân vật vô tận.',noGL:'Trình duyệt này không hỗ trợ xem trước 3D nên không thể kết xuất hoặc tải nhân vật tại đây.'},
+ shapes:'Tròn,Tam giác,Viên nang,Tai nhỏ,Mây,Trái tim,Bướm,Mầm,Viền sóng,Lục giác,Hình thoi,Thỏ,Mèo,Gấu,Gấu trúc,Cáo,Shiba Inu,Ếch,Cánh cụt,Cú,Gà con,Hamster,Bạch tuộc,Người ngoài hành tinh,Robot',
+ styles:'Nghệ sĩ,Học giả,Sành điệu,Yêu âm nhạc,Quý ông,Dã ngoại,Mộng mơ,Tối giản,Làm vườn,Ngọt ngào,Tinh nghịch,Tương lai,Vũ trụ,Pháp sư,Hải tặc,Thám tử,Đầu bếp,Phi hành gia,Hoàng tử,Ninja,Game thủ,Vận động viên,Mê ngủ,Tiên hoa,Quý cô,Nơ tóc,Công chúa,Vòng hoa,Kính trái tim,Tai nghe tai mèo,Phù thủy nhỏ,Mũ đi biển',
+ materials:'Gốm tráng men,Men rạn,Gốm mộc mờ,Men ngọc trai,Nhung lông ngắn,Nhung lông dài,Nỉ len,Đất sét mềm,Nhựa vinyl mềm,Thạch,Thủy tinh,Crôm',
+ colors:'Hồng,Tím lan,Tím,Xanh dương,Xanh lơ,Xanh két,Xanh chanh,Vàng,San hô'}
+};
+const LANG_CODES = Object.keys(I18N);
+
+/* =====================================================================
+   2. Catalogue: forms, materials, styles, colors (ids are stable API)
+   ===================================================================== */
+const CLASSIC_IDS = ['round','triangle','pill','ears','cloud','heart','butterfly','sprout','scallop','hexagon','diamond'];
+const SHAPE_IDS = [...CLASSIC_IDS, 'bunny','cat','bear','panda','fox','shiba-inu','frog','penguin','owl','chick','hamster','octopus','alien','robot'];
+const shapeGroup = id => CLASSIC_IDS.includes(id) ? 'classic' : id === 'alien' || id === 'robot' ? 'fantasy' : 'animals';
+
+const MATERIALS = [
+  {id:'ceramic',  group:'ceramic', detail:1, ao:.9,  p:{roughness:.13,clearcoat:1,clearcoatRoughness:.04,ior:1.5,specularIntensity:1}},
+  {id:'crackle',  group:'ceramic', detail:2, ao:.85, p:{roughness:.1,clearcoat:1,clearcoatRoughness:.03,ior:1.5}},
+  {id:'stoneware',group:'ceramic', detail:3, ao:1,   p:{roughness:.84,clearcoat:0}},
+  {id:'pearl',    group:'ceramic', detail:1, ao:.8,  tint:.06, p:{roughness:.22,clearcoat:1,clearcoatRoughness:.06,iridescence:1,iridescenceIOR:1.38,iridescenceThicknessRange:[260,620]}},
+  {id:'plush',    group:'soft', detail:0, ao:1, fur:{len:.07, coat:{shells:32,density:150,thickness:.45,mess:.55,curl:1,gravity:.3,wind:.12,rootDark:.45,gain:1.6}}, p:{roughness:1,sheen:1,sheenRoughness:.45}},
+  {id:'longfur',  group:'soft', detail:0, ao:1, fur:{len:.12, trim:.35, accLift:.75, sit:.4, coat:{shells:48,density:71,thickness:.48,mess:1.39,curl:1.2,gravity:1.44,wind:.3,rootDark:.4,gain:1.6}}, p:{roughness:1,sheen:1,sheenRoughness:.5}},
+  {id:'felt',     group:'soft', detail:5, ao:1, fur:{len:.025,shells:22,density:470,thick:.95,droop:.15,curl:1.5,rootDark:.78}, p:{roughness:1,sheen:.7,sheenRoughness:.6}},
+  {id:'clay',     group:'soft', detail:6, ao:1,   p:{roughness:.56,clearcoat:.06,clearcoatRoughness:.5}},
+  {id:'vinyl',    group:'clear', detail:0, ao:.95, p:{roughness:.34,clearcoat:.4,clearcoatRoughness:.35,specularIntensity:.8}},
+  {id:'jelly',    group:'clear', detail:0, ao:.45, atten:1.3, whiten:.25, p:{roughness:.16,transmission:.9,thickness:.75,ior:1.34,clearcoat:1,clearcoatRoughness:.05}},
+  {id:'glass',    group:'clear', detail:0, ao:.3, atten:2.6, whiten:.62, p:{roughness:.015,transmission:1,thickness:.9,ior:1.5,dispersion:.35,specularIntensity:1,clearcoat:1,clearcoatRoughness:.01}},
+  {id:'chrome',   group:'clear', detail:0, ao:.7, whiten:.1, p:{metalness:1,roughness:.08}}
+];
+const MAT = Object.fromEntries(MATERIALS.map(m => [m.id, m]));
+const MATERIAL_IDS = MATERIALS.map(m => m.id);
+
+// Translation order for styles (matches I18N.*.styles); display order below.
+const STYLE_IDS = ['artist','scholar','cool','music','gentleman','outdoor','dreamer','minimal','gardener','sweetheart','playful','futuristic','cosmic','wizard','pirate','detective','chef','astronaut','royal','ninja','gamer','athlete','sleepy','flower','lady','bow','princess','flowercrown','heartshades','kittyphones','witch','sunhat'];
+const STYLE_ORDER = ['gentleman','royal','wizard','pirate','detective','ninja','lady','bow','princess','flowercrown','heartshades','kittyphones','witch','sunhat','sweetheart','flower',
+  'minimal','artist','scholar','cool','music','outdoor','dreamer','gardener','playful','futuristic','cosmic','chef','astronaut','gamer','athlete','sleepy'];
+// m = boy styles, f = girl styles, everything else is shared
+const STYLE_GENDER = {gentleman:'m',royal:'m',wizard:'m',pirate:'m',detective:'m',ninja:'m',lady:'f',bow:'f',princess:'f',flowercrown:'f',heartshades:'f',kittyphones:'f',witch:'f',sunhat:'f',sweetheart:'f',flower:'f'};
+const styleGender = id => STYLE_GENDER[id] || 'u';
+const styleFits = (id, g) => styleGender(id) === 'u' || styleGender(id) === (g === 'female' ? 'f' : 'm');
+const STYLES = {
+  minimal:   {eyes:'open'},
+  artist:    {eyes:'open'},
+  scholar:   {eyes:'happy'},
+  cool:      {eyes:'open'},
+  music:     {eyes:'sleep'},
+  gentleman: {eyes:'open'},
+  outdoor:   {eyes:'open'},
+  dreamer:   {eyes:'happy'},
+  gardener:  {eyes:'open'},
+  sweetheart:{eyes:'open', blush:true},
+  playful:   {eyes:'wink'},
+  futuristic:{eyes:'none'},
+  cosmic:    {eyes:'open'},
+  wizard:    {eyes:'open'},
+  pirate:    {eyes:'open', patch:true},
+  detective: {eyes:'open'},
+  chef:      {eyes:'happy'},
+  astronaut: {eyes:'open'},
+  royal:     {eyes:'open'},
+  ninja:     {eyes:'open'},
+  gamer:     {eyes:'open'},
+  athlete:   {eyes:'open'},
+  sleepy:    {eyes:'sleep'},
+  flower:    {eyes:'open'},
+  lady:      {eyes:'open'},
+  bow:       {eyes:'open'},
+  princess:  {eyes:'open'},
+  flowercrown:{eyes:'happy'},
+  heartshades:{eyes:'open'},
+  kittyphones:{eyes:'happy'},
+  witch:     {eyes:'wink'},
+  sunhat:    {eyes:'open'}
+};
+
+// Curated glaze palette (order matches I18N.*.colors).
+const COLOR_PRESETS = [
+  {id:'pink', hex:'#FA70AB'},{id:'orchid', hex:'#DD6ADC'},{id:'violet', hex:'#A25BFF'},{id:'blue', hex:'#4778FF'},{id:'cyan', hex:'#00B1FF'},
+  {id:'teal', hex:'#04BB9F'},{id:'lime', hex:'#B6D80B'},{id:'yellow', hex:'#FFCC38'},{id:'coral', hex:'#FF8066'}
+];
+
+/* ---------- color math (sRGB <-> OKLab/OKLCH) ---------- */
+const clamp01 = v => v < 0 ? 0 : v > 1 ? 1 : v;
+const srgbToLin = c => c <= .04045 ? c / 12.92 : Math.pow((c + .055) / 1.055, 2.4);
+const linToSrgb = c => c <= .0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - .055;
+function hexToRgb(hex){ const h = hex.replace('#',''); return [0,2,4].map(i => parseInt(h.slice(i,i+2),16)/255); }
+function rgbToHex(rgb){ return '#' + rgb.map(v => Math.round(clamp01(v)*255).toString(16).padStart(2,'0')).join('').toUpperCase(); }
+function normHex(v){ let s = String(v||'').trim().replace(/^#/,''); if(/^[0-9a-f]{3}$/i.test(s)) s = s.split('').map(c=>c+c).join(''); return /^[0-9a-f]{6}$/i.test(s) ? '#'+s.toUpperCase() : null; }
+function rgbToOklab([r,g,b]){ r=srgbToLin(r); g=srgbToLin(g); b=srgbToLin(b);
+  const l=Math.cbrt(.4122214708*r+.5363325363*g+.0514459929*b), m=Math.cbrt(.2119034982*r+.6806995451*g+.1073969566*b), s=Math.cbrt(.0883024619*r+.2817188376*g+.6299787005*b);
+  return [.2104542553*l+.793617785*m-.0040720468*s, 1.9779984951*l-2.428592205*m+.4505937099*s, .0259040371*l+.7827717662*m-.808675766*s]; }
+function oklabToLinRgb([L,a,b]){ const l=(L+.3963377774*a+.2158037573*b)**3, m=(L-.1055613458*a-.0638541728*b)**3, s=(L-.0894841775*a-1.291485548*b)**3;
+  return [4.0767416621*l-3.3077115913*m+.2309699292*s, -1.2684380046*l+2.6097574011*m-.3413193965*s, -.0041960863*l-.7034186147*m+1.707614701*s]; }
+function hexToOklch(hex){ const [L,a,b] = rgbToOklab(hexToRgb(hex)); let h = Math.atan2(b,a)*180/Math.PI; if(h<0) h+=360; return [L, Math.hypot(a,b), h]; }
+function oklchToHex(L,C,H){ // gamut-maps by reducing chroma
+  const rad = H*Math.PI/180; let lo = 0, hi = C, rgb = oklabToLinRgb([L, C*Math.cos(rad), C*Math.sin(rad)]);
+  const inGamut = c => c.every(v => v >= -1e-4 && v <= 1.0001);
+  if(!inGamut(rgb)){ for(let i=0;i<18;i++){ const mid=(lo+hi)/2; const t=oklabToLinRgb([L, mid*Math.cos(rad), mid*Math.sin(rad)]); if(inGamut(t)){lo=mid;rgb=t;} else hi=mid; } rgb = oklabToLinRgb([L, lo*Math.cos(rad), lo*Math.sin(rad)]); }
+  return rgbToHex(rgb.map(v => linToSrgb(clamp01(v))));
+}
+function luminance(hex){ const [r,g,b] = hexToRgb(hex).map(srgbToLin); return .2126*r+.7152*g+.0722*b; }
+function labDist(h1,h2){ const a = rgbToOklab(hexToRgb(h1)), b = rgbToOklab(hexToRgb(h2)); return Math.hypot(a[0]-b[0], a[1]-b[1], a[2]-b[2]); }
+
+
+/* =====================================================================
+   3. Sculpting: signed distance functions for every form.
+   Units: the character is ~1.0 tall, centred at the origin, facing +z.
+   Ears, tufts and tails are blended into the body with smooth unions,
+   so every form is one continuous surface (like a cast figurine).
+   ===================================================================== */
+const {sqrt, abs, min, max, sin, cos, atan2, PI, sign} = Math;
+const cl = (v,a,b) => v<a?a:v>b?b:v;
+function smin(a,b,k){ const h=max(k-abs(a-b),0)/k; return min(a,b)-h*h*k*.25; }
+function smax(a,b,k){ const h=max(k-abs(a-b),0)/k; return max(a,b)+h*h*k*.25; }
+function sSph(x,y,z,r){ return sqrt(x*x+y*y+z*z)-r; }
+function sEll(x,y,z,rx,ry,rz){ const ax=x/rx,ay=y/ry,az=z/rz, k0=sqrt(ax*ax+ay*ay+az*az), bx=ax/rx,by=ay/ry,bz=az/rz, k1=sqrt(bx*bx+by*by+bz*bz); return k1<1e-9 ? -min(rx,ry,rz) : k0*(k0-1)/k1; }
+function sCap(x,y,z,ax,ay,az,bx,by,bz,r){ const px=x-ax,py=y-ay,pz=z-az, ux=bx-ax,uy=by-ay,uz=bz-az; let h=(px*ux+py*uy+pz*uz)/(ux*ux+uy*uy+uz*uz); h=h<0?0:h>1?1:h; const dx=px-ux*h,dy=py-uy*h,dz=pz-uz*h; return sqrt(dx*dx+dy*dy+dz*dz)-r; }
+function sRCone(x,y,z,ax,ay,az,bx,by,bz,r1,r2){ // tapered capsule (iq)
+  const bax=bx-ax,bay=by-ay,baz=bz-az, l2=bax*bax+bay*bay+baz*baz, rr=r1-r2, a2=l2-rr*rr, il2=1/l2;
+  const pax=x-ax,pay=y-ay,paz=z-az, yy=pax*bax+pay*bay+paz*baz, zz=yy-l2;
+  const qx=pax*l2-bax*yy, qy=pay*l2-bay*yy, qz=paz*l2-baz*yy, x2=qx*qx+qy*qy+qz*qz, y2=yy*yy*l2, z2=zz*zz*l2;
+  const k=sign(rr)*rr*rr*x2;
+  if(sign(zz)*a2*z2>k) return sqrt(x2+z2)*il2-r2;
+  if(sign(yy)*a2*y2<k) return sqrt(x2+y2)*il2-r1;
+  return (sqrt(x2*a2*il2)+yy*rr)*il2-r1;
+}
+function sRBox(x,y,z,bx,by,bz,r){ const qx=abs(x)-bx+r,qy=abs(y)-by+r,qz=abs(z)-bz+r, ox=max(qx,0),oy=max(qy,0),oz=max(qz,0); return sqrt(ox*ox+oy*oy+oz*oz)+min(max(qx,max(qy,qz)),0)-r; }
+function sTorXY(x,y,z,R,r){ const q=sqrt(x*x+y*y)-R; return sqrt(q*q+z*z)-r; }
+// 2D silhouettes (negative inside)
+function d2Circle(x,y,r){ return sqrt(x*x+y*y)-r; }
+function d2Heart(x,y){ x=abs(x); if(y+x>1){ const a=x-.25,b=y-.75; return sqrt(a*a+b*b)-.35355339; } const b=y-1, d1=x*x+b*b, m=.5*max(x+y,0), c=x-m, e=y-m, d2=c*c+e*e; return sqrt(min(d1,d2))*sign(x-y); }
+function d2Tri(x,y,r){ const k=1.7320508; x=abs(x)-r; y=y+r/k; if(x+k*y>0){ const nx=(x-k*y)/2, ny=(-k*x-y)/2; x=nx; y=ny; } x-=cl(x,-2*r,0); return -sqrt(x*x+y*y)*sign(y); }
+function d2Capsule(x,y,w,r){ const qx=max(abs(x)-w,0); return sqrt(qx*qx+y*y)-r; }
+function d2RBox(x,y,bx,by,r){ const qx=abs(x)-bx+r, qy=abs(y)-by+r, ox=max(qx,0), oy=max(qy,0); return sqrt(ox*ox+oy*oy)+min(max(qx,qy),0)-r; }
+function d2Hex(x,y,r){ const kx=-.8660254, ky=.5, kz=.57735027; x=abs(x); y=abs(y); const d=2*min(kx*x+ky*y,0); x-=d*kx; y-=d*ky; x-=cl(x,-kz*r,kz*r); y-=r; return sqrt(x*x+y*y)*sign(y); }
+function d2Rhombus(x,y,bx,by){ x=abs(x); y=abs(y); const h=cl(((bx-2*x)*bx-(by-2*y)*by)/(bx*bx+by*by),-1,1); const dx=x-.5*bx*(1-h), dy=y-.5*by*(1+h); return sqrt(dx*dx+dy*dy)*sign(x*by+y*bx-bx*by); }
+// Inflate a 2D silhouette into a cushion: rounded rim of radius R, domed centre.
+function pillow(d2,z,R,bulge,fall){ const c=d2+R; const t=cl(-c/fall,0,1); const s=1+bulge*t*(2-t); const zz=z/s, cx=c>0?c:0; return sqrt(cx*cx+zz*zz)-R; }
+// Soft egg / mochi body with a flattened base. pear>0 widens the bottom, taper>0 narrows the top.
+function mochi(x,y,z,rx,ry,rz,cy,flat,pear,taper){
+  const py=y-cy, t=cl(py/ry,-1,1); const f=1+(pear||0)*max(-t,0)-(taper||0)*max(t,0);
+  let d=sEll(x/f,py,z/f,rx,ry,rz)*min(f,1);
+  return smax(d,(cy-ry*flat)-y,.13);
+}
+// Cushion: rounded rim R, thickness domed by distance from the centre (no internal creases).
+function cushion(d2,x,y,z,R,dome,rad){ const r2=(x*x+y*y)/(rad*rad), t=max(1-r2,0); return pillow(d2, z/(1+dome*t*(2-t)), R, 0, 1)*.9; }
+const rot2 = (x,y,a) => [cos(a)*x+sin(a)*y, -sin(a)*x+cos(a)*y]; // express (x,y) in a frame rotated by a
+
+/* Shape specs. eyes.{x,y}: face coords traced onto the front surface.
+   paints: glaze/dye zones (ellipsoids, n>2 = rounded box), tone resolved against the body color. */
+const SHAPES = {
+round:{ sdf:(x,y,z)=>mochi(x,y,z,.56,.5,.46,0,.88,.05,0), eyes:{x:.15,y:.05}, head:{r:.4}, bowY:-.27 },
+triangle:{ sdf:(x,y,z)=>cushion(d2Tri(x,y+.1,.38)-.14,x,y+.1,z,.24,.6,.5), eyes:{x:.13,y:.02}, head:{r:.24}, bowY:-.24 },
+pill:{ sdf:(x,y,z)=>cushion(d2Capsule(x,y+.02,.15,.3),x,y+.02,z,.2,.75,.5), eyes:{x:.14,y:.03}, head:{r:.3}, bowY:-.22 },
+ears:{ sdf:(x,y,z)=>{ const ax=abs(x); let d=d2RBox(x,y+.03,.42,.27,.2);
+    d=smin(d,d2Circle(ax-.25,y-.27,.1),.04); return cushion(d,x,y+.03,z,.19,.72,.5); }, eyes:{x:.15,y:-.01}, head:{r:.3,drop:.02}, bowY:-.24 },
+cloud:{ sdf:(x,y,z)=>{ let d=d2Circle(x,y-.02,.34);
+    d=smin(d,d2Circle(x+.31,y+.06,.22),.16); d=smin(d,d2Circle(x-.32,y+.04,.23),.16);
+    d=smin(d,d2Circle(x+.17,y-.25,.22),.16); d=smin(d,d2Circle(x-.19,y-.26,.23),.16); d=smin(d,d2Circle(x,y+.23,.25),.16);
+    return cushion(d,x,y+.02,z,.2,.75,.55); }, eyes:{x:.13,y:.03}, head:{r:.36,x:-.08}, bowY:-.28 },
+heart:{ sdf:(x,y,z)=>{ const s=.9; return cushion(d2Heart(x/s,(y+.5)/s)*s,x,y+.02,z,.21,.8,.5); }, eyes:{x:.155,y:.08}, head:{r:.3,x:.2}, bowY:-.2 },
+butterfly:{ sdf:(x,y,z)=>{ const ax=abs(x); let d=d2Circle(x,y,.19);
+    d=smin(d,d2Circle(ax-.23,y-.13,.165),.1); d=smin(d,d2Circle(ax-.26,y+.12,.175),.1);
+    return cushion(d,x,y,z,.19,.85,.42); }, eyes:{x:.1,y:.02,s:.9}, head:{r:.24,drop:.03}, bowY:-.2 },
+sprout:{ sdf:(x,y,z)=>{ let d=mochi(x,y,z,.5,.46,.44,-.06,.88,.04,0);
+    d=smin(d,sCap(x,y,z,0,.34,0,0,.62,0,.065),.06);
+    return smin(d,sCap(x,y,z,.02,.5,0,.17,.64,0,.058),.03); }, eyes:{x:.14,y:.02}, head:{r:.32,drop:.12}, bowY:-.3 },
+scallop:{ sdf:(x,y,z)=>{ let d=d2Circle(x,y,.4); const a0=atan2(y,x), st=PI/6, i=Math.round(a0/st);
+    for(let k=i-1;k<=i+1;k++){ const a=k*st; d=smin(d,d2Circle(x-cos(a)*.415,y-sin(a)*.415,.11),.05); }
+    return cushion(d,x,y,z,.12,1.25,.52); }, eyes:{x:.14,y:.04}, head:{r:.34}, bowY:-.27 },
+hexagon:{ sdf:(x,y,z)=>{ const [rx,ry]=rot2(x,y+.01,.26); return cushion(d2Hex(rx,ry,.33)-.1,x,y+.01,z,.2,.7,.5); }, eyes:{x:.14,y:.03}, head:{r:.3}, bowY:-.26 },
+diamond:{ sdf:(x,y,z)=>{ const [rx,ry]=rot2(x,y+.02,PI/4); return cushion(d2RBox(rx,ry,.35,.35,.13),x,y+.02,z,.21,.62,.45); }, eyes:{x:.13,y:.01}, head:{r:.22,drop:.02}, bowY:-.28 },
+bunny:{ sdf:(x,y,z)=>{ const d=mochi(x,y,z,.5,.45,.44,-.12,.88,.05,0); const ax=abs(x), zz=(z+.04)*1.9-.04;
+    return smin(d,sRCone(ax,y,zz,.15,.18,-.04, .23,.74,-.07, .1,.085),.08); },
+  paints:[{c:[.2,.49,.03],r:[.042,.17,.05],rot:[0,0,-.13],tone:'pink',mirror:true}],
+  eyes:{x:.15,y:-.04}, nose:{y:-.12,tone:'pink',s:.8}, head:{r:.34}, bowY:-.36 },
+cat:{ sdf:(x,y,z)=>{ const d=mochi(x,y,z,.53,.46,.45,-.08,.88,.05,0); const ax=abs(x);
+    return smin(d,sRCone(ax,y,z*1.6,.25,.19,0, .36,.55,-.01, .14,.035),.07); },
+  paints:[{c:[.31,.35,.07],r:[.06,.1,.05],rot:[0,0,-.3],tone:'pink',mirror:true}],
+  eyes:{x:.17,y:.0}, nose:{y:-.085,tone:'pink',s:.85}, mouth:{type:'w',y:-.125}, head:{r:.34}, bowY:-.34 },
+bear:{ sdf:(x,y,z)=>{ const d=mochi(x,y,z,.53,.47,.45,-.06,.88,.05,0); const ax=abs(x);
+    return smin(d,sSph(ax-.31,y-.33,(z+.02)*1.5,.14)/1.2,.07); },
+  paints:[{c:[.31,.34,.08],r:[.075,.075,.06],tone:'cream',mirror:true},{c:[0,-.13,.38],r:[.18,.13,.15],tone:'cream'}],
+  eyes:{x:.16,y:.06}, nose:{y:-.075,tone:'dark',s:1.1}, mouth:{type:'w',y:-.14,s:.9}, head:{r:.36}, bowY:-.34 },
+panda:{ sdf:(x,y,z)=>{ const d=mochi(x,y,z,.53,.47,.45,-.06,.88,.05,0); const ax=abs(x);
+    return smin(d,sSph(ax-.31,y-.33,(z+.02)*1.5,.14)/1.2,.07); },
+  paints:[{c:[.31,.33,-.02],r:[.2,.19,.22],tone:'dark',mirror:true},{c:[.155,.03,.38],r:[.085,.11,.13],rot:[0,0,.55],tone:'dark',mirror:true}],
+  eyes:{x:.155,y:.04,type:'light',s:.8}, nose:{y:-.08,tone:'dark',s:1}, mouth:{type:'w',y:-.14,s:.85}, head:{r:.36}, bowY:-.34 },
+fox:{ sdf:(x,y,z)=>{ let d=mochi(x,y,z,.52,.46,.45,-.08,.88,.05,0); const ax=abs(x);
+    d=smin(d,sRCone(ax,y,z,.36,-.1,.1, .52,-.2,.06, .12,.035),.08);
+    return smin(d,sRCone(ax,y,z*1.7,.22,.19,0, .35,.68,-.02, .15,.032),.07); },
+  paints:[{c:[.35,.64,-.01],r:[.08,.11,.1],tone:'dark',mirror:true},{c:[.27,.4,.08],r:[.06,.13,.05],rot:[0,0,-.3],tone:'cream',mirror:true},{c:[0,-.24,.26],r:[.44,.22,.3],tone:'cream'}],
+  eyes:{x:.16,y:.05}, nose:{y:-.06,tone:'dark',s:1}, head:{r:.34}, bowY:-.36 },
+'shiba-inu':{ sdf:(x,y,z)=>{ let d=mochi(x,y,z,.54,.47,.46,-.07,.88,.06,0); const ax=abs(x);
+    d=smin(d,sRCone(ax,y,z*1.5,.23,.21,-.01, .31,.52,-.02, .15,.05),.07);
+    return smin(d,sTorXY(x-.1,y-.03,z+.45,.1,.055),.06); },
+  paints:[{c:[0,-.15,.36],r:[.21,.15,.16],tone:'cream'},{c:[.25,-.14,.3],r:[.16,.13,.17],tone:'cream',mirror:true},
+          {c:[.13,.18,.42],r:[.036,.028,.06],tone:'cream',mirror:true},{c:[.26,.36,.08],r:[.05,.09,.05],rot:[0,0,-.2],tone:'cream',mirror:true},
+          {c:[0,-.46,.28],r:[.26,.12,.22],tone:'cream'},{c:[.1,.14,-.52],r:[.06,.06,.06],tone:'cream'}],
+  eyes:{x:.16,y:.05}, nose:{y:-.075,tone:'dark',s:1}, mouth:{type:'w',y:-.13}, head:{r:.36}, bowY:-.36 },
+frog:{ sdf:(x,y,z)=>{ const d=mochi(x,y,z,.54,.45,.48,-.1,.86,.06,0); const ax=abs(x);
+    return smin(d,sSph(ax-.21,y-.27,z-.1,.155),.08); },
+  paints:[{c:[0,-.36,.34],r:[.34,.2,.24],tone:'cream'}],
+  eyes:{x:.21,y:.31,type:'frog'}, mouth:{type:'smile',y:-.02,w:.11}, head:{r:.34,drop:.05}, bowY:-.3 },
+penguin:{ sdf:(x,y,z)=>{ let d=mochi(x,y,z,.46,.56,.44,-.02,.86,0,.12); const ax=abs(x);
+    const [rx,ry]=rot2(ax-.43,y+.1,.4); d=smin(d,sEll(rx,ry,z,.065,.22,.14),.05);
+    return smin(d,sEll(ax-.14,y+.53,z-.22,.1,.05,.12),.03); },
+  paints:[{c:[0,-.16,.3],r:[.33,.38,.28],tone:'cream'},{c:[.12,.12,.34],r:[.13,.14,.14],tone:'cream',mirror:true},{c:[.14,-.54,.24],r:[.12,.07,.14],tone:'orange',mirror:true}],
+  eyes:{x:.12,y:.13,s:.9}, faceTone:'cream', beak:{y:.04,s:.9}, head:{r:.32}, bowY:-.26 },
+owl:{ sdf:(x,y,z)=>{ let d=mochi(x,y,z,.5,.52,.46,-.06,.85,.03,.06); const ax=abs(x);
+    d=smin(d,sRCone(ax,y,z*1.5,.22,.3,0, .35,.56,-.03, .1,.03),.06);
+    const [rx,ry]=rot2(ax-.44,y+.12,.25); return smin(d,sEll(rx,ry,z+.03,.08,.26,.18),.05); },
+  paints:[{c:[.14,.08,.36],r:[.15,.15,.15],tone:'cream',mirror:true}],
+  eyes:{x:.14,y:.09,s:1.1}, faceTone:'cream', beak:{y:-.02,s:.85,down:true}, head:{r:.34}, bowY:-.3 },
+chick:{ sdf:(x,y,z)=>{ let d=mochi(x,y,z,.5,.48,.46,-.06,.88,.04,0); const ax=abs(x);
+    d=smin(d,sCap(x,y,z,0,.36,.02,-.03,.56,.03,.045),.05);
+    d=smin(d,sCap(x,y,z,.03,.36,.02,.13,.52,.03,.038),.05);
+    d=smin(d,sCap(x,y,z,-.03,.36,.02,-.12,.51,.03,.036),.05);
+    const [rx,ry]=rot2(ax-.47,y+.1,.5); return smin(d,sEll(rx,ry,z,.06,.15,.12),.04); },
+  paints:[{c:[.27,-.08,.37],r:[.075,.045,.06],tone:'pink',mirror:true}],
+  eyes:{x:.15,y:.05}, beak:{y:-.03,s:1}, head:{r:.34,drop:.06}, bowY:-.32 },
+hamster:{ sdf:(x,y,z)=>{ let d=mochi(x,y,z,.54,.46,.47,-.08,.88,.12,0); const ax=abs(x);
+    d=smin(d,sSph(ax-.3,y+.12,z-.2,.2),.1);
+    return smin(d,sSph(ax-.26,y-.3,(z+.05)*1.5,.09)/1.2,.05); },
+  paints:[{c:[.26,.31,.02],r:[.05,.05,.045],tone:'pink',mirror:true},{c:[0,-.21,.34],r:[.26,.23,.2],tone:'cream'},{c:[.3,-.1,.38],r:[.07,.045,.06],tone:'pink',mirror:true}],
+  eyes:{x:.15,y:.05}, nose:{y:-.06,tone:'pink',s:.75}, mouth:{type:'w',y:-.105,s:.8}, head:{r:.34}, bowY:-.33 },
+octopus:{ sdf:(x,y,z)=>{ let d=smax(sEll(x,y-.1,z,.48,.44,.44),-.5-y,.05); const a0=atan2(z,x), st=PI/4, i=Math.round((a0-PI/8)/st);
+    for(let k=i-1;k<=i+1;k++){ const a=k*st+PI/8, c=cos(a), s=sin(a); d=smin(d,sRCone(x,y,z,c*.26,-.16,s*.26, c*.52,-.42,s*.52, .12,.075),.1); }
+    return d; },
+  paints:[{c:[.26,.03,.38],r:[.075,.045,.06],tone:'pink',mirror:true}],
+  eyes:{x:.15,y:.12}, head:{r:.36}, bowY:-.18 },
+alien:{ sdf:(x,y,z)=>{ let d=mochi(x,y,z,.52,.46,.44,-.04,.88,0,-.1); const ax=abs(x);
+    d=smin(d,sCap(ax,y,z,.13,.33,0,.22,.62,-.02,.022),.03);
+    return min(d,sSph(ax-.225,y-.66,z+.02,.062)); },
+  eyes:{x:.17,y:.02,type:'big'}, mouth:{type:'smile',y:-.17,w:.05}, head:{r:.34}, bowY:-.3 },
+robot:{ sdf:(x,y,z)=>{ let d=sRBox(x,y+.04,z,.46,.42,.4,.16); const ax=abs(x);
+    d=smin(d,sRBox(ax-.47,y+.04,z,.05,.1,.1,.04),.02);
+    d=smin(d,sCap(x,y,z,0,.34,0,0,.55,0,.025),.03);
+    return min(d,sSph(x,y-.6,z,.06)); },
+  paints:[{c:[0,-.03,.36],r:[.33,.23,.2],n:5,tone:'screen'},{c:[0,.6,0],r:[.075,.075,.075],tone:'accent'},{c:[.5,-.04,0],r:[.06,.11,.11],n:4,tone:'dark',mirror:true}],
+  eyes:{x:.13,y:.01,type:'glow'}, mouth:{type:'smile',y:-.1,w:.06,glow:true}, head:{r:.36}, bowY:-.36 }
+};
+for(const id of SHAPE_IDS){ const s=SHAPES[id]; s.id=id; s.paints=(s.paints||[]).flatMap(p=>p.mirror?[p,{...p,c:[-p.c[0],p.c[1],p.c[2]],rot:p.rot?[p.rot[0],-p.rot[1],-p.rot[2]]:null}]:[p]); }
+
+/* ---------- SDF utilities ---------- */
+function sdfGrad(f,x,y,z,e=1.2e-3){ // tetrahedral gradient
+  const a=f(x+e,y-e,z-e), b=f(x-e,y-e,z+e), c=f(x-e,y+e,z-e), d=f(x+e,y+e,z+e);
+  const gx=a-b-c+d, gy=-a-b+c+d, gz=-a+b-c+d, l=sqrt(gx*gx+gy*gy+gz*gz)||1;
+  return [gx/l,gy/l,gz/l];
+}
+function sdfTrace(f,ox,oy,oz,dx,dy,dz,maxT=3.2){
+  let t=0; for(let i=0;i<220;i++){ const x=ox+dx*t,y=oy+dy*t,z=oz+dz*t, d=f(x,y,z);
+    if(d<1.5e-4) return [x,y,z]; t+=max(d*.6,1.5e-4); if(t>maxT) break; }
+  return null;
+}
+
+/* =====================================================================
+   4. Meshing: narrow-band sampling + surface nets, then every vertex is
+   projected onto the exact surface, given an analytic normal, SDF ambient
+   occlusion and mean curvature (used for glaze pooling / glaze break).
+   ===================================================================== */
+const GEO_CACHE = new Map();
+function buildBodyGeometry(shapeId, N){
+  const key = shapeId + '@' + N;
+  if(GEO_CACHE.has(key)) return GEO_CACHE.get(key);
+  const f = SHAPES[shapeId].sdf, lo = -.96, h = 1.92/(N-1), NN = N*N;
+  const F = new Float32Array(N*NN);
+  const B = 4, band = (B*.87*h + 2*h)*2.2;
+  for(let bz=0;bz<N;bz+=B) for(let by=0;by<N;by+=B) for(let bx=0;bx<N;bx+=B){
+    const ex=min(bx+B,N), ey=min(by+B,N), ez=min(bz+B,N);
+    const dc = f(lo+(bx+1.5)*h, lo+(by+1.5)*h, lo+(bz+1.5)*h);
+    if(abs(dc) > band){ for(let z=bz;z<ez;z++) for(let y=by;y<ey;y++){ const o=y*N+z*NN; for(let x=bx;x<ex;x++) F[o+x]=dc; } }
+    else { for(let z=bz;z<ez;z++){ const pz=lo+z*h; for(let y=by;y<ey;y++){ const py=lo+y*h, o=y*N+z*NN; for(let x=bx;x<ex;x++) F[o+x]=f(lo+x*h,py,pz); } } }
+  }
+  // surface nets: one vertex per sign-changing cell
+  const cell = new Int32Array(N*NN);
+  const off = [0,1,N,N+1,NN,NN+1,NN+N,NN+N+1];
+  const E = [0,1,2,3,4,5,6,7,0,2,1,3,4,6,5,7,0,4,1,5,2,6,3,7];
+  const pos = []; const v = new Float32Array(8);
+  for(let z=0;z<N-1;z++) for(let y=0;y<N-1;y++) for(let x=0;x<N-1;x++){
+    const i = x+y*N+z*NN; let mask=0;
+    for(let c=0;c<8;c++){ const val=F[i+off[c]]; v[c]=val; if(val<0) mask|=1<<c; }
+    if(mask===0||mask===255) continue;
+    let sx=0,sy=0,sz=0,n=0;
+    for(let e=0;e<24;e+=2){ const a=E[e], b=E[e+1]; if(((mask>>a)^(mask>>b))&1){ const t=v[a]/(v[a]-v[b]);
+      sx+=(a&1)+t*((b&1)-(a&1)); sy+=((a>>1)&1)+t*(((b>>1)&1)-((a>>1)&1)); sz+=((a>>2)&1)+t*(((b>>2)&1)-((a>>2)&1)); n++; } }
+    cell[i] = pos.length/3 + 1;
+    pos.push(lo+(x+sx/n)*h, lo+(y+sy/n)*h, lo+(z+sz/n)*h);
+  }
+  const idx = [];
+  const quad = (c0,c1,c2,c3,inside) => { const a=cell[c0]-1,b=cell[c1]-1,c=cell[c2]-1,d=cell[c3]-1; if(a<0||b<0||c<0||d<0) return;
+    if(inside) idx.push(a,b,c,a,c,d); else idx.push(a,c,b,a,d,c); };
+  for(let z=0;z<N-1;z++) for(let y=0;y<N-1;y++) for(let x=0;x<N-1;x++){
+    const i=x+y*N+z*NN, s0=F[i]<0;
+    if(y>0&&z>0&&(F[i+1]<0)!==s0) quad(i-N-NN,i-NN,i,i-N,s0);
+    if(x>0&&z>0&&(F[i+N]<0)!==s0) quad(i-1-NN,i-1,i,i-NN,s0);
+    if(x>0&&y>0&&(F[i+NN]<0)!==s0) quad(i-1-N,i-N,i,i-1,s0);
+  }
+  // refine: project to surface, analytic normals, AO + curvature
+  const nv = pos.length/3, P = new Float32Array(nv*3), Nn = new Float32Array(nv*3), A = new Float32Array(nv*2);
+  const AOD = [.018,.045,.085,.14,.21];
+  let mnX=9,mnY=9,mnZ=9,mxX=-9,mxY=-9,mxZ=-9; const ce = .012;
+  for(let k=0;k<nv;k++){
+    let x=pos[k*3], y=pos[k*3+1], z=pos[k*3+2];
+    const d = f(x,y,z), g = sdfGrad(f,x,y,z), s = cl(d,-h,h);
+    x-=g[0]*s; y-=g[1]*s; z-=g[2]*s;
+    const n = sdfGrad(f,x,y,z);
+    P[k*3]=x; P[k*3+1]=y; P[k*3+2]=z; Nn[k*3]=n[0]; Nn[k*3+1]=n[1]; Nn[k*3+2]=n[2];
+    let occ=0, w=1; for(const t of AOD){ occ += (t - f(x+n[0]*t, y+n[1]*t, z+n[2]*t))*w; w*=.72; }
+    A[k*2] = cl(1-occ*2.4,0,1);
+    const lap = (f(x+ce,y,z)+f(x-ce,y,z)+f(x,y+ce,z)+f(x,y-ce,z)+f(x,y,z+ce)+f(x,y,z-ce)-6*f(x,y,z))/(ce*ce);
+    A[k*2+1] = cl(lap*.06,-1,1);
+    if(x<mnX)mnX=x; if(y<mnY)mnY=y; if(z<mnZ)mnZ=z; if(x>mxX)mxX=x; if(y>mxY)mxY=y; if(z>mxZ)mxZ=z;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(P,3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(Nn,3));
+  geo.setAttribute('aSurf', new THREE.BufferAttribute(A,2));
+  geo.setIndex(new THREE.BufferAttribute(nv>65535?new Uint32Array(idx):new Uint16Array(idx),1));
+  geo.computeBoundingSphere();
+  geo.userData.box = {min:[mnX,mnY,mnZ], max:[mxX,mxY,mxZ]};
+  GEO_CACHE.set(key, geo);
+  if(GEO_CACHE.size > 60){ const first = GEO_CACHE.keys().next().value, old = GEO_CACHE.get(first); old.dispose(); GEO_CACHE.delete(first); }
+  return geo;
+}
+
+/* =====================================================================
+   5. Materials. Body materials are MeshPhysicalMaterial extended with:
+   - glaze/dye zones (paint volumes) evaluated per pixel for crisp edges
+   - SDF ambient occlusion + curvature (glaze pooling, glaze break)
+   - analytic contact occlusion from accessories
+   - procedural micro detail per finish (crackle, speckle, grain, fibers)
+   Short and long plush wear an opaque instanced coat; felt keeps a blended shell fuzz.
+   ===================================================================== */
+const GLSL_COMMON = /* glsl */`
+uniform vec3 uBody;
+uniform int uPaintCount; uniform vec3 uPaintC[12]; uniform vec3 uPaintR[12]; uniform mat3 uPaintM[12]; uniform float uPaintN[12]; uniform vec3 uPaintCol[12];
+uniform int uOccCount; uniform vec4 uOcc[8];
+float hash13(vec3 p3){ p3 = fract(p3*.1031); p3 += dot(p3, p3.zyx+31.32); return fract((p3.x+p3.y)*p3.z); }
+vec3 hash33(vec3 p3){ p3 = fract(p3*vec3(.1031,.1030,.0973)); p3 += dot(p3, p3.yxz+33.33); return fract((p3.xxy+p3.yxx)*p3.zyx); }
+float vnoise(vec3 x){ vec3 i=floor(x), f=fract(x); f=f*f*(3.0-2.0*f);
+  return mix(mix(mix(hash13(i),hash13(i+vec3(1,0,0)),f.x),mix(hash13(i+vec3(0,1,0)),hash13(i+vec3(1,1,0)),f.x),f.y),
+             mix(mix(hash13(i+vec3(0,0,1)),hash13(i+vec3(1,0,1)),f.x),mix(hash13(i+vec3(0,1,1)),hash13(i+vec3(1,1,1)),f.x),f.y),f.z); }
+vec3 nGrad(vec3 p){ float n=vnoise(p); return vec3(vnoise(p+vec3(.37,0,0))-n, vnoise(p+vec3(0,.37,0))-n, vnoise(p+vec3(0,0,.37))-n)/.37; }
+vec3 paintColor(vec3 p){
+  vec3 bc = uBody;
+  for(int i=0;i<12;i++){ if(i>=uPaintCount) break;
+    vec3 q = abs(uPaintM[i]*(p-uPaintC[i]))/uPaintR[i]; float e = uPaintN[i];
+    float d = e>2.5 ? pow(pow(q.x,e)+pow(q.y,e)+pow(q.z,e),1.0/e) : length(q);
+    float aa = fwidth(d)*.9+.006;
+    bc = mix(bc, uPaintCol[i], 1.0-smoothstep(1.0-aa,1.0+aa,d)); }
+  return bc;
+}
+float contactOcc(vec3 p, vec3 n){
+  float o = 1.0;
+  for(int i=0;i<8;i++){ if(i>=uOccCount) break;
+    vec3 v = uOcc[i].xyz-p; float d2 = max(dot(v,v),1e-5); float r = uOcc[i].w;
+    o *= 1.0 - clamp(max(dot(n,v*inversesqrt(d2)),0.0)*r*r/d2,0.0,1.0)*.85; }
+  return o;
+}`;
+
+const GLSL_CRACKLE = /* glsl */`
+float crackle(vec3 x){
+  vec3 n=floor(x), f=fract(x), mr=vec3(0), mg=vec3(0); float md=8.0;
+  for(int k=-1;k<=1;k++) for(int j=-1;j<=1;j++) for(int i=-1;i<=1;i++){
+    vec3 g=vec3(float(i),float(j),float(k)); vec3 r=g+hash33(n+g)-f; float d=dot(r,r); if(d<md){md=d;mr=r;mg=g;} }
+  md=8.0;
+  for(int k=-1;k<=1;k++) for(int j=-1;j<=1;j++) for(int i=-1;i<=1;i++){
+    vec3 g=mg+vec3(float(i),float(j),float(k)); vec3 r=g+hash33(n+g)-f; vec3 dd=r-mr;
+    if(dot(dd,dd)>1e-5) md=min(md, dot(.5*(mr+r), normalize(dd))); }
+  return md;
+}`;
+
+// Per-finish micro detail. Inputs: vObj (object pos), vObjN, surf (ao, curvature). Outputs bc, dN, dR.
+const DETAIL_GLSL = /* glsl */`
+#if DETAIL == 1
+  { // glossy glaze: thickness variation, pooling in crevices, thin glaze on convex edges, orange peel
+    bc *= 1.0 + (vnoise(vObj*3.3)-.5)*.07;
+    float pool = (1.0-smoothstep(.25,.97,ao))*.6 + clamp(-curv,0.,1.)*.35;
+    bc = mix(bc, pow(bc, vec3(1.55))*.92, clamp(pool,0.,.85));
+    bc = mix(bc, bc*1.12+.035, clamp(curv,0.,1.)*.45);
+    dN = nGrad(vObj*52.0)*.010 + nGrad(vObj*9.0)*.006;
+  }
+#elif DETAIL == 2
+  { // crackle glaze (Ge-ware): two scales of crazing lines, tea-stained
+    float c1 = crackle(vObj*10.5), c2 = crackle(vObj*24.0+3.7);
+    float l1 = 1.0-smoothstep(.006, .011+fwidth(c1)*1.3, c1);
+    float l2 = 1.0-smoothstep(.005, .009+fwidth(c2)*1.3, c2);
+    vec3 line = bc*vec3(.6,.56,.5);
+    bc *= 1.0 + (vnoise(vObj*3.0)-.5)*.08;
+    bc = mix(bc, line, clamp(l1*.62 + l2*.3, 0., 1.));
+    float pool = (1.0-smoothstep(.25,.97,ao))*.55 + clamp(-curv,0.,1.)*.3;
+    bc = mix(bc, pow(bc, vec3(1.5))*.92, clamp(pool,0.,.8));
+    dN = nGrad(vObj*48.0)*.008;
+  }
+#elif DETAIL == 3
+  { // matte speckled stoneware
+    float s1 = smoothstep(.86,.9, vnoise(vObj*105.0));
+    float s2 = smoothstep(.87,.93, vnoise(vObj*34.0+7.3));
+    bc *= 1.0 + (vnoise(vObj*4.0)-.5)*.10 + (vnoise(vObj*60.0)-.5)*.05;
+    bc = mix(bc, vec3(.11,.075,.055), clamp(s1*.85+s2*.6,0.,1.));
+    bc = mix(bc, bc*.8, (1.0-smoothstep(.3,.95,ao))*.5);
+    dN = nGrad(vObj*140.0)*.055 + nGrad(vObj*22.0)*.02;
+    dR = (vnoise(vObj*18.0)-.5)*.1;
+  }
+#elif DETAIL == 5
+  { // felt under-layer mottling
+    bc *= 1.0 + (vnoise(vObj*26.0)-.5)*.14;
+    dN = nGrad(vObj*150.0)*.35 + nGrad(vObj*40.0)*.12;
+  }
+#elif DETAIL == 6
+  { // polymer clay: fingertip dents + fine tool marks
+    dN = nGrad(vObj*7.5)*.05 + nGrad(vObj*34.0)*.022 + nGrad(vObj*160.0)*.012;
+    bc *= 1.0 + (vnoise(vObj*5.0)-.5)*.05;
+    dR = (vnoise(vObj*11.0)-.5)*.14;
+  }
+#endif
+`;
+
+function makeBodyMaterial(def, U){
+  const params = Object.assign({color:0xffffff, roughness:.5, metalness:0}, def.p);
+  const m = new THREE.MeshPhysicalMaterial(params);
+  Object.assign(m.defines, {DETAIL: def.detail, AO_K: def.ao.toFixed(2), FUR_BASE: def.fur ? 1 : 0});
+  m.onBeforeCompile = sh => {
+    Object.assign(sh.uniforms, U);
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute vec2 aSurf;\nvarying vec2 vSurf;\nvarying vec3 vObj;\nvarying vec3 vObjN;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSurf = aSurf; vObj = position; vObjN = normal;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec2 vSurf;\nvarying vec3 vObj;\nvarying vec3 vObjN;\n' + GLSL_COMMON + (def.detail===2 ? GLSL_CRACKLE : ''))
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        vec3 bc = paintColor(vObj); float ao = vSurf.x; float curv = vSurf.y; vec3 dN = vec3(0.); float dR = 0.;
+        float cOcc = contactOcc(vObj, normalize(vObjN));
+        ${DETAIL_GLSL}
+        #if FUR_BASE == 1
+          bc *= .72;
+        #endif
+        diffuseColor.rgb = bc;`)
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = clamp(roughnessFactor + dR, .03, 1.);')
+      .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n{ vec3 dv = (viewMatrix*vec4(dN,0.)).xyz; normal = normalize(normal + dv - dot(dv,normal)*normal); }')
+      .replace('#include <aomap_fragment>', `#include <aomap_fragment>
+        { float aoT = mix(1.0, ao, AO_K) * cOcc;
+          reflectedLight.indirectDiffuse *= aoT; reflectedLight.indirectSpecular *= mix(1.0, aoT, .75);
+          reflectedLight.directDiffuse *= mix(1.0, aoT, .45); reflectedLight.directSpecular *= mix(1.0, aoT, .4); }`);
+  };
+  m.customProgramCacheKey = () => 'dotbody-' + def.id;
+  return m;
+}
+
+/* ---------- shell fur: one instanced draw, inner shells first ---------- */
+const FUR_VERT = /* glsl */`
+attribute vec2 aSurf;
+uniform float uLen, uShells, uDroop, uFloor, uTrimMin; uniform int uTrimCount; uniform vec4 uTrim[4];
+varying vec3 vBase; varying vec3 vN; varying float vH; varying vec2 vSurf; varying vec3 vWPos; varying vec3 vWN; varying float vT; varying vec3 vWT1; varying vec3 vWT2;
+void main(){
+  float h = (float(gl_InstanceID)+1.0)/uShells;
+  vec3 n = normalize(normal);
+  float tl = 1.0;   // plush-toy grooming: fur is clipped short around the eyes and mouth
+  for(int i=0;i<4;i++){ if(i>=uTrimCount) break; tl = min(tl, mix(uTrimMin, 1.0, smoothstep(uTrim[i].w*.5, uTrim[i].w, distance(position, uTrim[i].xyz)))); }
+  float L = uLen*tl;
+  vec3 g = vec3(0.,-1.,0.); g -= n*dot(n,g);
+  vec3 p = position + n*(h*L) + g*(h*h*L*uDroop);
+  vBase = position; vN = n; vH = h; vSurf = aSurf; vT = tl;
+  vec4 wp = modelMatrix*vec4(p,1.0); wp.y = max(wp.y, uFloor + .002*h); vWPos = wp.xyz; vWN = normalize(mat3(modelMatrix)*n);
+  vec3 t1 = normalize(cross(n, abs(n.y) < .95 ? vec3(0.,1.,0.) : vec3(1.,0.,0.))), t2 = cross(n, t1);
+  vWT1 = normalize(mat3(modelMatrix)*t1); vWT2 = normalize(mat3(modelMatrix)*t2);
+  gl_Position = projectionMatrix*viewMatrix*wp;
+}`;
+const FUR_FRAG = /* glsl */`
+uniform float uLen, uDensity, uThick, uCurl, uRootDark, uClump, uClumpSize, uCurlAmp, uCurlTurns, uLean, uShade;
+uniform vec3 uKeyDir, uKeyCol, uFillDir, uFillCol, uSky, uGround;
+varying vec3 vBase; varying vec3 vN; varying float vH; varying vec2 vSurf; varying vec3 vWPos; varying vec3 vWN; varying float vT; varying vec3 vWT1; varying vec3 vWT2;
+${GLSL_COMMON}
+float strand(vec3 p, vec3 n, float h, float dens, float seed, out float rnd){
+  vec3 q = p*dens + seed; vec3 c = floor(q);
+  vec3 j = hash33(c+seed);
+  vec3 d = (c + .15 + .7*j) - q; d -= n*dot(d,n);
+  float len = .72 + .28*hash13(c+seed+7.1);
+  rnd = hash13(c+seed+3.3);
+  float r = uThick*.5*(1.0 - pow(h/len, 3.0)*.8);
+  float dist = length(d);
+  float aa = fwidth(dist)*.8 + .02;
+  return h > len ? 0.0 : 1.0 - smoothstep(r-aa, r+aa, dist);
+}
+void main(){
+  float h = vH; vec3 n = normalize(vN);
+  vec3 p, bumpW = vec3(0.), Tw = normalize(vWN); float shade = 1.0, tint = 1.0, groom = step(.001, uClump);
+  if(uClump > 0.0){
+    // Groomed long plush: fibres follow a combed flow field with soft cowlicks and wave as they grow;
+    // they drift towards the crests of a smooth field, so they bunch into soft, blended clumps (no hard locks).
+    vec3 t1 = normalize(cross(n, abs(n.y) < .95 ? vec3(0.,1.,0.) : vec3(1.,0.,0.))), t2 = cross(n, t1);
+    vec3 comb = vec3(0.,-1.,0.) - n*dot(n, vec3(0.,-1.,0.));
+    vec3 sw = vec3(vnoise(vBase*2.4), vnoise(vBase*2.4+7.1), vnoise(vBase*2.4+13.7)) - .5; sw -= n*dot(sw, n);
+    vec3 flow = comb*.75 + sw*1.5; float fl = length(flow); vec3 fd = fl > 1e-4 ? flow/fl : t1;
+    vec3 side = cross(n, fd);
+    float wave = sin(h*uCurlTurns*6.2831 + vnoise(vBase*9.0)*6.2831)*uCurlAmp*uLen*vT*h;
+    vec3 x = vBase - fd*min(fl, 1.0)*h*uLen*vT*uLean - side*wave;
+    float fq = 1.0/uClumpSize;
+    vec3 g = nGrad(x*fq); g -= n*dot(g, n);
+    x -= g*uClumpSize*uClump*h*.8;
+    float crest = vnoise(x*fq);
+    shade = mix(.86, 1.0, clamp(smoothstep(.2, .85, crest)*.8 + h*.3, 0., 1.));
+    tint = .96 + .08*crest;
+    bumpW = -(vWT1*dot(g,t1) + vWT2*dot(g,t2))*.22;
+    Tw = normalize(normalize(vWN)*(1.0 - .55*uLean) + (vWT1*dot(fd,t1) + vWT2*dot(fd,t2))*(.9*uLean + .15));
+    vec3 fz = vBase*95.0 + h*4.0;
+    x += (vec3(vnoise(fz), vnoise(fz+9.1), vnoise(fz+3.3)) - .5)*uLen*.22*h;   // frizz
+    p = x;
+  } else {
+    vec3 curl = (vec3(vnoise(vBase*7.0), vnoise(vBase*7.0+11.3), vnoise(vBase*7.0+23.7))-.5);
+    curl += (vec3(vnoise(vBase*31.0+5.1), vnoise(vBase*31.0+2.7), vnoise(vBase*31.0+9.9))-.5)*.6;
+    p = vBase + curl*uCurl*uLen*vT*2.2*h;
+  }
+  float r1, r2;
+  float a1 = strand(p, n, h, uDensity, 0.0, r1);
+  float a2 = strand(p, n, h, uDensity*1.31, 17.3, r2);
+  float a = max(a1, a2*.92) * (1.0 - groom*smoothstep(.75, 1.0, h)*.5);
+  if(a < .03) discard;
+  float rnd = a1 > a2 ? r1 : r2;
+  vec3 col = paintColor(vBase) * (.86 + .28*rnd) * tint;
+  col = mix(col, col*1.18 + .02, smoothstep(.55, 1.0, h)*.35);            // lighter, slightly bleached tips
+  float occ = mix(uRootDark, 1.0, pow(h, .85)) * mix(.5, 1.0, vSurf.x) * contactOcc(vBase, n) * shade * uShade;
+  vec3 N = normalize(normalize(vWN) + bumpW), V = normalize(cameraPosition - vWPos);
+  float wk = clamp((dot(N,uKeyDir)+.45)/1.45, 0., 1.);
+  float wf = clamp((dot(N,uFillDir)+.6)/1.6, 0., 1.);
+  vec3 amb = mix(uGround, uSky, N.y*.5+.5);
+  vec3 light = amb + uKeyCol*wk*wk + uFillCol*wf;
+  if(groom > .5){   // Kajiya-Kay: light wraps around the fibre instead of the surface
+    float tl = dot(Tw, uKeyDir); float kd = sqrt(max(1.0 - tl*tl, 0.));
+    light = mix(light, amb + uKeyCol*kd*mix(.5, 1.0, wk) + uFillCol*wf, .55);
+  }
+  float rim = pow(1.0 - clamp(dot(N,V),0.,1.), 2.2);
+  vec3 outCol = col*light*occ + col*rim*.32*h*occ;
+  vec3 H = normalize(uKeyDir + V); float th = dot(Tw,H);
+  outCol += uKeyCol * pow(sqrt(max(1.0-th*th,0.)), 70.0) * (.05 + .06*groom) * h;   // silky sheen band along the fibres
+  if(groom > .5){ vec3 T2 = normalize(Tw + N*.3); float t2h = dot(T2,H); outCol += col*uKeyCol*pow(sqrt(max(1.0-t2h*t2h,0.)), 16.0)*.12*h*occ; }
+  gl_FragColor = vec4(outCol, a);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}`;
+function makeFurMaterial(U, L){
+  return new THREE.ShaderMaterial({
+    uniforms: Object.assign({uLen:{value:.05}, uShells:{value:32}, uDroop:{value:.3}, uDensity:{value:400}, uThick:{value:.6}, uCurl:{value:.5}, uRootDark:{value:.4},
+      uClump:{value:0}, uClumpSize:{value:.05}, uCurlAmp:{value:0}, uCurlTurns:{value:1}, uLean:{value:0}, uShade:{value:1},
+      uFloor:{value:0}, uTrimMin:{value:1}, uTrimCount:{value:0}, uTrim:{value:Array.from({length:4}, () => new THREE.Vector4())}}, U, L),
+    vertexShader: FUR_VERT, fragmentShader: FUR_FRAG, transparent: true, depthWrite: false
+  });
+}
+
+/* ---------- coat fur: opaque instanced shells with per-strand cells ----------
+   Every shell layer is drawn opaque with a stochastic cut-out, so layers stack into a solid, depth-sorted coat
+   instead of a blended haze. Strands live in an equi-angular cube map around the body's centre, each with its own
+   root offset, length and lean, and taper towards the tip. The vertex stage combs the coat with rotated noise
+   octaves plus gravity; the fragment stage shades roots dark and saturated, tips light, with a soft rim sheen. */
+const COAT_VERT = /* glsl */`
+attribute vec2 aSurf; attribute float aLen;   // aLen: room left under hats, glasses and other props (1 = none)
+uniform float uShells, uLen, uClump, uGravity, uWind, uTime, uFloor, uTrimMin, uNS;
+uniform int uTrimCount; uniform vec4 uTrim[4]; uniform int uOccCount; uniform vec4 uOcc[8]; uniform vec3 uCenter;
+varying vec3 vDir, vBase, vNrm, vWN, vWPos; varying float vH, vAO;
+vec3 ch33(vec3 p){ p = fract(p*vec3(.1031,.1030,.0973)); p += dot(p, p.yxz+33.33); return fract((p.xxy+p.yxx)*p.zyx); }
+vec3 cnoise(vec3 x){ vec3 i=floor(x), f=fract(x); f=f*f*(3.0-2.0*f);
+  return mix(mix(mix(ch33(i),ch33(i+vec3(1,0,0)),f.x),mix(ch33(i+vec3(0,1,0)),ch33(i+vec3(1,1,0)),f.x),f.y),
+             mix(mix(ch33(i+vec3(0,0,1)),ch33(i+vec3(1,0,1)),f.x),mix(ch33(i+vec3(0,1,1)),ch33(i+vec3(1,1,1)),f.x),f.y),f.z); }
+void main(){
+  float h = 1.0 - float(gl_InstanceID)/(uShells - 1.0);   // outermost layer first: early depth test skips the buried layers
+  vec3 n = normalize(normal);
+  // plush-toy grooming: short around the eyes and mouth, pressed under hats and props, shorter on ears and thin edges
+  float tl = 1.0;
+  for(int i=0;i<4;i++){ if(i>=uTrimCount) break; tl = min(tl, mix(uTrimMin, 1.0, smoothstep(uTrim[i].w*.5, uTrim[i].w, distance(position, uTrim[i].xyz)))); }
+  for(int i=0;i<8;i++){ if(i>=uOccCount) break; tl = min(tl, mix(.15, 1.0, smoothstep(uOcc[i].w*.9, uOcc[i].w*1.7, distance(position, uOcc[i].xyz)))); }
+  tl *= mix(1.0, .5, smoothstep(.3, .85, aSurf.y)) * aLen;
+  // static combing: low-frequency tufts plus finer mess, octaves rotated so the value-noise lattice never lines up
+  const mat3 ROT = mat3(0.0, 0.8, 0.6, -0.8, 0.36, -0.48, -0.6, -0.48, 0.64);
+  vec3 q = position*3.1*uNS + 7.3; vec3 comb = (cnoise(q) - .5)*1.3;
+  q = ROT*q*2.17 + 3.1; comb += (cnoise(q) - .5)*1.0;
+  q = ROT*q*2.31 + 5.7; comb += (cnoise(q) - .5)*.8;
+  q = ROT*q*2.13 + 1.9; comb += (cnoise(q) - .5)*.6;
+  vec3 wind = (cnoise(position*1.3*uNS + vec3(0., uTime*.35, uTime*.22)) - .5)*uWind;
+  vec3 bend = comb*uClump + wind + vec3(0., -1., 0.)*uGravity;
+  bend -= n*min(dot(bend, n), 0.);                  // lean, never fold into the skin (that shows the dark roots)
+  bend *= min(1., 1.4/(length(bend) + 1e-4));
+  vec3 dir = normalize(n + bend*h);
+  vec3 p = position + dir*uLen*tl*h;
+  vec4 wp = modelMatrix*vec4(p, 1.0); wp.y = max(wp.y, uFloor + .002*h);
+  vDir = normalize(position - uCenter); vBase = position; vNrm = n; vH = h; vAO = aSurf.x;
+  vWN = normalize(mat3(modelMatrix)*normalize(mix(n, dir, .5))); vWPos = wp.xyz;
+  gl_Position = projectionMatrix*viewMatrix*wp;
+}`;
+const COAT_FRAG = /* glsl */`
+uniform float uDensity, uThickness, uCurl, uRootDark, uGain;
+uniform vec3 uKeyDir, uKeyCol, uFillDir, uFillCol, uSky, uGround;
+varying vec3 vDir, vBase, vNrm, vWN, vWPos; varying float vH, vAO;
+${GLSL_COMMON}
+vec3 hash32(vec2 p){ vec3 p3 = fract(vec3(p.xyx)*vec3(.1031,.1030,.0973)); p3 += dot(p3, p3.yxz+33.33); return fract((p3.xxy+p3.yzz)*p3.zyx); }
+vec2 noise2(vec2 x){ vec2 i = floor(x), f = fract(x); f = f*f*(3.0-2.0*f);
+  return mix(mix(hash32(i).xy, hash32(i+vec2(1,0)).xy, f.x), mix(hash32(i+vec2(0,1)).xy, hash32(i+vec2(1,1)).xy, f.x), f.y); }
+// equi-angular cube map: near-uniform strand density over the whole body
+vec2 cubeUV(vec3 d, out float face){ vec3 a = abs(d); vec2 uv;
+  if(a.x >= a.y && a.x >= a.z){ uv = d.yz/a.x; face = d.x > 0.0 ? 0.0 : 1.0; }
+  else if(a.y >= a.z){ uv = d.xz/a.y; face = d.y > 0.0 ? 2.0 : 3.0; }
+  else { uv = d.xy/a.z; face = d.z > 0.0 ? 4.0 : 5.0; }
+  return atan(uv)*1.2732395; }
+void main(){
+  float face; vec2 uv = cubeUV(normalize(vDir), face)*uDensity; vec2 seed = vec2(face*113.0, face*57.0);
+  float aa = .75*max(fwidth(uv.x), fwidth(uv.y));
+  const mat2 R2 = mat2(.8, .6, -.6, .8);
+  vec2 curl = noise2(uv*.19 + seed) - .5 + (noise2(R2*uv*.47 + seed + 9.1) - .5)*.7;
+  uv += curl*uCurl*vH*vH;                            // strands drift sideways as they rise: small curls and tufts
+  // each strand has its own root, length and lean; the 3x3 search lets it wander out of its cell unclipped
+  vec2 cell = floor(uv), f = uv - cell; vec3 rnd = hash32(cell + seed); float hh = vH, alpha = 0.0;
+  for(int j=-1;j<=1;j++) for(int i=-1;i<=1;i++){ vec2 o = vec2(float(i), float(j));
+    vec3 r1 = hash32(cell + o + seed), r2 = hash32(cell + o + seed + 71.3);
+    float sh = vH/mix(.7, 1.0, r1.z), t = clamp(sh, 0., 1.);
+    vec2 root = o + r1.xy + (r2.xy - .5)*2.6*t*t;
+    float radius = uThickness*mix(.75, 1.0, r2.z)*(1.0 - .7*pow(t, 2.5));
+    float a = (1.0 - smoothstep(radius - aa, radius + aa, length(f - root)))*step(sh, 1.0);
+    if(a > alpha){ alpha = a; rnd = r1; hh = sh; } }
+  if(vH == 0.0) alpha = 1.0;
+  // stochastic cut-out: layers must not share one coverage mask, or they never add up to opaque
+  if(alpha < mix(.25, .75, hash32(gl_FragCoord.xy + vH*371.0).x)) discard;
+  vec3 N = normalize(vWN), V = normalize(cameraPosition - vWPos);
+  float wrap = clamp((dot(N, uKeyDir) + .7)/1.7, 0., 1.); wrap *= wrap;
+  float shadow = contactOcc(vBase, normalize(vNrm));
+  float depth = mix(vH, clamp(hh, 0., 1.), .35);     // roots sit deep in the coat and see little light
+  float ao = mix(.42, 1.0, pow(depth, 1.25));
+  float rim = pow(1.0 - clamp(dot(N, V), 0., 1.), 2.5);
+  vec3 tip = max(paintColor(vBase), vec3(.028)), root = tip*tip*uRootDark;   // roots darker and more saturated; black coats keep a charcoal tip
+  vec3 base = mix(root, tip, depth)*(.74 + .52*rnd.x);
+  float sky = mix(.55, 1.0, N.y*.5 + .5), crease = mix(.5, 1.0, smoothstep(.2, .9, vAO));
+  vec3 col = base*(.42*sky + 1.05*wrap*shadow)*ao*crease*uGain;   // gain keeps the lit coat close to the chosen colour
+  col += mix(tip, vec3(1.), .55)*rim*(.25 + .75*depth)*.14*mix(.6, 1.0, shadow);
+  gl_FragColor = vec4(col, 1.0);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}`;
+// Room for the coat under props. Props are sampled across their triangles; any sample that sits inside the pile
+// (0 < distance to the skin < pile length) shortens the fur on the skin just beneath it, so brims, bands and frames
+// rest on the coat instead of being pierced by it.
+const ONES = new Map();
+function coatClearance(geo, sdf, acc, len){
+  const P = geo.attributes.position.array, nv = P.length/3, out = new Float32Array(nv).fill(1), cs = .025, key = (x,y,z) => `${Math.floor(x/cs)},${Math.floor(y/cs)},${Math.floor(z/cs)}`;
+  const grid = new Map(); for(let i=0;i<nv;i++){ const k = key(P[i*3], P[i*3+1], P[i*3+2]); let b = grid.get(k); if(!b) grid.set(k, b = []); b.push(i); }
+  acc.parent.updateMatrixWorld(true); const inv = new THREE.Matrix4().copy(acc.parent.matrixWorld).invert(), m = new THREE.Matrix4(), a = new V3(), b = new V3(), c = new V3(), q = new V3();
+  const reach = len*1.1, step = .014, r2 = .022*.022;
+  const mark = (x,y,z) => { const d = sdf(x,y,z); if(d <= 0 || d >= reach) return; const g = sdfGrad(sdf,x,y,z), sx = x-g[0]*d, sy = y-g[1]*d, sz = z-g[2]*d, v = max(.12, d/len - .08);
+    const cx = Math.floor(sx/cs), cy = Math.floor(sy/cs), cz = Math.floor(sz/cs);
+    for(let dz=-1;dz<=1;dz++) for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++){ const bk = grid.get(`${cx+dx},${cy+dy},${cz+dz}`); if(!bk) continue;
+      for(const i of bk){ const ex = P[i*3]-sx, ey = P[i*3+1]-sy, ez = P[i*3+2]-sz; if(ex*ex+ey*ey+ez*ez < r2 && v < out[i]) out[i] = v; } } };
+  acc.traverse(o => { if(!o.isMesh) return; const g = o.geometry, pos = g.attributes.position, idx = g.index; m.multiplyMatrices(inv, o.matrixWorld);
+    const tri = idx ? idx.count/3 : pos.count/3;
+    for(let t=0;t<tri;t++){ const i0 = idx ? idx.getX(t*3) : t*3, i1 = idx ? idx.getX(t*3+1) : t*3+1, i2 = idx ? idx.getX(t*3+2) : t*3+2;
+      a.fromBufferAttribute(pos, i0).applyMatrix4(m); b.fromBufferAttribute(pos, i1).applyMatrix4(m); c.fromBufferAttribute(pos, i2).applyMatrix4(m);
+      const n = Math.min(12, Math.ceil(Math.max(a.distanceTo(b), b.distanceTo(c), c.distanceTo(a))/step));
+      for(let u=0;u<=n;u++) for(let w=0;w<=n-u;w++){ const fu = u/n || 0, fw = w/n || 0; q.copy(a).multiplyScalar(1-fu-fw).addScaledVector(b, fu).addScaledVector(c, fw); mark(q.x, q.y, q.z); } } });
+  return out;
+}
+function makeCoatMaterial(U, L){
+  return new THREE.ShaderMaterial({
+    uniforms: Object.assign({uShells:{value:32}, uLen:{value:.1}, uDensity:{value:71}, uThickness:{value:.45}, uClump:{value:1}, uCurl:{value:1.2}, uGravity:{value:1},
+      uWind:{value:0}, uTime:{value:0}, uNS:{value:2}, uRootDark:{value:.3}, uGain:{value:1.3}, uCenter:{value:new THREE.Vector3()}, uFloor:{value:0}, uTrimMin:{value:1}, uTrimCount:{value:0},
+      uTrim:{value:Array.from({length:4}, () => new THREE.Vector4())}}, U, L),
+    vertexShader: COAT_VERT, fragmentShader: COAT_FRAG
+  });
+}
+
+const FUR_Q = matchMedia('(pointer: coarse)').matches ? .5 : 1;   // phones draw fewer coat layers
+
+/* =====================================================================
+   6. Geometry helpers for faces and accessories
+   ===================================================================== */
+const V3 = THREE.Vector3, UP = new V3(0,1,0), _m4 = new THREE.Matrix4(), _zero = new V3();
+function orient(obj, n, up=UP){ const u = Math.abs(n.dot(up))>.97 ? new V3(0,0,1) : up; _m4.lookAt(n, _zero, u); obj.quaternion.setFromRotationMatrix(_m4); return obj; }
+function frame(n){ const x = new V3().crossVectors(UP, n); if(x.lengthSq()<1e-6) x.set(1,0,0); x.normalize(); const y = new V3().crossVectors(n, x).normalize(); return {x, y, z:n.clone()}; }
+function mesh(geo, mat, {cast=true, recv=true}={}){ const m = new THREE.Mesh(geo, mat); m.castShadow = cast; m.receiveShadow = recv; return m; }
+function lathe(pts, seg=72){ return new THREE.LatheGeometry(pts.map(([x,y])=>new THREE.Vector2(x,y)), seg); }
+function tubeGeo(points, r, closed=false, radial=12){
+  const c = new THREE.CatmullRomCurve3(points, closed, 'centripetal');
+  const g = new THREE.TubeGeometry(c, Math.max(8, points.length*6), r, radial, closed);
+  if(closed) return g;
+  const caps = [points[0], points[points.length-1]].map(p => new THREE.SphereGeometry(r, radial, 8).translate(p.x,p.y,p.z));
+  return mergeGeos([g, ...caps]);
+}
+function mergeGeos(list){
+  let nv = 0; const parts = list.map(g => { const gg = g.index ? g.toNonIndexed() : g; nv += gg.attributes.position.count; return gg; });
+  const P = new Float32Array(nv*3), Nm = new Float32Array(nv*3); let o = 0;
+  for(const g of parts){ if(!g.attributes.normal) g.computeVertexNormals(); P.set(g.attributes.position.array, o*3); Nm.set(g.attributes.normal.array, o*3); o += g.attributes.position.count; }
+  const out = new THREE.BufferGeometry(); out.setAttribute('position', new THREE.BufferAttribute(P,3)); out.setAttribute('normal', new THREE.BufferAttribute(Nm,3)); return out;
+}
+// Sweep a closed 2D profile (u = along surface normal, v = across) along a path with per-point normals.
+function sweepGeo(pts, nrm, profile, closed){
+  const n = pts.length, m = profile.length, P = [], idx = [];
+  for(let i=0;i<n;i++){
+    const a = pts[closed ? (i-1+n)%n : Math.max(i-1,0)], b = pts[closed ? (i+1)%n : Math.min(i+1,n-1)];
+    const T = new V3().subVectors(b,a).normalize(), B = new V3().crossVectors(T, nrm[i]).normalize(), Nn = new V3().crossVectors(B, T).normalize();
+    for(const [u,v] of profile){ const q = pts[i].clone().addScaledVector(Nn,u).addScaledVector(B,v); P.push(q.x,q.y,q.z); }
+  }
+  const segs = closed ? n : n-1;
+  for(let i=0;i<segs;i++){ const i2=(i+1)%n; for(let j=0;j<m;j++){ const j2=(j+1)%m; const a=i*m+j, b=i*m+j2, c=i2*m+j, d=i2*m+j2; idx.push(a,c,b, b,c,d); } }
+  if(!closed){ for(const [ring,flip] of [[0,true],[n-1,false]]){ const c0 = P.length/3; let cx=0,cy=0,cz=0; for(let j=0;j<m;j++){ cx+=P[(ring*m+j)*3]; cy+=P[(ring*m+j)*3+1]; cz+=P[(ring*m+j)*3+2]; } P.push(cx/m,cy/m,cz/m);
+    for(let j=0;j<m;j++){ const a=ring*m+j, b=ring*m+(j+1)%m; if(flip) idx.push(c0,a,b); else idx.push(c0,b,a); } } }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(P,3)); g.setIndex(idx); g.computeVertexNormals(); return g;
+}
+function roundRect(w, h, r, seg=4){ const pts=[]; const cs=[[w/2-r,h/2-r,0],[-w/2+r,h/2-r,PI/2],[-w/2+r,-h/2+r,PI],[w/2-r,-h/2+r,1.5*PI]];
+  for(const [cx,cy,a0] of cs) for(let i=0;i<=seg;i++){ const a=a0+i/seg*PI/2; pts.push([cx+Math.cos(a)*r, cy+Math.sin(a)*r]); } return pts; }
+function starShape(R, r, k=5){ const s = new THREE.Shape(); for(let i=0;i<k*2;i++){ const a = i/(k*2)*PI*2+PI/2, rr = i%2?r:R; const x=Math.cos(a)*rr, y=Math.sin(a)*rr; i?s.lineTo(x,y):s.moveTo(x,y); } s.closePath(); return s; }
+function heartShape(s){ const h = new THREE.Shape(); h.moveTo(0,-.9*s); h.bezierCurveTo(-.2*s,-.62*s,-1*s,-.2*s,-.95*s,.28*s); h.bezierCurveTo(-.9*s,.78*s,-.25*s,.95*s,0,.5*s); h.bezierCurveTo(.25*s,.95*s,.9*s,.78*s,.95*s,.28*s); h.bezierCurveTo(1*s,-.2*s,.2*s,-.62*s,0,-.9*s); return h; }
+function crescentShape(R){ // outer circle minus an offset circle, built from exact intersection arcs
+  const ox=.42*R, oy=.2*R, ri=.86*R, d=Math.hypot(ox,oy), al=Math.atan2(oy,ox), a=(R*R-ri*ri+d*d)/(2*d), be=Math.acos(cl(a/R,-1,1));
+  const s = new THREE.Shape(); s.absarc(0,0,R, al+be, al+2*PI-be, false);
+  const q2=[R*Math.cos(al-be), R*Math.sin(al-be)], q1=[R*Math.cos(al+be), R*Math.sin(al+be)];
+  const g2=Math.atan2(q2[1]-oy,q2[0]-ox), g1=Math.atan2(q1[1]-oy,q1[0]-ox), md=x=>((x%(2*PI))+2*PI)%(2*PI);
+  s.absarc(ox, oy, ri, g2, g1, !(md(al+PI-g2) < md(g1-g2))); return s; }
+function extrude(shape, depth, bevel){ const g = new THREE.ExtrudeGeometry(shape, {depth, bevelEnabled:true, bevelThickness:bevel, bevelSize:bevel*.8, bevelSegments:4, curveSegments:24}); g.center(); return g; }
+function bentCone(r, h, bend, radial=48){ const g = new THREE.ConeGeometry(r, h, radial, 28, true); g.translate(0,h/2,0); const p = g.attributes.position;
+  for(let i=0;i<p.count;i++){ const y=p.getY(i), t=y/h; p.setX(i, p.getX(i) + bend*h*t*t*t); p.setY(i, y - Math.abs(bend)*h*.25*t*t*t); } g.computeVertexNormals(); return g; }
+function dotsTexture(bg, fg){ const c = document.createElement('canvas'); c.width = c.height = 256; const x = c.getContext('2d'); x.fillStyle = bg; x.fillRect(0,0,256,256); x.fillStyle = fg;
+  for(let j=0;j<6;j++) for(let i=0;i<6;i++){ x.beginPath(); x.arc((i+.5+(j%2)*.5)*256/6, (j+.5)*256/6, 9, 0, PI*2); x.fill(); }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(2,1); return t; }
+
+/* =====================================================================
+   7. Anchors: sphere-trace the sculpt to seat faces and accessories
+   ===================================================================== */
+function makeAnchors(shape, lift, faceLift=lift){
+  const f = shape.sdf;
+  const at = (p, L=lift) => { if(!p) return null; const n = sdfGrad(f, ...p); const nv = new V3(...n); return {p: new V3(...p).addScaledVector(nv, L), n: nv}; };
+  const ctx = {
+    shape, lift, f,
+    face: (x,y) => at(sdfTrace(f, x, y, 1.6, 0, 0, -1)),
+    faceAt: (x,y) => at(sdfTrace(f, x, y, 1.6, 0, 0, -1), faceLift),
+    back: (x,y) => at(sdfTrace(f, x, y, -1.6, 0, 0, 1)),
+    ray: (cx,cy,cz, dx,dy,dz) => { const l=Math.hypot(dx,dy,dz); dx/=l; dy/=l; dz/=l; return at(sdfTrace(f, cx+dx*1.6, cy+dy*1.6, cz+dz*1.6, -dx, -dy, -dz)); },
+    ring(y, count=48, {cz=0, from=-PI, to=PI, off=0, tilt=0}={}){ const out=[]; const closed = to-from >= PI*2-1e-3;
+      for(let i=0;i<count;i++){ const th = from + (to-from)*i/(closed?count:count-1); let dx=Math.sin(th), dy=0, dz=Math.cos(th);
+        if(tilt){ const c=Math.cos(tilt), s=Math.sin(tilt); const nx=c*dx-s*dy, ny=s*dx+c*dy; dx=nx; dy=ny; }
+        const a = ctx.ray(0, y, cz, dx, dy, dz); if(a){ a.p.addScaledVector(a.n, off); out.push(a); } }
+      return out; },
+    occ: [],
+  };
+  const hx = shape.head.x || 0;
+  ctx.top = at(sdfTrace(f, hx, 1.6, .0, 0, -1, 0)) || {p:new V3(hx,.5,0), n:UP.clone()};
+  ctx.headR = shape.head.r; ctx.hatDrop = shape.head.drop || 0;
+  const e = shape.eyes; ctx.eyeS = e.s || 1; ctx.eyeY = e.y; ctx.eyeX = e.x;
+  // eyes read best when they face the viewer a little more than the surface does
+  ctx.eyes = [ctx.faceAt(-e.x, e.y), ctx.faceAt(e.x, e.y)].map(a => a && {p:a.p, n:a.n.clone().lerp(new V3(0,0,1), .45).normalize()});
+  ctx.eyeLift = e.type === 'frog' ? .05 : .026;
+  const r = ctx.ring(e.y, 36); let L = r[0], R = r[0];
+  for(const a of r){ if(a.p.x < L.p.x) L = a; if(a.p.x > R.p.x) R = a; }
+  ctx.sideL = L; ctx.sideR = R;
+  return ctx;
+}
+
+/* =====================================================================
+   8. Face
+   ===================================================================== */
+function buildFace(ctx, style, M, add, gender){
+  const e = ctx.shape.eyes, s = ctx.eyeS, type = e.type || 'dot', mode = STYLES[style].eyes;
+  const eyeMat = type === 'glow' ? M.glow : type === 'light' ? M.eyeLight : M.eye;
+  ctx.eyes.forEach((a, i) => {
+    if(!a) return; const side = i ? 1 : -1;
+    let m = mode === 'wink' ? (side > 0 ? 'happy' : 'open') : mode;
+    if(m === 'none') return;
+    if(m === 'open'){
+      if(type === 'frog'){
+        const w = mesh(new THREE.SphereGeometry(1,40,28), M.eyeWhite); w.scale.set(.075,.075,.055); w.position.copy(a.p).addScaledVector(a.n,-.008); orient(w,a.n); add(w);
+        const pu = mesh(new THREE.SphereGeometry(1,32,20), M.eye); pu.scale.set(.036,.04,.02); pu.position.copy(a.p).addScaledVector(a.n,.038); pu.position.x -= side*.004; orient(pu,a.n); pu.userData.blink = true; add(pu);
+      } else {
+        const big = type === 'big';
+        const eye = mesh(new THREE.SphereGeometry(1,40,28), eyeMat);
+        eye.scale.set((big?.058:.034)*s, (big?.084:.049)*s, (big?.03:.026)*s);
+        eye.position.copy(a.p).addScaledVector(a.n, -.006*s); orient(eye, a.n);
+        if(big) eye.rotateZ(side*.42);
+        eye.userData.blink = true; add(eye);
+      }
+    } else {
+      const happy = m === 'happy', cx = side*e.x, cy = e.y, rx = .042*s*(type==='frog'?1.3:1), pts = [];
+      for(let k=0;k<=10;k++){ const ang = happy ? PI*(.14+.72*k/10) : PI*(1.14+.72*k/10); pts.push([cx+Math.cos(ang)*rx, cy+Math.sin(ang)*rx*.8 + (happy?-rx*.25:rx*.3)]); }
+      const g = strokeGeo(ctx, pts, .0095*s); if(g) add(mesh(g, type==='glow'?M.glow:(type==='light'?M.eyeLight:M.eye)));
+    }
+  });
+  if(gender === 'female' && type !== 'glow' && type !== 'frog' && mode !== 'none'){   // a few curled lashes read instantly as "girl"
+    ctx.eyes.forEach((a, i) => { if(!a) return; const side = i ? 1 : -1, m = mode === 'wink' ? (side > 0 ? 'happy' : 'open') : mode;
+      const cx = side*e.x, cy = e.y, big = type === 'big', rx = (big?.058:.034)*s, ry = (big?.084:.049)*s, cr = .042*s;
+      const L = m === 'open' ? [[cx+side*rx*.55, cy+ry*.84, .02, .026], [cx+side*rx*.92, cy+ry*.4, .03, .014]]
+              : m === 'sleep' ? [[cx+side*cr*.88, cy-.002, .02, -.022], [cx+side*cr*.42, cy-cr*.46, .009, -.026]]
+              : [[cx+side*cr*.88, cy+.002, .026, .016]];
+      for(const [x0,y0,dx,dy] of L){ const g = strokeGeo(ctx, [[x0,y0],[x0+side*dx*.55, y0+dy*.62],[x0+side*dx, y0+dy]], .0048*s); if(g) add(mesh(g, M.eye)); } });
+  }
+  const nose = ctx.shape.nose;
+  if(nose){ const a = ctx.faceAt(0, nose.y); if(a){ a.n.lerp(new V3(0,0,1), .4).normalize(); const ns = nose.s || 1; const m = mesh(new THREE.SphereGeometry(1,32,20), nose.tone==='pink'?M.nosePink:M.noseDark);
+    m.scale.set(.03*ns,.021*ns,.02*ns); m.position.copy(a.p).addScaledVector(a.n,-.004); orient(m,a.n); add(m); } }
+  const mo = ctx.shape.mouth;
+  if(mo){ const ms = mo.s || 1, mat = mo.glow ? M.glow : M.mouth; let pts;
+    if(mo.type === 'w'){ const r=.021*ms; for(const sx of [-1,1]){ pts=[]; for(let k=0;k<=8;k++){ const ang=PI*(1.02+.96*k/8); pts.push([sx*r+Math.cos(ang)*r, mo.y+Math.sin(ang)*r*.95]); } const g = strokeGeo(ctx, pts, .0062*ms); if(g) add(mesh(g, mat)); } }
+    else { const w = mo.w || .05; pts=[]; for(let k=0;k<=12;k++){ const ang=PI*(1.18+.64*k/12); pts.push([Math.cos(ang)*w, mo.y+Math.sin(ang)*w*.55+w*.4]); } const g = strokeGeo(ctx, pts, .0075); if(g) add(mesh(g, mat)); } }
+  const bk = ctx.shape.beak;
+  if(bk){ const a = ctx.faceAt(0, bk.y); if(a){ const bs = bk.s||1; const g = new THREE.ConeGeometry(.036*bs,.07*bs,32); g.rotateX(PI/2); g.translate(0,0,.03*bs);
+    const m = mesh(g, M.beak); m.position.copy(a.p).addScaledVector(a.n,-.01); orient(m,a.n); m.rotateX(bk.down ? .55 : .15); add(m); } }
+}
+function strokeGeo(ctx, pts2, r, lift=0){ const pts = []; for(const [x,y] of pts2){ const a = ctx.faceAt(x,y); if(a) pts.push(a.p.clone().addScaledVector(a.n, r*.3+lift)); } return pts.length>1 ? tubeGeo(pts, r) : null; }
+
+/* =====================================================================
+   9. Styles (accessories). Modelled for a head radius of .34, then scaled.
+   ===================================================================== */
+function hatGroup(ctx, {tilt=0, dx=0, sink=.05, scale=1, rx=0}={}){
+  const g = new THREE.Group(), k = ctx.headR/.34*scale*1.2, t = ctx.top.p;
+  g.position.set(t.x + dx*k, t.y - (sink + ctx.hatDrop)*k, t.z); g.rotation.set(rx, 0, tilt); g.scale.setScalar(k);
+  ctx.occ.push([t.x + dx*k, t.y + .03*k, t.z, .2*k]);
+  return g;
+}
+function headPoint(ctx, deg, z=.05){ const a = deg*PI/180; return ctx.ray(0, ctx.eyeY+.08, z, Math.sin(a), Math.cos(a), .15); }
+function eyeFrame(ctx, i, lift){ const a = ctx.eyes[i]; if(!a) return null; const f = frame(a.n); return {c: a.p.clone().addScaledVector(a.n, ctx.eyeLift + (lift||0)), ...f}; }
+function glasses(ctx, M, add, {lens=false, r=.088, tube=.006, sun=false, heart=false}={}){
+  const s = ctx.eyeS * (ctx.shape.eyes.type==='frog' ? 1.25 : 1), R = r*s; const F = [eyeFrame(ctx,0), eyeFrame(ctx,1)]; if(!F[0]||!F[1]) return;
+  const wire = heart ? M.wireGold : M.wire;
+  if(heart) F.forEach(fr => { const h = mesh(extrude(heartShape(R*1.08), .012, .007), M.lensRose); h.position.copy(fr.c); orient(h, fr.z); add(h); });
+  else F.forEach(fr => { const ring = mesh(new THREE.TorusGeometry(R, tube*(sun?1.4:1), 14, 72), M.wire); ring.position.copy(fr.c); orient(ring, fr.z); add(ring);
+    if(lens){ const l = mesh(new THREE.SphereGeometry(1,48,24), M.lens); l.scale.set(R*.97, R*.97, .012); l.position.copy(fr.c).addScaledVector(fr.z,-.002); orient(l, fr.z); add(l); } });
+  const iL = F[0].c.clone().addScaledVector(F[0].x, R), iR = F[1].c.clone().addScaledVector(F[1].x, -R);
+  const mid = iL.clone().lerp(iR,.5).addScaledVector(UP, .018).add(new V3(0,0,.006));
+  add(mesh(tubeGeo([iL, mid, iR], tube), wire));
+  [[F[0], -1, ctx.sideL], [F[1], 1, ctx.sideR]].forEach(([fr, sx, side]) => { const o = fr.c.clone().addScaledVector(fr.x, sx*R);
+    const end = side.p.clone().addScaledVector(side.n, -.02 - ctx.lift*.6); end.y = o.y + .012; end.z -= .07;   // temples tuck into the fur
+    const m1 = o.clone().lerp(end,.5).addScaledVector(side.n,.02); add(mesh(tubeGeo([o, m1, end], tube*.9), wire)); });
+}
+function bowGroup(mat){   // satin bow: two pinched loops + knot, ~.27 wide
+  const g = new THREE.Group();
+  for(const sx of [-1,1]){ const w = new THREE.SphereGeometry(1, 40, 24); const p = w.attributes.position;
+    for(let i=0;i<p.count;i++){ const x=p.getX(i), t=(x+1)/2; p.setY(i, p.getY(i)*(.3+.7*Math.pow(t,.8))); p.setZ(i, p.getZ(i)*(.55+.45*t)); } w.computeVertexNormals();
+    const m = mesh(w, mat); m.scale.set(.068, .06, .03); m.position.x = sx*.066; if(sx<0) m.rotation.y = PI; g.add(m); }
+  const k = mesh(new THREE.SphereGeometry(1,24,16), mat); k.scale.set(.026,.032,.026); k.position.z = .008; g.add(k); return g;
+}
+function flowerGroup(petal, center, k=1){ const g = new THREE.Group();
+  for(let i=0;i<5;i++){ const a = i/5*PI*2, pm = mesh(new THREE.SphereGeometry(1,16,10), petal); pm.scale.set(.028*k,.017*k,.008*k); pm.position.set(Math.cos(a)*.024*k, Math.sin(a)*.024*k, 0); pm.rotation.z = a; g.add(pm); }
+  const c = mesh(new THREE.SphereGeometry(.012*k,14,10), center); c.position.z = .006*k; g.add(c); return g; }
+function pearls(ctx, M, add){ const y0 = ctx.shape.bowY + .05, pts = [];
+  for(let i=0;i<=48;i++){ const t = -1 + 2*i/48, a = ctx.face(t*.25, y0 - (1-t*t)*.08); if(a) pts.push(a.p.clone().addScaledVector(a.n,.015)); }
+  let run = 0, next = 0; for(let i=1;i<pts.length;i++){ run += pts[i].distanceTo(pts[i-1]); if(run >= next){ const b = mesh(new THREE.SphereGeometry(.0165,18,12), M.pearl); b.position.copy(pts[i]); add(b); next += .036; } } }
+function bowTie(ctx, M, add){
+  const a = ctx.face(0, ctx.shape.bowY); if(!a) return;
+  const g = new THREE.Group(); g.position.copy(a.p).addScaledVector(a.n, .022); orient(g, a.n); g.scale.setScalar(1.4);
+  for(const sx of [-1,1]){ const w = new THREE.SphereGeometry(1, 40, 24); const p = w.attributes.position;
+    for(let i=0;i<p.count;i++){ const x=p.getX(i), t=(x+1)/2; p.setY(i, p.getY(i)*(.3+.7*Math.pow(t,.8))); p.setZ(i, p.getZ(i)*(.55+.45*t)); } w.computeVertexNormals();
+    const m = mesh(w, M.ink); m.scale.set(.068, .06, .03); m.position.x = sx*.066; if(sx<0) m.rotation.y = PI; g.add(m); }
+  const k = mesh(new THREE.SphereGeometry(1,24,16), M.ink); k.scale.set(.026,.032,.026); k.position.z = .008; g.add(k); add(g);
+  ctx.occ.push([g.position.x, g.position.y, g.position.z, .05]);
+}
+function cupPair(ctx, M, add, {r=.092, depth=.07, glowRing=false, mat=M.ink, pad=M.inkSoft}){
+  const out = [];
+  [[ctx.sideL,-1],[ctx.sideR,1]].forEach(([s, sx]) => { const c = s.p.clone().addScaledVector(s.n, .022); c.y = ctx.eyeY - .005;
+    const g = new THREE.Group(); g.position.copy(c); orient(g, new V3(sx,0,0));
+    const cup = mesh(new THREE.CylinderGeometry(r, r*.94, depth, 56).rotateX(PI/2), mat); cup.position.z = depth*.5; g.add(cup);
+    const cushionRing = mesh(new THREE.TorusGeometry(r*.78, r*.26, 18, 56), pad); cushionRing.position.z = .006; g.add(cushionRing);
+    if(glowRing){ const gr = mesh(new THREE.TorusGeometry(r*.62, .007, 10, 56), M.glowGreen); gr.position.z = depth+.001; g.add(gr); }
+    add(g); out.push(c); ctx.occ.push([c.x, c.y, c.z, r*.9]); });
+  return out;
+}
+function arcBand(ctx, cups, r, mat, add, zc){
+  const cy = ctx.eyeY + .02, rx = Math.max(Math.abs(cups[0].x), Math.abs(cups[1].x)) + .01, ry = ctx.top.p.y + .06 - cy, pts = [];
+  for(let i=0;i<=24;i++){ const th = PI*(.03 + .94*i/24); pts.push(new V3(-Math.cos(th)*rx, cy + Math.sin(th)*ry + .07*(1-Math.sin(th)), zc)); }
+  add(mesh(sweepGeo(pts, pts.map(p => new V3(p.x, p.y-cy, 0).normalize()), roundRect(r*.9, r*2.2, r*.4), false), mat));
+  return pts;
+}
+function headBand(ctx, y, {w=.05, t=.022, mat, tilt=0, from=-PI, to=PI, off=0}){ const closed = to-from >= PI*2-1e-3;
+  const pts = ctx.ring(y, 72, {tilt, from, to, off: off + t*.45}); if(pts.length < 6) return null;
+  return mesh(sweepGeo(pts.map(a=>a.p), pts.map(a=>a.n), roundRect(t, w, Math.min(t,w)*.45), closed), mat); }
+
+const ACC = {
+  minimal(){},
+  artist(ctx, M, add){ const g = hatGroup(ctx, {tilt:-.3, dx:.07, sink:.05, rx:.1});
+    g.add(mesh(lathe([[0,-.005],[.1,-.012],[.19,-.004],[.255,.012],[.295,.036],[.31,.064],[.292,.09],[.248,.11],[.17,.126],[.085,.133],[0,.135]]), M.fabric));
+    const st = mesh(new THREE.CylinderGeometry(.013,.02,.045,20), M.fabric); st.position.y = .15; g.add(st); add(g); },
+  scholar(ctx, M, add){ glasses(ctx, M, add); bowTie(ctx, M, add); },
+  cool(ctx, M, add){ glasses(ctx, M, add, {lens:true, r:.1, sun:true}); },
+  music(ctx, M, add){ const cups = cupPair(ctx, M, add, {r:.095}); arcBand(ctx, cups, .026, M.ink, add, -.02); },
+  gentleman(ctx, M, add){ const g = hatGroup(ctx, {tilt:-.14, dx:.03, sink:.03});
+    g.add(mesh(lathe([[0,.31],[.125,.31],[.138,.302],[.143,.285],[.133,.075],[.136,.05],[.2,.04],[.262,.052],[.282,.07],[.29,.064],[.278,.036],[.236,.018],[.14,.014],[0,.012]]), M.ink));
+    const band = mesh(new THREE.CylinderGeometry(.1355,.1375,.05,64,1,true), M.ribbon); band.position.y = .09; g.add(band); add(g);
+    const fr = eyeFrame(ctx, 1); if(fr){ const R = .075*ctx.eyeS; const ring = mesh(new THREE.TorusGeometry(R,.0075,14,64), M.gold); ring.position.copy(fr.c); orient(ring, fr.z); add(ring);
+      const s = fr.c.clone().addScaledVector(fr.x, R*.7).addScaledVector(fr.y, -R*.7); const endA = ctx.face(ctx.eyeX+.2, ctx.eyeY-.26); if(endA){ const e2 = endA.p.clone().addScaledVector(endA.n,.01);
+      add(mesh(tubeGeo([s, s.clone().lerp(e2,.5).addScaledVector(fr.z,.03).add(new V3(0,-.03,0)), e2], .0035), M.gold)); } } },
+  outdoor(ctx, M, add){ const g = hatGroup(ctx, {tilt:-.1, sink:.07});
+    g.add(mesh(lathe([[0,.175],[.12,.172],[.172,.156],[.194,.11],[.2,.045],[.226,.02],[.3,-.028],[.318,-.04],[.314,-.054],[.29,-.05],[.22,-.012],[.19,-.002],[0,-.002]]), M.olive));
+    const st = mesh(new THREE.TorusGeometry(.2,.006,8,64).rotateX(PI/2), M.oliveDark); st.position.y = .06; g.add(st); add(g); },
+  dreamer(ctx, M, add){ const a = headPoint(ctx, 30, .12); if(!a) return; const g = new THREE.Group(); g.position.copy(a.p).addScaledVector(a.n,.02); orient(g, a.n.clone().lerp(new V3(0,0,1),.5).normalize());
+    const moon = mesh(extrude(crescentShape(.105), .03, .012), M.gold); moon.rotation.z = .5; g.add(moon);
+    const st = mesh(extrude(starShape(.04,.017), .016, .006), M.gold); st.position.set(-.1,.08,.0); g.add(st); add(g); },
+  gardener(ctx, M, add){ const g = hatGroup(ctx, {tilt:-.08, sink:.06, scale:1.02});
+    g.add(mesh(lathe([[0,.125],[.1,.123],[.152,.108],[.168,.07],[.172,.03],[.2,.016],[.34,-.006],[.42,-.028],[.432,-.04],[.42,-.046],[.33,-.024],[.2,-.004],[0,-.004]]), M.straw));
+    const rib = mesh(new THREE.CylinderGeometry(.1715,.1725,.036,64,1,true), M.leaf); rib.position.y = .047; g.add(rib);
+    const fl = new THREE.Group(); fl.position.set(.12,.06,.13); fl.rotation.set(0,.7,0);
+    for(let i=0;i<5;i++){ const p = mesh(new THREE.SphereGeometry(1,20,12), M.petal); p.scale.set(.024,.012,.009); const a=i/5*PI*2; p.position.set(Math.cos(a)*.022, Math.sin(a)*.022, 0); p.rotation.z = a; fl.add(p); }
+    const c = mesh(new THREE.SphereGeometry(.012,16,10), M.honey); c.position.z = .006; fl.add(c); g.add(fl); add(g); },
+  sweetheart(ctx, M, add){ const a = headPoint(ctx, 34, .12); if(!a) return; const h = mesh(extrude(heartShape(.075), .028, .014), M.pink); h.position.copy(a.p).addScaledVector(a.n,.02); orient(h, a.n.clone().lerp(new V3(0,0,1),.55).normalize()); h.rotateZ(-.35); add(h); },
+  playful(ctx, M, add){ const g = hatGroup(ctx, {tilt:-.32, dx:.08, sink:.04});
+    const cone = mesh(new THREE.ConeGeometry(.12,.3,56,1,true), M.party); cone.position.y = .15; g.add(cone);
+    const pom = mesh(new THREE.SphereGeometry(.036,24,16), M.fabric); pom.position.y = .305; g.add(pom);
+    const rim = mesh(new THREE.TorusGeometry(.118,.012,10,56).rotateX(PI/2), M.fabric); rim.position.y = .004; g.add(rim); add(g); },
+  futuristic(ctx, M, add){ const y = ctx.eyeY; const pts = ctx.ring(y, 48, {from:-1.95, to:1.95, off:.03}); if(pts.length<6) return;
+    add(mesh(sweepGeo(pts.map(a=>a.p), pts.map(a=>a.n), roundRect(.022,.13,.009), false), M.visor));
+    const mid = pts.filter(a => Math.abs(a.p.x) < ctx.eyeX + .1).map(a => a.p.clone().addScaledVector(a.n,.013)); if(mid.length>2) add(mesh(tubeGeo(mid,.0055), M.glow)); },
+  cosmic(ctx, M, add){ const cups = [ctx.sideL.p.clone(), ctx.sideR.p.clone()]; arcBand(ctx, cups, .012, M.ink, add, .0);
+    for(const sx of [-1,1]){ const top = ctx.ray(sx*.12, ctx.top.p.y-.1, 0, sx*.35, 1, 0); if(!top) continue; const b = top.p.clone().addScaledVector(top.n, .03); const pts=[];
+      for(let i=0;i<=40;i++){ const t=i/40; pts.push(new V3(b.x + sx*t*.06 + Math.cos(t*PI*8)*.016, b.y + t*.2, b.z + Math.sin(t*PI*8)*.016)); }
+      add(mesh(tubeGeo(pts,.0045), M.wireGold)); const st = mesh(extrude(starShape(.042,.018), .016, .006), M.gold); st.position.copy(pts[pts.length-1]).add(new V3(0,.03,0)); st.rotation.z = sx*.2; add(st); } },
+  wizard(ctx, M, add){ const g = hatGroup(ctx, {tilt:-.12, sink:.06, scale:1.02});
+    g.add(mesh(bentCone(.19,.46,-.36), M.navy)); g.add(mesh(lathe([[.17,.012],[.26,-.004],[.33,.002],[.345,.014],[.335,.022],[.26,.018],[.17,.03]]), M.navy));
+    const st = mesh(extrude(starShape(.05,.021), .014, .006), M.gold); st.position.set(-.02,.13,.155); st.rotation.x = -.35; g.add(st); add(g); },
+  pirate(ctx, M, add){ const y = ctx.eyeY + .2, ring = ctx.ring(y, 36); if(ring.length<8) return; let rx=0, rzF=0, rzB=0; for(const a of ring){ rx=Math.max(rx,Math.abs(a.p.x)); rzF=Math.max(rzF,a.p.z); rzB=Math.min(rzB,a.p.z); }
+    const cz=(rzF+rzB)/2, rz=(rzF-rzB)/2, ry=Math.max(.06, ctx.top.p.y-y);
+    // the bandana hugs the sculpt: every vertex is pushed out past the surface (and the pile), so lobed tops never poke through
+    const cg = new THREE.SphereGeometry(1,64,32,0,PI*2,0,PI/2); cg.scale(rx+.012, ry+.014, rz+.012); cg.translate(0,y,cz);
+    const pa = cg.attributes.position, off = ctx.lift + .014;
+    for(let i=0;i<pa.count;i++){ let px=pa.getX(i), py=pa.getY(i), pz=pa.getZ(i);
+      for(let it=0; it<5; it++){ const d = ctx.f(px,py,pz); if(d >= off) break; const g = sdfGrad(ctx.f,px,py,pz), k = off - d; px += g[0]*k; py += g[1]*k; pz += g[2]*k; }
+      pa.setXYZ(i,px,py,pz); }
+    cg.computeVertexNormals(); add(mesh(cg, M.red));
+    const k = mesh(new THREE.SphereGeometry(.045,24,16), M.red); k.position.set(rx*.8, y-.01, cz-rz*.55); add(k);
+    for(const [dx,dy] of [[.06,-.1],[.1,-.07]]){ const t = mesh(new THREE.CapsuleGeometry(.022,.08,8,16), M.red); t.scale.z = .45; t.position.set(rx*.8+dx*.6, y-.06+dy*.3, cz-rz*.55-.02); t.rotation.z = .6+dx*3; add(t); }
+    const fr = eyeFrame(ctx, 1, -.01); if(fr){ const p = mesh(new THREE.CylinderGeometry(.068*ctx.eyeS,.068*ctx.eyeS,.014,48).rotateX(PI/2), M.ink); p.position.copy(fr.c); orient(p, fr.z); add(p); }
+    const strap = headBand(ctx, ctx.eyeY + Math.tan(.5)*ctx.eyeX, {w:.018, t:.01, mat:M.ink, tilt:-.5}); if(strap) add(strap); },
+  detective(ctx, M, add){ const g = hatGroup(ctx, {tilt:-.06, sink:.07, scale:1.25});
+    const dome = mesh(new THREE.SphereGeometry(.205,64,32,0,PI*2,0,PI/2), M.tweed); dome.scale.y = .78; g.add(dome);
+    for(const sz of [1,-1]){ const br = mesh(new THREE.SphereGeometry(1,40,16,0,PI), M.tweed); br.scale.set(.15,.12,.02); br.rotation.x = -PI/2 - sz*.2; br.rotation.z = sz>0?0:PI; br.position.set(0,.008,sz*.17); g.add(br); }
+    const bow = mesh(new THREE.SphereGeometry(.022,16,12), M.tweedDark); bow.position.y = .165; g.add(bow); add(g); },
+  chef(ctx, M, add){ const g = hatGroup(ctx, {tilt:-.05, sink:.07});
+    const top = lathe([[0,.36],[.1,.356],[.19,.334],[.235,.28],[.232,.2],[.2,.14],[.165,.105],[.158,.085]], 96); const p = top.attributes.position;
+    for(let i=0;i<p.count;i++){ const x=p.getX(i), z=p.getZ(i), y=p.getY(i), a=Math.atan2(z,x), k=1+.045*Math.cos(a*11)*cl((y-.1)/.1,0,1)*cl((.34-y)/.05,0,1); p.setX(i,x*k); p.setZ(i,z*k); } top.computeVertexNormals();
+    g.add(mesh(top, M.white)); g.add(mesh(new THREE.CylinderGeometry(.16,.165,.1,64), M.white)); add(g); },
+  astronaut(ctx, M, add){ [[ctx.sideL,-1],[ctx.sideR,1]].forEach(([s,sx]) => { const g = new THREE.Group(); g.position.copy(s.p).addScaledVector(s.n,.01); g.position.y = ctx.eyeY; orient(g, new V3(sx,0,0));
+      const pod = mesh(new THREE.CylinderGeometry(.1,.106,.075,48).rotateX(PI/2), M.white); pod.position.z = .03; g.add(pod);
+      const cap = mesh(new THREE.CylinderGeometry(.065,.065,.014,40).rotateX(PI/2), M.silver); cap.position.z = .072; g.add(cap); add(g); ctx.occ.push([g.position.x,g.position.y,g.position.z,.07]);
+      if(sx>0){ const base = g.position.clone().add(new V3(.05,.08,0)); const tip = base.clone().add(new V3(.04,.26,-.01)); add(mesh(tubeGeo([base,tip],.006), M.silver)); const l = mesh(new THREE.SphereGeometry(.018,16,12), M.redLight); l.position.copy(tip); add(l); } }); },
+  royal(ctx, M, add){ const g = hatGroup(ctx, {tilt:-.1, sink:.04, scale:1.05});
+    g.add(mesh(new THREE.CylinderGeometry(.15,.15,.07,64,1,true), M.gold)); const b = mesh(new THREE.TorusGeometry(.15,.012,10,64).rotateX(PI/2), M.gold); b.position.y = -.035; g.add(b);
+    for(let i=0;i<5;i++){ const a = i/5*PI*2 + PI/2; const c = mesh(new THREE.ConeGeometry(.034,.09,20), M.gold); c.position.set(Math.cos(a)*.148,.078,Math.sin(a)*.148); g.add(c);
+      const bl = mesh(new THREE.SphereGeometry(.016,14,10), M.gold); bl.position.set(Math.cos(a)*.148,.128,Math.sin(a)*.148); g.add(bl);
+      const gem = mesh(new THREE.SphereGeometry(.016,16,12), i%2?M.gemBlue:M.gemRed); gem.scale.z = .5; gem.position.set(Math.cos(a+PI/5)*.152,0,Math.sin(a+PI/5)*.152); gem.lookAt(gem.position.clone().multiplyScalar(2)); g.add(gem); }
+    add(g); },
+  ninja(ctx, M, add){ const y = ctx.eyeY + .13; const band = headBand(ctx, y, {w:.07, t:.02, mat:M.fabric}); if(band) add(band);
+    const a = ctx.face(0, y); if(a){ const pl = mesh(extrude(new THREE.Shape(roundRect(.15,.058,.014).map(([x,z])=>new THREE.Vector2(x,z))), .008, .005), M.silver); pl.position.copy(a.p).addScaledVector(a.n,.03); orient(pl,a.n); add(pl); }
+    const b = ctx.back(.03, y); if(b) for(const sx of [-1,1]){ const t = mesh(new THREE.CapsuleGeometry(.024,.17,8,16), M.fabric); t.scale.z = .4; t.position.copy(b.p).add(new V3(sx*.05,-.09,-.03)); t.rotation.z = sx*.35; t.rotation.x = .25; add(t); } },
+  gamer(ctx, M, add){ const cups = cupPair(ctx, M, add, {r:.09, glowRing:true}); arcBand(ctx, cups, .022, M.ink, add, -.02);
+    const s = cups[1].clone().add(new V3(.045,-.05,.03)); const m = ctx.face(ctx.eyeX*.7, ctx.eyeY-.2); if(m){ const e = m.p.clone().addScaledVector(m.n,.04);
+      add(mesh(tubeGeo([s, s.clone().lerp(e,.5).add(new V3(.03,-.03,.05)), e], .008), M.ink)); const mic = mesh(new THREE.SphereGeometry(.024,20,14), M.inkSoft); mic.position.copy(e); add(mic); } },
+  athlete(ctx, M, add){ const y = ctx.eyeY + .16; const band = headBand(ctx, y, {w:.1, t:.042, mat:M.terry}); if(band) add(band);
+    const s = headBand(ctx, y, {w:.014, t:.044, mat:M.ink, off:.001}); if(s) add(s); },
+  sleepy(ctx, M, add){ const g = hatGroup(ctx, {tilt:-.18, dx:.03, sink:.07, scale:1.05});
+    const cone = mesh(bentCone(.2,.5,.55), M.dusty); g.add(cone);
+    const cuff = mesh(new THREE.TorusGeometry(.2,.04,18,64).rotateX(PI/2), M.cream); cuff.position.y = .01; g.add(cuff);
+    const tipX = .55*.5, tipY = .5 - .55*.5*.25; const pom = mesh(new THREE.SphereGeometry(.05,24,16), M.cream); pom.position.set(tipX,tipY,0); g.add(pom); add(g); },
+  flower(ctx, M, add){ const t = ctx.top.p.clone(); const pts = [t.clone().add(new V3(0,-.03,0)), t.clone().add(new V3(.018,.12,0)), t.clone().add(new V3(-.014,.24,.012)), t.clone().add(new V3(.006,.33,.03))];
+    add(mesh(tubeGeo(pts,.011), M.leaf)); const leaf = mesh(new THREE.SphereGeometry(1,24,12), M.leaf); leaf.scale.set(.075,.017,.033); leaf.position.copy(pts[1]).add(new V3(.066,.01,0)); leaf.rotation.z = .5; add(leaf);
+    const fl = new THREE.Group(); fl.position.copy(pts[3]).add(new V3(0,.02,0)); fl.rotation.x = -1.0;
+    for(let i=0;i<5;i++){ const p = mesh(new THREE.SphereGeometry(1,24,14), M.petal); const a=i/5*PI*2; p.scale.set(.074,.044,.017); p.position.set(Math.cos(a)*.066, Math.sin(a)*.066, 0); p.rotation.z = a; fl.add(p); }
+    const c = mesh(new THREE.SphereGeometry(.033,20,14), M.honey); c.scale.z = .7; c.position.z = .014; fl.add(c); add(fl); },
+  lady(ctx, M, add){ const g = hatGroup(ctx, {tilt:-.34, dx:.1, sink:.01, scale:1.0});
+    g.add(mesh(lathe([[0,.088],[.1,.086],[.118,.074],[.124,.04],[.12,.004],[0,.004]]), M.ink));
+    const band = mesh(new THREE.CylinderGeometry(.1245,.1255,.024,64,1,true), M.satin); band.position.y = .022; g.add(band);
+    const bw = bowGroup(M.satin); bw.scale.setScalar(.95); bw.position.set(.07,.06,.1); bw.rotation.y = .7; g.add(bw); add(g); pearls(ctx, M, add); },
+  bow(ctx, M, add){ const a = headPoint(ctx, 24, .05); if(!a) return; const g = bowGroup(M.bowRibbon);
+    for(const sx of [-1,1]){ const t = mesh(new THREE.CapsuleGeometry(.018,.07,6,12), M.bowRibbon); t.scale.z = .35; t.position.set(sx*.028,-.062,-.006); t.rotation.z = sx*.45; g.add(t); }
+    g.position.copy(a.p).addScaledVector(a.n,.03); orient(g, a.n.clone().lerp(new V3(0,0,1),.55).normalize()); g.rotateZ(-.28); g.scale.setScalar(1.9*ctx.headR/.34); add(g); },
+  princess(ctx, M, add){ const g = hatGroup(ctx, {tilt:-.06, sink:.02, scale:1.25}); g.rotation.x = .18;
+    g.add(mesh(new THREE.CylinderGeometry(.16,.166,.026,64,1,true,-PI*.62,PI*1.24), M.gold));
+    [[-1,.045],[-.5,.062],[0,.1],[.5,.062],[1,.045]].forEach(([a,h]) => { const c = mesh(new THREE.ConeGeometry(.02,h,16), M.gold); c.position.set(Math.sin(a)*.163,.013+h/2,Math.cos(a)*.163); g.add(c);
+      const pb = mesh(new THREE.SphereGeometry(.012,14,10), M.pearl); pb.position.set(Math.sin(a)*.163,.017+h,Math.cos(a)*.163); g.add(pb); });
+    const gem = mesh(new THREE.SphereGeometry(.024,20,14), M.gemPink); gem.scale.z = .55; gem.position.set(0,.028,.17); g.add(gem); add(g); },
+  flowercrown(ctx, M, add){ const k = ctx.headR/.34*1.7, ring = ctx.ring(ctx.top.p.y - .1*k, 11, {from:-PI*.7, to:PI*.7, off:.008}); const cols = [M.petal, M.petalPink, M.petalLemon];
+    ring.forEach((a,i) => { const fl = flowerGroup(cols[i%3], M.honey, (i%2 ? .85 : 1.05)*k); fl.position.copy(a.p); orient(fl, a.n.clone().add(new V3(0,.45,.35)).normalize()); add(fl);
+      if(i%2 === 0){ const lf = mesh(new THREE.SphereGeometry(1,16,8), M.leaf); lf.scale.set(.03*k,.008*k,.014*k); lf.position.copy(a.p).add(new V3(.025*k,-.018*k,0)); lf.rotation.z = .7; add(lf); } }); },
+  heartshades(ctx, M, add){ glasses(ctx, M, add, {r:.092, heart:true}); },
+  kittyphones(ctx, M, add){ const cups = cupPair(ctx, M, add, {r:.09, mat:M.pastel, pad:M.cream}); const pts = arcBand(ctx, cups, .024, M.pastel, add, -.02);
+    for(const sx of [-1,1]){ let best = pts[0]; for(const q of pts) if(Math.abs(q.x - sx*.15) < Math.abs(best.x - sx*.15)) best = q;
+      const ear = new THREE.Group(); ear.position.copy(best).add(new V3(0,.012,-.02)); ear.rotation.z = -sx*.3;
+      const o = mesh(new THREE.ConeGeometry(.055,.09,3), M.pastel); o.scale.z = .45; o.position.y = .04; ear.add(o);
+      const inner = mesh(new THREE.ConeGeometry(.032,.055,3), M.nosePink); inner.scale.z = .3; inner.position.set(0,.034,.012); ear.add(inner); add(ear); } },
+  witch(ctx, M, add){ const g = hatGroup(ctx, {tilt:.12, sink:.06, scale:1.02});
+    g.add(mesh(bentCone(.18,.44,.42), M.lilac)); g.add(mesh(lathe([[.16,.012],[.26,-.006],[.35,.0],[.365,.012],[.355,.02],[.26,.016],[.16,.03]]), M.lilac));
+    const rib = mesh(new THREE.CylinderGeometry(.172,.176,.042,64,1,true), M.ribbonPink); rib.position.y = .036; g.add(rib);
+    const bw = bowGroup(M.ribbonPink); bw.scale.setScalar(.62); bw.position.set(.09,.04,.15); bw.rotation.y = .55; g.add(bw);
+    const st = mesh(extrude(starShape(.034,.015), .012, .005), M.gold); st.position.set(-.05,.15,.13); st.rotation.set(-.3,-.3,.2); g.add(st); add(g); },
+  sunhat(ctx, M, add){ const g = hatGroup(ctx, {tilt:-.12, sink:.05, scale:1.04});
+    const hat = lathe([[0,.13],[.1,.128],[.15,.112],[.165,.075],[.17,.03],[.21,.014],[.36,-.012],[.46,-.04],[.475,-.052],[.465,-.058],[.36,-.03],[.2,-.004],[0,-.004]], 96), hp = hat.attributes.position;
+    for(let i=0;i<hp.count;i++){ const x=hp.getX(i), z=hp.getZ(i), r=Math.hypot(x,z); if(r>.2) hp.setY(i, hp.getY(i) + Math.sin(Math.atan2(z,x)*5)*.024*((r-.2)/.28)); } hat.computeVertexNormals();
+    g.add(mesh(hat, M.strawCream)); const rib = mesh(new THREE.CylinderGeometry(.1705,.1715,.045,64,1,true), M.ribbonPink); rib.position.y = .05; g.add(rib);
+    const bw = bowGroup(M.ribbonPink); bw.scale.setScalar(.9); bw.position.set(.12,.055,.12); bw.rotation.y = .8; g.add(bw); add(g); }
+};
+
+/* =====================================================================
+   10. Studio: renderer, lighting, turntable. One for the stage, one
+   offscreen instance renders option thumbnails.
+   ===================================================================== */
+const STAGE_TOP = '#F3F1EC', STAGE_BOTTOM = '#E2DED5';
+function gradientTexture(){ const c = document.createElement('canvas'); c.width = 4; c.height = 256; const x = c.getContext('2d');
+  const g = x.createLinearGradient(0,0,0,256); g.addColorStop(0, STAGE_TOP); g.addColorStop(1, STAGE_BOTTOM); x.fillStyle = g; x.fillRect(0,0,4,256);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t; }
+function contactTexture(){ const c = document.createElement('canvas'); c.width = c.height = 256; const x = c.getContext('2d');
+  const g = x.createRadialGradient(128,128,0,128,128,128); g.addColorStop(0,'rgba(0,0,0,.62)'); g.addColorStop(.35,'rgba(0,0,0,.34)'); g.addColorStop(.7,'rgba(0,0,0,.08)'); g.addColorStop(1,'rgba(0,0,0,0)');
+  x.fillStyle = g; x.fillRect(0,0,256,256); return new THREE.CanvasTexture(c); }
+const mixHex = (a,b,t) => rgbToHex(hexToRgb(a).map((v,i)=>v+(hexToRgb(b)[i]-v)*t));
+function toneHex(tone, body){
+  const L = luminance(body);
+  switch(tone){
+    case 'cream': return L > .58 ? mixHex(body,'#B8A488',.42) : '#F4EEE3';
+    case 'dark': return L < .09 ? '#E9E3D8' : '#1C1B1E';
+    case 'pink': { const d = labDist(body,'#F2A3B2'); return d < .1 ? '#D86F86' : '#F2A3B2'; }
+    case 'orange': return labDist(body,'#EFA23A') < .12 ? '#B8601C' : '#EFA23A';
+    case 'accent': return '#F2B544';
+    case 'screen': return '#131619';
+  }
+  return body;
+}
+
+class Studio {
+  constructor(canvas, {main}){
+    this.main = main;
+    const r = this.renderer = new THREE.WebGLRenderer({canvas, antialias:true, alpha:true, preserveDrawingBuffer:!main, powerPreference:'high-performance'});
+    r.setPixelRatio(main ? Math.min(devicePixelRatio||1, 2) : 1);
+    r.toneMapping = THREE.NeutralToneMapping; r.toneMappingExposure = 1.02; r.outputColorSpace = THREE.SRGBColorSpace;
+    r.shadowMap.enabled = main; r.shadowMap.type = THREE.PCFSoftShadowMap;
+    const sc = this.scene = new THREE.Scene(); sc.background = gradientTexture();
+    const pm = new THREE.PMREMGenerator(r); sc.environment = pm.fromScene(new RoomEnvironment(), .03).texture; sc.environmentIntensity = .95; pm.dispose();
+    this.camera = new THREE.PerspectiveCamera(23, 1, .05, 30);
+    const key = this.key = new THREE.DirectionalLight(0xfff6ec, 1.55); key.position.set(-1.6, 3.1, 2.5);
+    const rim = new THREE.DirectionalLight(0xf2f5ff, .55); rim.position.set(1.9, 2.3, -2.6);
+    sc.add(key, key.target, rim, new THREE.HemisphereLight(0xffffff, 0xe8e0d2, .18));
+    if(main){ key.castShadow = true; key.shadow.mapSize.set(2048,2048); const sc2 = key.shadow.camera; sc2.left=-1; sc2.right=1; sc2.top=1.4; sc2.bottom=-.6; sc2.near=.5; sc2.far=9; key.shadow.bias=-.0004; key.shadow.normalBias=.012; key.shadow.radius=6;
+      const ground = new THREE.Mesh(new THREE.PlaneGeometry(8,8), new THREE.ShadowMaterial({opacity:.13})); ground.rotation.x = -PI/2; ground.receiveShadow = true; sc.add(ground); this.ground = ground; }
+    this.contact = new THREE.Mesh(new THREE.PlaneGeometry(1,1), new THREE.MeshBasicMaterial({map:contactTexture(), transparent:true, depthWrite:false, toneMapped:false}));
+    this.contact.rotation.x = -PI/2; this.contact.position.y = .002; sc.add(this.contact);
+    this.root = new THREE.Group(); this.puppet = new THREE.Group(); this.root.add(this.puppet); sc.add(this.root);
+    const V = (n,f) => Array.from({length:n}, f);
+    this.U = { uBody:{value:new THREE.Color()}, uPaintCount:{value:0}, uPaintC:{value:V(12,()=>new V3())}, uPaintR:{value:V(12,()=>new V3(1,1,1))},
+      uPaintM:{value:V(12,()=>new THREE.Matrix3())}, uPaintN:{value:V(12,()=>2)}, uPaintCol:{value:V(12,()=>new THREE.Color())}, uOccCount:{value:0}, uOcc:{value:V(8,()=>new THREE.Vector4())} };
+    const kd = key.position.clone().normalize(), fd = new V3(1.4,.6,1.2).normalize();
+    this.L = { uKeyDir:{value:kd}, uKeyCol:{value:new THREE.Color(1.1,1.06,1.0)}, uFillDir:{value:fd}, uFillCol:{value:new THREE.Color(.2,.21,.23)}, uSky:{value:new THREE.Color(.72,.73,.76)}, uGround:{value:new THREE.Color(.44,.41,.37)} };
+    this.bodyMats = {}; this.furMat = makeFurMaterial(this.U, this.L); this.coatMat = makeCoatMaterial(this.U, this.L); this.M = this.makeAccessoryMaterials();
+    this.yaw = 0; this.elev = .12; this.fit = {c:new V3(0,.5,0), d:3.2}; this.cur = null; this.scaleBase = 1;
+  }
+  makeAccessoryMaterials(){
+    const P = (color, o={}) => new THREE.MeshPhysicalMaterial(Object.assign({color, roughness:.4}, o));
+    return {
+      eye: P('#0B0B0D',{roughness:.05, clearcoat:1, clearcoatRoughness:.02}),
+      eyeWhite: P('#FAF8F3',{roughness:.12, clearcoat:1, clearcoatRoughness:.03}),
+      eyeLight: P('#F3EFE7',{roughness:.12, clearcoat:1}),
+      glow: new THREE.MeshStandardMaterial({color:'#8EF5E6', emissive:'#46E0CF', emissiveIntensity:1.6, roughness:.3}),
+      glowGreen: new THREE.MeshStandardMaterial({color:'#9CF2A9', emissive:'#43D567', emissiveIntensity:1.4, roughness:.3}),
+      redLight: new THREE.MeshStandardMaterial({color:'#FF7A6E', emissive:'#FF3B2F', emissiveIntensity:1.4, roughness:.3}),
+      noseDark: P('#151416',{roughness:.2, clearcoat:.8}), nosePink: P('#E88B9C',{roughness:.3, clearcoat:.6}), mouth: P('#1A191B',{roughness:.35}),
+      beak: P('#EFA23A',{roughness:.3, clearcoat:.7, clearcoatRoughness:.1}),
+      ink: P('#18181A',{roughness:.26, clearcoat:.8, clearcoatRoughness:.08}), inkSoft: P('#232325',{roughness:.7, sheen:.6, sheenColor:new THREE.Color('#555'), sheenRoughness:.5}),
+      fabric: P('#1B1B1D',{roughness:.9, sheen:1, sheenColor:new THREE.Color('#5a5a5f'), sheenRoughness:.45}),
+      wire: P('#141416',{roughness:.3, metalness:.6}), wireGold: P('#D9B25F',{roughness:.25, metalness:1}),
+      lens: P('#0E1012',{roughness:.03, metalness:.3, clearcoat:1, clearcoatRoughness:.01}),
+      gold: P('#DDB45A',{roughness:.2, metalness:1}), silver: P('#D2D5DA',{roughness:.18, metalness:1}),
+      ribbon: P('#2F2F33',{roughness:.35, sheen:.5, sheenColor:new THREE.Color('#777')}),
+      olive: P('#6F7250',{roughness:.88, sheen:.6, sheenColor:new THREE.Color('#9aa079'), sheenRoughness:.6}), oliveDark: P('#4E5138',{roughness:.8}),
+      straw: P('#D8BB84',{roughness:.78, sheen:.4, sheenColor:new THREE.Color('#fff2cf')}), leaf: P('#4F7F45',{roughness:.5, clearcoat:.4}),
+      petal: P('#FBF6F0',{roughness:.45, sheen:.6, sheenColor:new THREE.Color('#ffffff')}), honey: P('#F0B53E',{roughness:.35, clearcoat:.5}),
+      pink: P('#EA7F98',{roughness:.18, clearcoat:1, clearcoatRoughness:.04}),
+      party: P('#FFFFFF',{roughness:.5, map:dotsTexture('#F3ECDD','#1B1B1D'), side:THREE.DoubleSide}),
+      visor: P('#16191C',{roughness:.04, metalness:.45, clearcoat:1, clearcoatRoughness:.02}),
+      navy: P('#2C3358',{roughness:.7, sheen:.6, sheenColor:new THREE.Color('#6f7ab0'), sheenRoughness:.5}),
+      red: P('#A82E2B',{roughness:.75, sheen:.6, sheenColor:new THREE.Color('#e27b6f'), sheenRoughness:.5}),
+      tweed: P('#8B6B4C',{roughness:.92, sheen:.5, sheenColor:new THREE.Color('#c8a47d')}), tweedDark: P('#5E4632',{roughness:.9}),
+      white: P('#F4F2EC',{roughness:.32, clearcoat:.5, clearcoatRoughness:.2}), cream: P('#F1EADB',{roughness:.9, sheen:1, sheenColor:new THREE.Color('#ffffff'), sheenRoughness:.5}),
+      dusty: P('#8197BA',{roughness:.9, sheen:1, sheenColor:new THREE.Color('#c3d0ea'), sheenRoughness:.5}),
+      terry: P('#F4F1EA',{roughness:.95, sheen:1, sheenColor:new THREE.Color('#ffffff'), sheenRoughness:.7}),
+      gemRed: P('#C21F3A',{roughness:.05, clearcoat:1, metalness:.1}), gemBlue: P('#2446B8',{roughness:.05, clearcoat:1, metalness:.1}),
+      gemPink: P('#E85C8E',{roughness:.05, clearcoat:1, metalness:.1}),
+      pearl: P('#F7F2E8',{roughness:.12, clearcoat:1, clearcoatRoughness:.05, iridescence:.6, iridescenceIOR:1.3}),
+      rose: P('#D98A9B',{roughness:.6, sheen:1, sheenColor:new THREE.Color('#ffd3dc'), sheenRoughness:.5}),
+      satin: P('#F3ECE0',{roughness:.3, sheen:.8, sheenColor:new THREE.Color('#ffffff'), sheenRoughness:.3}),
+      bowRibbon: P('#E4506A',{roughness:.28, sheen:1, sheenColor:new THREE.Color('#ffb3c1'), sheenRoughness:.3, clearcoat:.3}),
+      ribbonPink: P('#EE9AAF',{roughness:.3, sheen:1, sheenColor:new THREE.Color('#ffe0e8'), sheenRoughness:.3}),
+      lensRose: P('#D6547B',{roughness:.04, metalness:.25, clearcoat:1, clearcoatRoughness:.02}),
+      pastel: P('#F6D3DB',{roughness:.35, clearcoat:.6, clearcoatRoughness:.15}),
+      lilac: P('#9A84C8',{roughness:.7, sheen:.8, sheenColor:new THREE.Color('#d9ccf5'), sheenRoughness:.5}),
+      strawCream: P('#F1E4C8',{roughness:.8, sheen:.5, sheenColor:new THREE.Color('#fffaf0')}),
+      petalPink: P('#F6B8C8',{roughness:.45, sheen:.6, sheenColor:new THREE.Color('#ffffff')}), petalLemon: P('#F7E08A',{roughness:.45, sheen:.6, sheenColor:new THREE.Color('#ffffff')})
+    };
+  }
+  bodyMat(id){ return this.bodyMats[id] || (this.bodyMats[id] = makeBodyMaterial(MAT[id], this.U)); }
+  // Colors, finish-dependent accessory looks and paint zones.
+  applyLook(cfg){
+    const def = MAT[cfg.material], hex = cfg.color, lin = new THREE.Color(hex);
+    let body = lin.clone();
+    if(def.tint) body.lerp(new THREE.Color(1,1,1), def.tint);
+    if(def.whiten) body.lerp(new THREE.Color(1,1,1), def.whiten);
+    this.U.uBody.value.copy(body);
+    const m = this.bodyMat(cfg.material);
+    if(def.atten){ m.attenuationColor = lin.clone(); m.attenuationDistance = def.atten; }
+    if(def.fur || def.p.sheen){ m.sheenColor = lin.clone().lerp(new THREE.Color(1,1,1), .45); }
+    const paints = (this.cur ? this.cur.paints : []);
+    const U = this.U; U.uPaintCount.value = paints.length;
+    paints.forEach((p,i) => { U.uPaintC.value[i].set(...p.c); U.uPaintR.value[i].set(...p.r); U.uPaintN.value[i] = p.n || 2;
+      if(p.m) U.uPaintM.value[i].copy(p.m); else { _m4.makeRotationFromEuler(new THREE.Euler(...(p.rot||[0,0,0]))); U.uPaintM.value[i].setFromMatrix4(_m4).transpose(); }
+      U.uPaintCol.value[i].set(toneHex(p.tone, hex)); });
+    // contrast: keep face and accessories readable on very dark bodies
+    const shp = this.cur ? SHAPES[this.cur.cfg.shape] : null, faceHex = shp && shp.faceTone ? toneHex(shp.faceTone, hex) : hex;
+    const faceDark = luminance(faceHex) < .06, dark = luminance(hex) < .06, M = this.M;
+    M.eye.color.set(faceDark ? '#F1ECE3' : '#0B0B0D'); M.noseDark.color.set(faceDark ? '#EDE7DC' : '#151416'); M.mouth.color.set(faceDark ? '#EDE7DC' : '#1A191B');
+    M.bowRibbon.color.set(labDist(hex,'#E4506A') < .14 ? '#F4EEE3' : '#E4506A'); M.ribbonPink.color.set(labDist(hex,'#EE9AAF') < .12 ? '#FFFFFF' : '#EE9AAF'); M.pastel.color.set(labDist(hex,'#F6D3DB') < .1 ? '#FFFFFF' : '#F6D3DB');
+    for(const k of ['ink','fabric','wire']) M[k].color.set(dark ? '#EAE4D8' : (k==='wire' ? '#141416' : k==='fabric' ? '#1B1B1D' : '#18181A'));
+    // fur finish -> velvety flocked accessories, like a plush toy
+    const soft = !!def.fur; M.ink.roughness = soft ? .88 : .26; M.ink.clearcoat = soft ? 0 : .8; M.ink.sheen = soft ? 1 : 0; M.ink.sheenColor = new THREE.Color(dark ? '#ffffff' : '#56565c'); M.ink.sheenRoughness = .4;
+    // keep face/accessories out of the refraction buffer so glass does not show smeared copies of them
+    const clear = !!def.p.transmission; for(const k in M){ if(M[k].transparent !== clear && k !== 'party'){ M[k].transparent = clear; M[k].needsUpdate = true; } }
+    if(this.coat){ const F = def.fur, C = F.coat, u = this.coatMat.uniforms;
+      u.uShells.value = this.coat.geometry.instanceCount; u.uLen.value = F.len; u.uDensity.value = C.density; u.uThickness.value = C.thickness; u.uClump.value = C.mess;
+      u.uCurl.value = C.curl; u.uGravity.value = C.gravity; u.uWind.value = this.main ? C.wind : 0; u.uRootDark.value = C.rootDark; u.uGain.value = C.gain || 1.3; u.uCenter.value.copy(this.coatCenter);
+      const tr = this.cur ? this.cur.trims : []; u.uTrimMin.value = F.trim || 1; u.uTrimCount.value = F.trim ? tr.length : 0; tr.forEach((t,i) => u.uTrim.value[i].set(...t)); }
+    if(this.fur){ const F = def.fur, u = this.furMat.uniforms; u.uLen.value = F.len*(F.under || 1); u.uShells.value = this.fur.geometry.instanceCount; u.uDroop.value = F.droop; u.uDensity.value = F.density; u.uThick.value = F.thick; u.uCurl.value = F.curl; u.uRootDark.value = F.rootDark;
+      u.uClump.value = F.clump || 0; u.uClumpSize.value = F.clumpSize || .05; u.uCurlAmp.value = F.curlAmp || 0; u.uCurlTurns.value = F.curlTurns || 1; u.uLean.value = F.lean || 0; u.uShade.value = F.underShade || 1;
+      const tr = this.cur ? this.cur.trims : []; u.uTrimMin.value = F.trim || 1; u.uTrimCount.value = F.trim ? tr.length : 0; tr.forEach((t,i) => u.uTrim.value[i].set(...t)); }
+  }
+  build(cfg, res){
+    const shape = SHAPES[cfg.shape], def = MAT[cfg.material];
+    for(const c of [...this.puppet.children]){ this.puppet.remove(c); c.traverse(o => { if(o.isMesh && !o.userData.shared) o.geometry.dispose(); }); }
+    const geo = buildBodyGeometry(cfg.shape, res);
+    const body = mesh(geo, this.bodyMat(cfg.material)); body.userData.shared = true; this.puppet.add(body);
+    this.fur = null; this.coat = null; const C = def.fur && def.fur.coat;
+    if(C){ const ig = new THREE.InstancedBufferGeometry(); ig.index = geo.index; for(const k in geo.attributes) ig.setAttribute(k, geo.attributes[k]);
+      ig.instanceCount = Math.max(8, Math.round(C.shells*(this.main ? FUR_Q : .45))); ig.boundingSphere = geo.boundingSphere;
+      const cm = new THREE.Mesh(ig, this.coatMat); cm.frustumCulled = false; cm.userData.shared = true; this.coat = cm; this.puppet.add(cm);
+      const bx = geo.userData.box; this.coatCenter = new V3((bx.min[0]+bx.max[0])/2, (bx.min[1]+bx.max[1])/2, (bx.min[2]+bx.max[2])/2);
+      // the coat's first layer is the skin: the body underneath only writes depth (for shadows), pushed back so the skin always wins
+      const bm = body.material; if(bm.colorWrite){ bm.colorWrite = false; bm.polygonOffset = true; bm.polygonOffsetFactor = 2; bm.polygonOffsetUnits = 2; } }
+    else if(def.fur){ const ig = new THREE.InstancedBufferGeometry(); ig.index = geo.index; for(const k in geo.attributes) ig.setAttribute(k, geo.attributes[k]);
+      ig.instanceCount = this.main ? def.fur.shells : Math.round(def.fur.shells*.55); ig.boundingSphere = geo.boundingSphere;
+      const fm = new THREE.Mesh(ig, this.furMat); fm.frustumCulled = false; fm.renderOrder = 2; fm.userData.shared = true; this.fur = fm; this.puppet.add(fm); }
+    const F = def.fur, lift = F ? F.len*(F.accLift || .95) : 0, faceLift = F ? F.len*(F.trim || 1)*.95 : 0;
+    const ctx = makeAnchors(shape, lift, faceLift);
+    const trims = [];
+    if(F && F.trim){ const e = shape.eyes;
+      for(const sx of [-1,1]){ const p = sdfTrace(shape.sdf, sx*e.x, e.y, 1.6, 0,0,-1); if(p) trims.push([...p, .15*(e.s||1)]); }
+      const my = shape.mouth ? shape.mouth.y : shape.nose ? shape.nose.y : shape.beak ? shape.beak.y : e.y-.13, p = sdfTrace(shape.sdf, 0, my, 1.6, 0,0,-1); if(p) trims.push([...p, .17]); }
+    const acc = new THREE.Group(); const add = o => acc.add(o);
+    buildFace(ctx, cfg.style, this.M, add, cfg.gender);
+    (ACC[cfg.style] || ACC.minimal)(ctx, this.M, add);
+    if(def.fur) acc.traverse(o => { if(o.isMesh) o.renderOrder = 3; });
+    this.puppet.add(acc);
+    if(this.coat){ const nv = geo.attributes.position.count, ones = ONES.get(nv) || (ONES.set(nv, new THREE.BufferAttribute(new Float32Array(nv).fill(1), 1)), ONES.get(nv));
+      this.coat.geometry.setAttribute('aLen', this.main ? new THREE.BufferAttribute(coatClearance(geo, shape.sdf, acc, F.len), 1) : ones); }
+    // paint zones: form + style (blush)
+    const paints = shape.paints.slice();
+    if(STYLES[cfg.style].blush) for(const sx of [-1,1]){ const x = sx*(ctx.eyeX+.085), y = ctx.eyeY-.1, p = sdfTrace(shape.sdf, x, y, 1.6, 0,0,-1);
+      if(p){ const n = new V3(...sdfGrad(shape.sdf, ...p)), fr = frame(n), m3 = new THREE.Matrix3().set(fr.x.x,fr.x.y,fr.x.z, fr.y.x,fr.y.y,fr.y.z, fr.z.x,fr.z.y,fr.z.z);
+        paints.push({c:p, r:[.075,.048,.04], m:m3, tone:'pink'}); } }
+    this.cur = {cfg, paints, ctx, trims};
+    const occ = ctx.occ.slice(0,8); this.U.uOccCount.value = occ.length; occ.forEach((o,i) => this.U.uOcc.value[i].set(...o));
+    this.eyes = []; acc.traverse(o => { if(o.userData.blink) { o.userData.sy = o.scale.y; this.eyes.push(o); } });
+    // normalise size: body ~1 unit tall, sitting on the floor
+    const b = geo.userData.box, H = b.max[1]-b.min[1], W = b.max[0]-b.min[0];
+    const s = 1/Math.max(H, W*.9); this.scaleBase = s; this.puppet.scale.setScalar(s); this.puppet.position.y = -b.min[1]*s + (F && F.sit ? F.len*F.sit*s : 0);
+    this.contact.scale.set(W*s*1.05, (b.max[2]-b.min[2])*s*1.1, 1);
+    this.applyLook(cfg);
+    this.root.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(this.puppet), size = box.getSize(new V3()), c = box.getCenter(new V3());
+    if(F) size.addScalar(F.len*s*1.4);
+    this.fit = {c, size};
+  }
+  setSize(w, h){ this.renderer.setSize(w, h, false); this.camera.aspect = w/h; this.camera.updateProjectionMatrix(); }
+  place(margin=1.28, instant=false){
+    const {c, size} = this.fit, cam = this.camera, t = Math.tan(cam.fov*PI/360);
+    const halfH = Math.max(size.y/2, size.x/2/cam.aspect*1.02, .5) * margin;
+    const d = halfH/t + size.z*.5;
+    if(!this.view || instant) this.view = {c:c.clone(), d};
+    else { this.view.c.lerp(c, .14); this.view.d += (d - this.view.d)*.14; }
+    const e = this.elev, v = this.view;
+    cam.position.set(v.c.x, v.c.y + Math.sin(e)*v.d, v.c.z + Math.cos(e)*v.d); cam.lookAt(v.c.x, v.c.y + size.y*.02, v.c.z);
+  }
+  render(){ this.renderer.render(this.scene, this.camera); }
+}
+
+/* =====================================================================
+   11. App: state, i18n, UI, turntable loop, thumbnails, downloads
+   ===================================================================== */
+const MAIN_RES = 132, THUMB_RES = 70, THUMB_PX = 240, BASE_YAW = -.3;
+const FRAME = VIEW ? 1.4 : 1.5;   // camera margin around the character; the full-window viewer frames a little tighter
+const $ = s => document.querySelector(s);
+const ICONS = {
+  globe:'<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
+  check:'<path d="M20 6 9 17l-5-5"/>', x:'<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  shuffle:'<path d="m18 14 4 4-4 4"/><path d="m18 2 4 4-4 4"/><path d="M2 18h1.973a4 4 0 0 0 3.3-1.7l5.454-8.6a4 4 0 0 1 3.3-1.7H22"/><path d="M2 6h1.972a4 4 0 0 1 3.6 2.2"/><path d="M22 18h-6.041a4 4 0 0 1-3.3-1.8l-.359-.45"/>',
+  reset:'<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
+  pause:'<rect x="14" y="4" width="4" height="16" rx="1"/><rect x="6" y="4" width="4" height="16" rx="1"/>', play:'<polygon points="6 3 20 12 6 21 6 3"/>',
+  image:'<rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>',
+  download:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>',
+  copy:'<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  left:'<path d="m15 18-6-6 6-6"/>', right:'<path d="m9 18 6-6-6-6"/>',
+  sparkles:'<path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/>',
+  pipette:'<path d="m2 22 1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z"/>',
+  palette:'<circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/>',
+  chevDown:'<path d="m6 9 6 6 6-6"/>', code:'<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>', move:'<path d="M18 8 22 12 18 16"/><path d="M6 8 2 12 6 16"/><path d="M2 12h20"/>'
+};
+const icon = (n, cls='') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n]}</svg>`;
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+/* ---------- language ---------- */
+function matchLang(v){ const t = String(v||'').trim().replace(/_/g,'-').toLowerCase(); if(!t) return null;
+  if(t==='zh'||t.startsWith('zh-')){ const p=t.split('-'); if(p.includes('hant')) return 'zh-Hant'; if(p.includes('hans')) return 'zh-Hans'; return p.some(x=>['tw','hk','mo'].includes(x)) ? 'zh-Hant' : 'zh-Hans'; }
+  const exact = LANG_CODES.find(k => k.toLowerCase()===t); if(exact) return exact; const b = t.split('-')[0]; return I18N[b] ? b : null; }
+const params = new URLSearchParams(location.search);
+const requestedLang = matchLang((PRESET && PRESET.lang) || params.get('lang'));
+const autoLang = requestedLang || (navigator.languages?.length ? navigator.languages : [navigator.language]).map(matchLang).find(Boolean) || 'en';
+let manualLang = null; try{ if(!requestedLang) manualLang = matchLang(localStorage.getItem('dot-language-override')); }catch{}
+let lang = manualLang || autoLang;
+const T = k => I18N[lang].ui[k] ?? I18N.en.ui[k];
+const list = (k, l=lang) => I18N[l][k].split(',');
+const shapeName = (id,l) => list('shapes',l)[SHAPE_IDS.indexOf(id)];
+const styleName = (id,l) => list('styles',l)[STYLE_IDS.indexOf(id)];
+const matName = (id,l) => list('materials',l)[MATERIAL_IDS.indexOf(id)];
+const presetOf = hex => COLOR_PRESETS.find(c => c.hex.toUpperCase() === String(hex).toUpperCase());
+const colorName = (hex,l) => { const p = presetOf(hex); return p ? list('colors',l)[COLOR_PRESETS.indexOf(p)] : hex.toUpperCase(); };
+
+/* ---------- state ---------- */
+const pick = (v, ids, d) => ids.includes(v) ? v : d;
+const opt = k => VIEW && VIEW[k] != null ? VIEW[k] : PRESET && PRESET[k] != null ? String(PRESET[k]) : params.get(k);
+const state = { shape: pick(opt('shape'), SHAPE_IDS, 'cloud'), material: pick(opt('material'), MATERIAL_IDS, 'plush'),
+  style: pick(opt('style'), STYLE_IDS, 'gentleman'), color: normHex(opt('color')) || '#FFCC38' };
+state.gender = pick(opt('gender'), ['male','female'], styleGender(state.style) === 'f' ? 'female' : 'male');
+if(!styleFits(state.style, state.gender)) state.style = state.gender === 'female' ? 'lady' : 'gentleman';
+let step = cl(parseInt(opt('step'),10) || 0, 0, 3);
+const ui = { custom:false };
+let recent = []; try{ recent = JSON.parse(localStorage.getItem('dot-recent-colors')||'[]').filter(normHex).slice(0,8); }catch{}
+const cfg = () => ({...state});
+
+/* ---------- 3D setup ---------- */
+let main = null, thumb = null;
+const stage = $('#stage');
+try{
+  const cv = document.createElement('canvas'); cv.className = 'gl'; cv.setAttribute('aria-hidden','true'); stage.prepend(cv);
+  main = new Studio(cv, {main:true});
+  if(!VIEW){ const tc = document.createElement('canvas'); tc.width = tc.height = THUMB_PX; thumb = new Studio(tc, {main:false}); thumb.setSize(THUMB_PX, THUMB_PX); }
+}catch(err){ console.warn('WebGL unavailable', err); main = null; thumb = null; stage.querySelector('canvas.gl')?.remove(); }
+if(MARK && main){
+  main.scene.background = null;
+  main.renderer.setClearColor(0x000000, 0);
+  if(main.ground) main.ground.visible = false;
+  if(main.contact) main.contact.visible = false;
+}
+
+function resize(){ if(!main) return; const r = stage.getBoundingClientRect(); main.setSize(Math.max(1,r.width), Math.max(1,r.height)); dirty = true; }
+let dirty = true, popT = 1, T0 = 0, motion = !(VIEW && VIEW.motion === false) && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+function rebuildMain(){ if(!main) return; const t0 = performance.now(); main.build(cfg(), MAIN_RES); popT = 0; dirty = true; if(performance.now()-t0 > 120) console.info('build', (performance.now()-t0).toFixed(0)+'ms'); }
+
+/* ---------- turntable interaction ---------- */
+const drag = {on:false, x:0, y:0, yaw:VIEW && +VIEW.yaw || 0, vel:0, touched:false};
+if(main){
+  const cv = main.renderer.domElement;
+  cv.addEventListener('pointerdown', e => { resetT = -1; drag.on = true; drag.x = e.clientX; drag.y = e.clientY; drag.vel = 0; cv.setPointerCapture(e.pointerId); });
+  cv.addEventListener('pointermove', e => { if(!drag.on) return; const dx = e.clientX-drag.x, dy = e.clientY-drag.y; drag.x = e.clientX; drag.y = e.clientY;
+    drag.yaw += dx*.0105; drag.vel = dx*.6; main.elev = cl(main.elev + dy*.004, -.08, .62); dirty = true;
+    if(!drag.touched){ drag.touched = true; $('#hint').classList.add('gone'); } });
+  const up = () => { drag.on = false; }; cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+  cv.addEventListener('dblclick', () => resetView());
+  new ResizeObserver(resize).observe(stage);
+}
+// Reset glides back to the front view with a little bounce, so it always visibly answers the click.
+let resetT = -1, resetFrom = null;
+function resetView(){ if(!main) return; resetFrom = {yaw: drag.yaw, elev: main.elev}; resetT = 0; drag.vel = 0; popT = 0; dirty = true; }
+
+let nextBlink = 2, blinkT = -1, last = performance.now();
+// While the stage is scrolled out of view (e.g. a host page's reader is further down), draw nothing at all.
+let onScreen = true, live = motion ? 1 : 0, looping = false, lastDraw = 0;
+function kick(){ if(!looping){ looping = true; last = performance.now(); requestAnimationFrame(loop); } }
+if('IntersectionObserver' in window && !MARK) new IntersectionObserver(([e]) => {
+  onScreen = e.isIntersecting; document.documentElement.classList.toggle('offscreen', !onScreen);
+  if(onScreen){ dirty = true; kick(); scheduleThumbWork(); } }).observe(stage);
+if(MARK){ onScreen = true; dirty = true; kick(); }
+function loop(now){
+  if(!onScreen){ looping = false; return; }
+  requestAnimationFrame(loop);
+  const dt = Math.min(.05, (now-last)/1000); last = now;
+  if(main){
+    if(!drag.on && Math.abs(drag.vel) > .001){ drag.yaw += drag.vel*dt*.9; drag.vel *= Math.pow(.02, dt); dirty = true; }
+    if(resetT >= 0){ resetT = Math.min(1, resetT + dt*2.2); const k = 1 - Math.pow(1 - resetT, 3);
+      drag.yaw = resetFrom.yaw*(1 - k); main.elev = resetFrom.elev + (.12 - resetFrom.elev)*k; dirty = true;
+      if(resetT >= 1){ resetT = -1; if(live < .2) T0 = 0; } }
+    // idle motion fades in and out: pausing glides the character back to the front instead of freezing mid-sway
+    const liveTo = motion && resetT < 0 ? 1 : 0;
+    if(Math.abs(live - liveTo) > .002){ live += (liveTo - live)*Math.min(1, dt*4); dirty = true; } else live = liveTo;
+    if(live > 0){ T0 += dt; dirty = true; }
+    const sway = Math.sin(T0*.45)*.3*live;
+    main.root.rotation.y = BASE_YAW + drag.yaw + sway;
+    const s = main.scaleBase;
+    let pop = 1; if(popT < 1){ popT = Math.min(1, popT + dt*1.6); pop = 1 - .07*Math.exp(-popT*7)*Math.cos(popT*16); dirty = true; }
+    const br = Math.sin(T0*1.9)*.01*live;
+    main.puppet.scale.set(s*pop*(1-br*.45), s*pop*(1+br), s*pop*(1-br*.45));
+    if(motion){ nextBlink -= dt; if(nextBlink < 0){ blinkT = 0; nextBlink = 2.4 + Math.random()*3.2; } }
+    if(blinkT >= 0){ blinkT += dt; const k = blinkT > .15 ? 1 : 1 - Math.sin(blinkT/.15*PI)*.9; for(const e of main.eyes) e.scale.y = e.userData.sy*k; if(blinkT > .15) blinkT = -1; }
+    const active = drag.on || Math.abs(drag.vel) > .001 || popT < 1 || resetT >= 0 || !isSettled();
+    if(dirty && (active || now - lastDraw > 15.5)){ lastDraw = now;
+      main.coatMat.uniforms.uTime.value = T0; main.place(FRAME); main.render(); announceReady(); dirty = live > 0 || resetT >= 0 || popT < 1 || Math.abs(drag.vel) > .001 || !isSettled(); }
+  }
+}
+function isSettled(){ if(!main.view) return true; const {c} = main.fit; return main.view.c.distanceTo(c) < 1e-3; }
+
+/* ---------- thumbnails ---------- */
+let jobs = [];
+function thumbCfg(kind, id){
+  if(kind === 'shape') return {shape:id, color:state.color, material:state.material, style:'minimal', gender:state.gender};
+  if(kind === 'material') return {shape:state.shape, color:state.color, material:id, style:'minimal', gender:state.gender};
+  return {shape:state.shape, color:state.color, material:state.material, style:id, gender:state.gender};
+}
+function scheduleThumbs(){
+  if(!thumb) return; jobs = [];
+  document.querySelectorAll('#card canvas[data-kind]').forEach(cv => { const c = thumbCfg(cv.dataset.kind, cv.dataset.id), key = [c.shape,c.color,c.material,c.style,c.gender].join('|');
+    if(cv.dataset.key !== key){ jobs.push({cv, c, key}); } });
+  // selected option first, then in reading order
+  jobs.sort((a,b) => (b.cv.closest('[aria-pressed="true"]')?1:0) - (a.cv.closest('[aria-pressed="true"]')?1:0));
+  scheduleThumbWork();
+}
+// Thumbnails render in idle time after the first frame, never in the frame loop: each one is a full
+// sculpt + render, and on a slow phone a batch of them would starve the page sharing this thread.
+let thumbQueued = false;
+function scheduleThumbWork(){
+  if(thumbQueued || !thumb || !jobs.length || !announced || !onScreen) return; thumbQueued = true;
+  const run = deadline => { thumbQueued = false; processThumbs(deadline); scheduleThumbWork(); };
+  if('requestIdleCallback' in window) requestIdleCallback(run, {timeout: 800}); else setTimeout(() => run(null), 50);
+}
+function processThumbs(deadline){
+  if(!thumb || !jobs.length) return; const t0 = performance.now(); let n = 0;
+  while(jobs.length && (n === 0 || (deadline ? deadline.timeRemaining() > 12 : performance.now()-t0 < 14))){ const j = jobs.shift(); if(!j.cv.isConnected) continue; n++;
+    thumb.build(j.c, THUMB_RES); thumb.root.rotation.y = BASE_YAW*.8; thumb.elev = .1; thumb.place(j.cv.dataset.kind === 'material' ? 1.02 : 1.14, true); thumb.render();
+    const x = j.cv.getContext('2d'); x.clearRect(0,0,THUMB_PX,THUMB_PX); x.drawImage(thumb.renderer.domElement, 0, 0, THUMB_PX, THUMB_PX);
+    j.cv.dataset.key = j.key; j.cv.classList.add('ready'); }
+}
+
+/* ---------- rendering the UI ---------- */
+function renderStatic(){
+  const html = document.documentElement; html.lang = lang; html.dir = lang === 'ar' ? 'rtl' : 'ltr';
+  document.title = VIEW ? `${shapeName(state.shape)} · ${styleName(state.style)}` : T('brand'); $('#brand').textContent = T('brand'); $('#lang-label').textContent = T('language');
+  const sel = $('#lang'); sel.setAttribute('aria-label', T('language'));
+  sel.innerHTML = `<option value="auto">${esc(T('auto'))} · ${esc(I18N[autoLang].name)}</option>` + LANG_CODES.map(k => `<option value="${k}">${esc(I18N[k].name)}</option>`).join('');
+  sel.value = manualLang || 'auto';
+  for(const [id,k] of [['t-title','title'],['t-note','note'],['t-footer','footer'],['t-live','live']]) $('#'+id).textContent = T(k);
+  $('#btn-random').innerHTML = icon('shuffle') + `<span>${esc(T('random'))}</span>`; $('#btn-random').setAttribute('aria-label', T('random'));
+  $('#btn-reset').innerHTML = icon('reset'); $('#btn-reset').dataset.tip = T('resetView'); $('#btn-reset').setAttribute('aria-label', T('resetView'));
+  $('#btn-png').innerHTML = icon('image'); $('#btn-png').dataset.tip = T('savePng'); $('#btn-png').setAttribute('aria-label', T('savePng'));
+  renderMotionBtn();
+  $('#hint').innerHTML = icon('move') + esc(T('dragHint'));
+  $('#dlg-close').innerHTML = icon('x'); $('#dlg-close').setAttribute('aria-label', T('close'));
+  $('#dlg-title').textContent = T('readyTitle'); $('#dlg-note').textContent = T('readyNote');
+  const opt = (ic, k, note) => `<span class="ic">${icon(ic)}</span><span><b>${esc(T(k))}</b><small>${esc(T(note))}</small></span>${icon('download','go')}`;
+  $('#dlg-html').innerHTML = opt('code', 'saveHtml', 'saveHtmlNote'); $('#dlg-png').innerHTML = opt('image', 'savePreview', 'savePngNote');
+  if(!main && !stage.querySelector('.nogl')){ stage.insertAdjacentHTML('beforeend', `<div class="nogl"><div><div class="dot" id="nogl-dot"></div><p id="nogl-text"></p></div></div>`); }
+  if(!main){ $('#nogl-text').textContent = T('noGL'); $('#nogl-dot').style.background = state.color; $('#hint').hidden = true; for(const b of ['#btn-motion','#btn-reset','#btn-png']) $(b).hidden = true; }
+}
+function renderMotionBtn(){ const b = $('#btn-motion'); b.innerHTML = icon(motion ? 'pause' : 'play'); b.setAttribute('aria-pressed', String(motion)); b.dataset.tip = T('motion'); b.setAttribute('aria-label', T('motion')); }
+const STEP_KEYS = [['stepShape','chooseShape'],['stepColor','chooseColor'],['stepMaterial','chooseMaterial'],['stepStyle','chooseStyle']];
+function stepValue(i){ return [`${shapeName(state.shape)} · ${T(state.gender === 'female' ? 'girl' : 'boy')}`, colorName(state.color), matName(state.material), styleName(state.style)][i]; }
+function renderSteps(){
+  $('#steps').setAttribute('aria-label', T('eyebrow'));
+  $('#steps').innerHTML = STEP_KEYS.map(([k],i) => `<button class="step-btn" data-step="${i}" ${i===step?'aria-current="step"':''}><small>${i+1} / 4${i===1?`<i class="sw" style="background:${state.color}"></i>`:''}</small><b>${esc(T(k))}</b><em>${esc(stepValue(i))}</em></button>`).join('');
+  $('#btn-back').innerHTML = icon('left','flip') + esc(T('back')); $('#btn-back').hidden = step === 0;
+  $('#btn-next').innerHTML = step === 3 ? icon('download') + esc(T('create')) : esc(T('next')) + icon('right','flip');
+  $('#btn-next').disabled = step === 3 && !main;
+}
+function optHTML(kind, id, label, pressed){
+  return `<button class="opt" data-kind="${kind}" data-id="${id}" aria-pressed="${pressed}"><div class="thumb"><span class="ph"></span><canvas data-kind="${kind}" data-id="${id}" width="${THUMB_PX}" height="${THUMB_PX}"></canvas><span class="badge">${icon('check')}</span></div><span class="lbl">${esc(label)}</span></button>`;
+}
+function renderCard(){
+  // gender is part of the character itself: it shapes the face (lashes) and which styles are offered later
+  const seg = `<div class="seg" role="group" aria-label="${esc(T('gender'))}">` + ['male','female'].map(g => `<button class="seg-btn" data-gender="${g}" aria-pressed="${state.gender===g}">${esc(T(g==='female'?'girl':'boy'))}</button>`).join('') + '</div>';
+  const card = $('#card'); let h = `<div class="card-head${step === 0 ? ' has-seg' : ''}"><h2>${esc(T(STEP_KEYS[step][1]))}</h2>${step === 0 ? seg : '<span id="card-meta"></span>'}</div>`;
+  if(step === 0){
+    for(const g of ['classic','animals','fantasy']){ h += `<div class="group-title">${esc(T('group'+g[0].toUpperCase()+g.slice(1)))}</div><div class="grid">` + SHAPE_IDS.filter(id => shapeGroup(id)===g).map(id => optHTML('shape', id, shapeName(id), id===state.shape)).join('') + '</div>'; }
+  } else if(step === 1){
+    h += `<div class="group-title">${esc(T('palette'))}</div><div class="swatches">` + COLOR_PRESETS.map((c,i) => `<button class="swatch" data-color="${c.hex}" aria-pressed="false" title="${c.hex}"><span class="chip" style="--c:${c.hex}"></span><span class="lbl">${esc(list('colors')[i])}</span></button>`).join('') + '</div>';
+    h += `<div class="row-actions"><button class="pill" id="toggle-custom" aria-expanded="${ui.custom}"><span class="mini"></span><span>${esc(T('custom'))}</span></button></div>`;
+    h += `<div class="custom" id="custom" ${ui.custom?'':'hidden'}><span class="preview" id="c-prev"></span><div class="hexrow"><label class="hexin"><span>#</span><input id="c-hex" maxlength="7" spellcheck="false" autocomplete="off" aria-label="${esc(T('custom'))} HEX"></label>
+      <button class="pill" id="c-system">${icon('palette')}<span>${esc(T('system'))}</span></button>${'EyeDropper' in window ? `<button class="pill" id="c-drop">${icon('pipette')}<span>${esc(T('eyedropper'))}</span></button>` : ''}<input type="color" class="native" id="c-native" tabindex="-1" aria-hidden="true"></div>
+      <div class="sliders">${[['L','lightness'],['C','chroma'],['H','hue']].map(([k,n]) => `<label class="slider"><span>${esc(T(n))}</span><input type="range" id="c-${k}" min="0" max="1000" step="1"><output id="o-${k}"></output></label>`).join('')}</div>
+      ${recent.length ? `<div class="hexrow" style="grid-column:1/-1">${recent.map(hx => `<button class="tone" style="--c:${hx};width:26px" data-color="${hx}" title="${hx}" aria-label="${hx}" aria-pressed="false"></button>`).join('')}</div>` : ''}</div>`;
+  } else if(step === 2){
+    for(const g of ['soft','ceramic','clear']){ h += `<div class="group-title">${esc(T('group'+(g==='ceramic'?'Ceramic':g==='soft'?'Soft':'Clear')))}</div><div class="grid">` + MATERIALS.filter(m => m.group===g).map(m => optHTML('material', m.id, matName(m.id), m.id===state.material)).join('') + '</div>'; }
+  } else {
+    const own = state.gender === 'female' ? 'f' : 'm';
+    h += `<div class="group-title">${esc(T(own==='f'?'forGirls':'forBoys'))}</div><div class="grid">` + STYLE_ORDER.filter(id => styleGender(id)===own).map(id => optHTML('style', id, styleName(id), id===state.style)).join('') + '</div>';
+    h += `<div class="group-title">${esc(T('forAll'))}</div><div class="grid">` + STYLE_ORDER.filter(id => styleGender(id)==='u').map(id => optHTML('style', id, styleName(id), id===state.style)).join('') + '</div>';
+  }
+  card.innerHTML = h; syncSelection(); if(step === 1) syncCustom(); scheduleThumbs();
+}
+function syncSelection(){
+  document.querySelectorAll('#card [data-kind]').forEach(b => { if(b.tagName==='BUTTON') b.setAttribute('aria-pressed', String(state[b.dataset.kind] === b.dataset.id)); });
+  document.querySelectorAll('#card [data-color]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.color.toUpperCase() === state.color.toUpperCase())));
+  const meta = $('#card-meta'); if(meta) meta.textContent = step === 1 ? state.color.toUpperCase() : '';
+  document.querySelectorAll('.step-btn em').forEach((e,i) => e.textContent = stepValue(i));
+  const sw = document.querySelector('.step-btn .sw'); if(sw) sw.style.background = state.color;
+  $('#caption-title').textContent = `${shapeName(state.shape)} · ${styleName(state.style)}`;
+  $('#caption-sub').textContent = `${colorName(state.color)} · ${matName(state.material)}`;
+  const q = new URLSearchParams(location.search); q.set('shape', state.shape); q.set('color', state.color.slice(1)); q.set('material', state.material); q.set('style', state.style); q.set('gender', state.gender); q.set('step', step);
+  if(manualLang) q.set('lang', manualLang); if(!VIEW && !EMBED) history.replaceState(null, '', '?' + q.toString());
+}
+let lch = hexToOklch(state.color);
+function syncCustom(fromSlider){
+  const box = $('#custom'); if(!box) return; const hx = state.color;
+  if(!fromSlider) lch = hexToOklch(hx);
+  $('#c-prev').style.setProperty('--c', hx); if(document.activeElement !== $('#c-hex')) $('#c-hex').value = hx.slice(1);
+  const [L,C,H] = lch; $('#c-L').value = Math.round(cl((L-.12)/.86,0,1)*1000); $('#c-C').value = Math.round(cl(C/.3,0,1)*1000); $('#c-H').value = Math.round(H/360*1000);
+  $('#o-L').textContent = Math.round(L*100); $('#o-C').textContent = Math.round(C/.3*100); $('#o-H').textContent = Math.round(H) + '°';
+  const stops = (fn, n=12) => Array.from({length:n+1}, (_,i) => fn(i/n)).join(',');
+  $('#c-H').style.setProperty('--track', `linear-gradient(90deg,${stops(t => oklchToHex(L, Math.max(C,.08), t*360))})`);
+  $('#c-C').style.setProperty('--track', `linear-gradient(90deg,${stops(t => oklchToHex(L, t*.3, H), 6)})`);
+  $('#c-L').style.setProperty('--track', `linear-gradient(90deg,${stops(t => oklchToHex(.12+t*.86, C, H), 6)})`);
+  $('#c-native').value = hx.toLowerCase();
+}
+
+/* ---------- actions ---------- */
+function setColor(hex, {fromSlider=false, remember=false}={}){
+  const h = normHex(hex); if(!h) return; state.color = h;
+  if(main){ main.applyLook(cfg()); dirty = true; }
+  if(remember && !presetOf(h)){ recent = [h, ...recent.filter(x => x!==h)].slice(0,8); try{ localStorage.setItem('dot-recent-colors', JSON.stringify(recent)); }catch{} }
+  syncSelection(); syncCustom(fromSlider);
+  if(!main){ const d = $('#nogl-dot'); if(d) d.style.background = h; }
+}
+function setGender(g){ if(state.gender === g) return; state.gender = g; if(!styleFits(state.style, g)) state.style = g === 'female' ? 'lady' : 'gentleman'; rebuildMain(); renderSteps(); renderCard(); }
+function setOption(kind, id){ if(state[kind] === id) return; state[kind] = id; rebuildMain(); syncSelection(); scheduleThumbs(); }
+function goStep(i){ step = cl(i,0,3); renderSteps(); renderCard();
+  // inside an iframe scrollIntoView would also scroll the host page, so only the option list is reset there
+  if(EMBED) $('#card').scrollTop = 0; else document.querySelector('.panel').scrollIntoView({block:'nearest', behavior:'smooth'}); }
+
+$('#card').addEventListener('click', e => {
+  const gb = e.target.closest('[data-gender]'); if(gb){ setGender(gb.dataset.gender); return; }
+  const o = e.target.closest('.opt'); if(o){ setOption(o.dataset.kind, o.dataset.id); return; }
+  const c = e.target.closest('[data-color]'); if(c){ setColor(c.dataset.color, {remember: c.classList.contains('tone')}); return; }
+  if(e.target.closest('#toggle-custom')){ ui.custom = !ui.custom; renderCard(); if(ui.custom) $('#c-hex')?.focus(); return; }
+  if(e.target.closest('#c-system')){ $('#c-native').click(); return; }
+  if(e.target.closest('#c-drop')){ new window.EyeDropper().open().then(r => setColor(r.sRGBHex, {remember:true})).catch(()=>{}); return; }
+});
+$('#card').addEventListener('input', e => {
+  const id = e.target.id;
+  if(id === 'c-L' || id === 'c-C' || id === 'c-H'){ const L = .12 + $('#c-L').value/1000*.86, C = $('#c-C').value/1000*.3, H = $('#c-H').value/1000*360; lch = [L,C,H]; setColor(oklchToHex(L,C,H), {fromSlider:true}); }
+  else if(id === 'c-hex'){ const h = normHex(e.target.value); if(h) setColor(h); }
+  else if(id === 'c-native'){ setColor(e.target.value); }
+});
+$('#card').addEventListener('change', e => { if(['c-L','c-C','c-H','c-hex','c-native'].includes(e.target.id)) setColor(state.color, {remember:true, fromSlider: e.target.type==='range'}); });
+$('#steps').addEventListener('click', e => { const b = e.target.closest('[data-step]'); if(b) goStep(+b.dataset.step); });
+$('#btn-back').addEventListener('click', () => goStep(step-1));
+$('#btn-next').addEventListener('click', () => step < 3 ? goStep(step+1) : openDownload());
+$('#btn-random').addEventListener('click', randomize);
+$('#btn-reset').addEventListener('click', resetView);
+$('#btn-motion').addEventListener('click', () => { motion = !motion; renderMotionBtn(); dirty = true; });
+let toastTimer = 0;
+function toast(msg, ic = 'check'){ const t = $('#toast'); t.innerHTML = icon(ic) + esc(msg); t.classList.add('on'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('on'), 2000); }
+$('#btn-png').addEventListener('click', () => {
+  const f = $('#flash'); f.classList.remove('on'); void f.offsetWidth; f.classList.add('on');
+  download(snapshot(1024), pngName()); toast(T('saved'), 'download');
+});
+$('#lang').addEventListener('change', e => { manualLang = e.target.value === 'auto' ? null : matchLang(e.target.value); lang = manualLang || autoLang;
+  try{ manualLang ? localStorage.setItem('dot-language-override', manualLang) : localStorage.removeItem('dot-language-override'); }catch{}
+  renderStatic(); renderSteps(); renderCard(); if($('#dlg').open) fillDownload(); });
+
+function randomize(){
+  const r = a => a[Math.floor(Math.random()*a.length)];
+  state.shape = r(SHAPE_IDS); state.gender = Math.random() < .5 ? 'female' : 'male'; state.style = r(STYLE_IDS.filter(id => styleFits(id, state.gender)));
+  state.material = Math.random() < .45 ? 'plush' : r(MATERIAL_IDS);
+  state.color = r(COLOR_PRESETS).hex;
+  rebuildMain(); renderSteps(); renderCard();
+}
+
+/* ---------- downloads: live 3D HTML page or transparent PNG ---------- */
+// Exports the live 3D view as a transparent PNG: no backdrop, no floor or contact shadow, eyes open,
+// cropped to the character (plus a small margin) so it fills the square.
+function snapshot(size, {transparent=true, pad=.06}={}){
+  if(!main) return null; const r = main.renderer, pr = r.getPixelRatio(), prev = r.getSize(new THREE.Vector2());
+  const sc = main.scene, bg = sc.background, hide = [main.contact, main.ground].filter(Boolean), big = Math.round(size*1.6);
+  for(const e of main.eyes) e.scale.y = e.userData.sy; main.puppet.scale.setScalar(main.scaleBase);
+  if(transparent){ sc.background = null; r.setClearColor(0x000000, 0); hide.forEach(o => o.visible = false); }
+  r.setPixelRatio(1); main.setSize(big, big); main.place(1.22, true); main.render();
+  const src = document.createElement('canvas'); src.width = src.height = big; const sx = src.getContext('2d', {willReadFrequently:true}); sx.drawImage(r.domElement, 0, 0);
+  if(transparent){ sc.background = bg; hide.forEach(o => o.visible = true); }
+  r.setPixelRatio(pr); main.setSize(prev.x, prev.y); main.place(FRAME, true); main.render(); dirty = true;
+  let x0 = big, y0 = big, x1 = -1, y1 = -1;
+  if(transparent){ const a = sx.getImageData(0, 0, big, big).data;
+    for(let y=0;y<big;y++){ const o = y*big*4; for(let x=0;x<big;x++) if(a[o+x*4+3] > 10){ if(x<x0) x0=x; if(x>x1) x1=x; if(y<y0) y0=y; if(y>y1) y1=y; } } }
+  if(x1 < 0){ x0 = y0 = 0; x1 = y1 = big-1; }
+  const side = Math.max(x1-x0, y1-y0)*(1 + pad*2), cx = (x0+x1)/2, cy = (y0+y1)/2;
+  const out = document.createElement('canvas'); out.width = out.height = size;
+  out.getContext('2d').drawImage(src, cx - side/2, cy - side/2, side, side, 0, 0, size, size);
+  return out.toDataURL('image/png');
+}
+const baseName = () => `dot-character-${state.shape}-${state.material}`;
+const pngName = () => baseName() + '.png';
+function download(url, name){ if(!url) return; const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); }
+// This page again, opening straight into a full-window 3D view of the current character at the current angle.
+// Downloaded pages load three.js from jsDelivr: a file opened from disk cannot import a site's own copy (no CORS).
+const CDN_IMPORTMAP = '{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}';
+function characterHTML(){
+  const view = {shape:state.shape, color:state.color, material:state.material, style:state.style, gender:state.gender, yaw:+drag.yaw.toFixed(3), motion};
+  return PAGE_SRC.replace(/<link rel="modulepreload"[^>]*>\n?/g, '')
+    .replace(/(<script type="importmap">)[\s\S]*?(<\/script>)/, `$1\n${CDN_IMPORTMAP}\n$2`)
+    .replace('<script type="module">', `<script>window.DOT_VIEW = ${JSON.stringify(view)};<\/script>\n<script type="module">`);
+}
+function downloadHTML(){ const url = URL.createObjectURL(new Blob([characterHTML()], {type:'text/html'})); download(url, baseName() + '.html'); setTimeout(() => URL.revokeObjectURL(url), 1500); }
+function fillDownload(){
+  $('#dlg-tags').innerHTML = [shapeName(state.shape), `<i style="--c:${state.color}"></i>${esc(colorName(state.color))}`, matName(state.material), styleName(state.style)].map((t,i) => `<span class="tag">${i===1?t:esc(t)}</span>`).join('');
+  $('#dlg-status').textContent = '';
+}
+function openDownload(){ if(!main) return; const shot = snapshot(768), img = $('#dlg-img'); if(shot){ img.src = shot; img.alt = `${shapeName(state.shape)} · ${styleName(state.style)}`; } else img.parentElement.hidden = true; fillDownload(); $('#dlg').showModal(); }
+$('#dlg-close').addEventListener('click', () => $('#dlg').close());
+$('#dlg-html').addEventListener('click', () => { downloadHTML(); $('#dlg-status').textContent = T('saved'); });
+$('#dlg-png').addEventListener('click', () => { download(snapshot(1024), pngName()); $('#dlg-status').textContent = T('saved'); });
+
+/* ---------- boot ---------- */
+// Precompile every finish in the background so switching materials never stalls.
+async function warmup(st, res){
+  if(!st || !st.renderer.compileAsync) return;
+  const geo = buildBodyGeometry(state.shape, res), g = new THREE.Group();
+  for(const m of MATERIALS){ const me = new THREE.Mesh(geo, st.bodyMat(m.id)); me.scale.setScalar(1e-6); g.add(me); }
+  const fm = new THREE.Mesh(geo, st.furMat); fm.scale.setScalar(1e-6); g.add(fm);
+  const cm = new THREE.Mesh(geo, st.coatMat); cm.scale.setScalar(1e-6); g.add(cm);
+  const sp = new THREE.SphereGeometry(1,8,6); for(const k in st.M){ const me = new THREE.Mesh(sp, st.M[k]); me.castShadow = me.receiveShadow = true; me.scale.setScalar(1e-6); g.add(me); }
+  st.scene.add(g); try{ await st.renderer.compileAsync(st.scene, st.camera); }catch(e){} st.scene.remove(g);
+}
+// Embed: tell the host page once the first 3D frame is on screen (or 3D is unavailable) so it can drop its placeholder.
+let announced = false;
+function announceReady(){ if(announced) return; announced = true; window.__dotStudioReady = true; scheduleThumbWork();
+  try{ const host = window.frameElement && window.frameElement.parentElement; if(host) host.setAttribute('data-studio', 'ready'); }catch(e){}
+  if(EMBED && parent !== window) parent.postMessage({type:'dot-studio:ready', webgl:!!main}, location.origin);
+  if(MARK && window.ReactNativeWebView) try{ window.ReactNativeWebView.postMessage(JSON.stringify({type:'paint'})); }catch(e){} }
+renderStatic(); renderSteps(); renderCard(); resize(); rebuildMain(); kick();
+if(!main) announceReady();
+// Warm up only where shaders compile off the main thread; elsewhere a finish compiles when first chosen,
+// instead of freezing the page (and a host page sharing this thread) for every finish at once.
+if(main && main.renderer.extensions.has('KHR_parallel_shader_compile'))
+  setTimeout(() => { warmup(main, MAIN_RES).then(() => warmup(thumb, THUMB_RES)); }, 400);
+window.__dot = { state, get main(){ return main; }, get thumb(){ return thumb; }, setOption, setColor, goStep, snapshot, characterHTML };
+</script>
+</body>
+</html>

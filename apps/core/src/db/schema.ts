@@ -33,10 +33,13 @@ export const agents = pgTable(
     notify: boolean("notify").notNull().default(true),
     pinned: boolean("pinned").notNull().default(false),
     hidden: boolean("hidden").notNull().default(false),
-    // Bot mark (bot info page): shape id + hex color + optional photo URL.
+    // Bot mark (bot info page): Dot shape + color + material + optional photo.
     // Null means the legacy hash-colored face — old rows keep working.
     markShape: text("mark_shape"),
     markColor: text("mark_color"),
+    markMaterial: text("mark_material"),
+    markStyle: text("mark_style"),
+    markGender: text("mark_gender"),
     avatarUrl: text("avatar_url"),
     // Teams (Phase 10): null for top-level hires, parent agent id for subagents.
     parentId: uuid("parent_id"),

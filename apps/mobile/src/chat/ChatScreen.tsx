@@ -229,6 +229,9 @@ export function ChatScreen({
             round
             shape={agent.markShape}
             color={agent.markColor}
+            material={agent.markMaterial}
+            style={agent.markStyle}
+            gender={agent.markGender}
             photo={agent.avatarUrl}
             mood={typing ? "working" : "idle"}
           />
@@ -303,6 +306,9 @@ export function ChatScreen({
                     round
                     shape={author?.markShape ?? null}
                     color={author?.markColor ?? null}
+                    material={author?.markMaterial ?? null}
+                    style={author?.markStyle ?? null}
+                    gender={author?.markGender ?? null}
                     photo={author?.avatarUrl ?? null}
                   />
                 ) : null}
@@ -398,7 +404,17 @@ export function ChatScreen({
         <View style={styles.mentions}>
           {mentionCandidates.map((member) => (
             <Pressable key={member.id} style={styles.mentionRow} onPress={() => pickMention(member.name)}>
-              <Avatar id={member.id} size={24} round shape={member.markShape} color={member.markColor} photo={member.avatarUrl} />
+              <Avatar
+                id={member.id}
+                size={24}
+                round
+                shape={member.markShape}
+                color={member.markColor}
+                material={member.markMaterial}
+                style={member.markStyle}
+                gender={member.markGender}
+                photo={member.avatarUrl}
+              />
               <Text style={styles.mentionName}>{member.name}</Text>
             </Pressable>
           ))}

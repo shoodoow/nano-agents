@@ -64,7 +64,7 @@ describe("notify relay", () => {
     const counts = await relayNotifications(db, push as never, receipts as never, account.id);
     expect(push).toHaveBeenCalledTimes(1);
     expect(counts.pushed).toBe(1);
-    expect(await pendingFor(account.id)).toHaveLength(0);
+    expect((await pendingFor(account.id)).map((row) => row.title)).toEqual(["FYI"]);
   });
 
   it("prunes dead tokens and fails visibly with no devices", async () => {
@@ -79,8 +79,8 @@ describe("notify relay", () => {
 
     await saveNotification(db, { accountId: account.id, conversationId: room.id, agentId: agent.id, title: "Lost", body: "No device." });
     const counts = await relayNotifications(db, push as never, receipts as never, account.id);
-    expect(counts.failed).toBe(1);
+    expect(counts.failed).toBe(0);
     const rows = await db.select().from(notifications).where(eq(notifications.accountId, account.id));
-    expect(rows.some((row) => row.status === "failed" && (row.error ?? "").includes("No push devices"))).toBe(true);
+    expect(rows.some((row) => row.title === "Lost" && row.status === "pending")).toBe(true);
   });
 });

@@ -29,7 +29,8 @@ export async function relayNotifications(
       const watchers = hasWatchers(note.accountId, note.conversationId);
       const agentNotify = await resolveAgentNotify(db, note.accountId, note.agentId);
       if (!shouldPush({ hasWatchers: watchers, agentNotify, urgency: note.urgency as "info" | "action-needed" })) {
-        await markNotificationSent(db, note.id);
+        // Leave it pending. The phone shows the banner and acks. Marking sent
+        // here dropped the ping, because the iOS app does not read the live stream.
         counts.sent += 1;
         continue;
       }
@@ -38,8 +39,8 @@ export async function relayNotifications(
         .from(devices)
         .where(eq(devices.accountId, note.accountId));
       if (targets.length === 0) {
-        await markNotificationFailed(db, note.id, "No push devices registered for this account.");
-        counts.failed += 1;
+        // No Expo token (simulator, or push not configured). Leave the row
+        // pending so the open phone can show it. Failing here deleted the ping.
         continue;
       }
       const tickets = await push(

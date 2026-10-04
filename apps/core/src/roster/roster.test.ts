@@ -46,6 +46,11 @@ describe("roster", () => {
       modelId: "gpt-5",
       linuxProfile: null,
     });
+    expect(read?.markShape).toBeTruthy();
+    expect(read?.markColor).toMatch(/^#[0-9A-F]{6}$/i);
+    expect(read?.markMaterial).toBeTruthy();
+    expect(read?.markStyle).toBeTruthy();
+    expect(read?.markGender).toMatch(/^(male|female)$/);
     expect(other.linuxProfile).toBeNull();
 
     const flagged = await updateAgentFlags(db, first.id, created.id, {

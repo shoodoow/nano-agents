@@ -140,7 +140,17 @@ export function DesktopScreen({
           <CircleButton label="Back" onPress={onBack}>
             <IconBack />
           </CircleButton>
-          <Avatar id={agent.id} size={22} round shape={agent.markShape} color={agent.markColor} photo={agent.avatarUrl} />
+          <Avatar
+            id={agent.id}
+            size={22}
+            round
+            shape={agent.markShape}
+            color={agent.markColor}
+            material={agent.markMaterial}
+            style={agent.markStyle}
+            gender={agent.markGender}
+            photo={agent.avatarUrl}
+          />
           <Text style={styles.name}>{agent.name}</Text>
         </View>
         <View style={styles.headerSide}>

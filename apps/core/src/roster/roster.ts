@@ -1,4 +1,4 @@
-import { accountSchema, agentCreateSchema, agentProfileSchema } from "@nano-agents/shared";
+import { accountSchema, agentCreateSchema, agentProfileSchema, randomSurpriseMark } from "@nano-agents/shared";
 import { and, eq, sql } from "drizzle-orm";
 import type { getDb, Store } from "../db/client.js";
 import { accounts, agents } from "../db/schema.js";
@@ -53,6 +53,7 @@ export async function createAgent(db: Database, accountId: string, input: unknow
   if (siblings.some((sibling) => sibling.name.toLowerCase() === data.name.toLowerCase())) {
     throw new AgentNameError();
   }
+  const surprise = randomSurpriseMark();
   const [row] = await db
     .insert(agents)
     .values({
@@ -65,6 +66,11 @@ export async function createAgent(db: Database, accountId: string, input: unknow
       provider: data.provider,
       modelId: data.modelId,
       linuxProfile: null,
+      markShape: surprise.markShape,
+      markColor: surprise.markColor,
+      markMaterial: surprise.markMaterial,
+      markStyle: surprise.markStyle,
+      markGender: surprise.markGender,
     })
     .returning();
   if (!row) {
@@ -103,6 +109,9 @@ export async function updateAgentFlags(db: Store, accountId: string, agentId: st
       ...(data.modelId !== undefined ? { modelId: data.modelId } : {}),
       ...(data.markShape !== undefined ? { markShape: data.markShape } : {}),
       ...(data.markColor !== undefined ? { markColor: data.markColor } : {}),
+      ...(data.markMaterial !== undefined ? { markMaterial: data.markMaterial } : {}),
+      ...(data.markStyle !== undefined ? { markStyle: data.markStyle } : {}),
+      ...(data.markGender !== undefined ? { markGender: data.markGender } : {}),
       ...(data.avatarUrl !== undefined ? { avatarUrl: data.avatarUrl } : {}),
       ...(identityTouched ? { promptVersion: sql`${agents.promptVersion} + 1` } : {}),
     })

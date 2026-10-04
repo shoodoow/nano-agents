@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Platform, SafeAreaView, StatusBar, StyleSheet, Text } from "react-native";
+import * as Notifications from "expo-notifications";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
@@ -26,6 +27,7 @@ import { GroupInfoScreen } from "./src/chat/GroupInfoScreen";
 import { ChatScreen, type Bubble } from "./src/chat/ChatScreen";
 import { DesktopScreen } from "./src/desktop/DesktopScreen";
 import { InboxScreen } from "./src/inbox/InboxScreen";
+import { DotBakery } from "./src/ui/DotStage";
 import { NewRoomSheet } from "./src/inbox/NewRoomSheet";
 import { colors } from "./src/theme/tokens";
 import type { GroupFace } from "./src/ui/GroupCluster";
@@ -249,6 +251,38 @@ export default function App() {
   useEffect(() => {
     void refreshSession().catch(show);
   }, [show]);
+
+  useEffect(() => {
+    const id = accountId.trim();
+    if (!id) return;
+    let stopped = false;
+    const shown = new Set<string>();
+    const pull = async (): Promise<void> => {
+      const pending = await core.listNotifications(id).catch(() => []);
+      if (stopped) return;
+      setPendingCount(pending.length);
+      for (const note of pending) {
+        if (shown.has(note.id)) continue;
+        shown.add(note.id);
+        setNote(`${note.title}: ${note.body}`.slice(0, 180));
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: note.title,
+            body: note.body,
+            data: { conversationId: note.conversationId, notificationId: note.id },
+          },
+          trigger: null,
+        }).catch(() => {});
+        await core.ackNotification(id, note.id).catch(() => {});
+      }
+    };
+    void pull();
+    const timer = setInterval(() => void pull(), 4000);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [accountId]);
 
   useEffect(() => {
     configureForegroundBanners();
@@ -502,6 +536,9 @@ export default function App() {
               id: member.agentId,
               markShape: agent?.markShape,
               markColor: agent?.markColor,
+              markMaterial: agent?.markMaterial,
+              markStyle: agent?.markStyle,
+              markGender: agent?.markGender,
               avatarUrl: agent?.avatarUrl,
             };
           }),
@@ -1026,6 +1063,7 @@ export default function App() {
   return (
     <SafeAreaView style={styles.screen}>
       <StatusBar barStyle="light-content" />
+      <DotBakery />
       {screen.name === "inbox" ? (
         <InboxScreen
           agents={agents}

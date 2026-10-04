@@ -4,7 +4,10 @@ import {
   messageCreateSchema,
   roomCreateSchema,
   type AgentProfile,
+  type MarkGender,
+  type MarkMaterial,
   type MarkShape,
+  type MarkStyle,
   type MessageBlock,
 } from "@nano-agents/shared";
 
@@ -49,6 +52,9 @@ export type RosterAgent = {
   hidden: boolean;
   markShape: MarkShape | null;
   markColor: string | null;
+  markMaterial: MarkMaterial | null;
+  markStyle: MarkStyle | null;
+  markGender: MarkGender | null;
   avatarUrl: string | null;
 };
 
@@ -209,6 +215,7 @@ export type CoreClient = {
   ) => () => void;
   registerDevice: (accountId: string, input: { expoPushToken: string; platform?: string | null }) => Promise<{ id: string }>;
   listNotifications: (accountId: string) => Promise<PendingNotification[]>;
+  ackNotification: (accountId: string, notificationId: string) => Promise<{ id: string }>;
   mention: (draft: string, name: string) => string;
   listProposals: (accountId: string) => Promise<Proposal[]>;
   approve: (accountId: string, proposalId: string) => Promise<Proposal[]>;
@@ -283,6 +290,7 @@ export function createCore(
       subscribeMessages(baseUrl, accountId, conversationId, onEvent, fetchImpl, opts),
     registerDevice: (accountId, input) => registerDevice(baseUrl, accountId, input, fetchImpl),
     listNotifications: (accountId) => listNotifications(baseUrl, accountId, fetchImpl),
+    ackNotification: (accountId, notificationId) => ackNotification(baseUrl, accountId, notificationId, fetchImpl),
     mention,
     listProposals: (accountId) => listProposals(baseUrl, accountId, fetchImpl),
     approve: (accountId, proposalId) => decide(baseUrl, accountId, proposalId, "approve", fetchImpl),
@@ -723,6 +731,15 @@ async function registerDevice(
  * reconciles on every foreground.
  * Input: base URL, account id, fetch. Output: pending notifications newest-first.
  */
+async function ackNotification(
+  baseUrl: string,
+  accountId: string,
+  notificationId: string,
+  fetchImpl: typeof fetch,
+): Promise<{ id: string }> {
+  return readJson(fetchImpl, `${baseUrl}/notifications/${notificationId}/ack?accountId=${accountId}`, { method: "POST" });
+}
+
 async function listNotifications(
   baseUrl: string,
   accountId: string,

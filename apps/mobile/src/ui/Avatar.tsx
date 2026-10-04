@@ -1,7 +1,17 @@
 import { Image } from "expo-image";
 import { View } from "react-native";
+import {
+  normalizeMarkGender,
+  normalizeMarkMaterial,
+  normalizeMarkShape,
+  normalizeMarkStyle,
+  type MarkGender,
+  type MarkMaterial,
+  type MarkShape,
+  type MarkStyle,
+} from "@nano-agents/shared";
+import { MARK_DEFAULT } from "./Mark";
 import { palette } from "../theme/tokens";
-import { markShapes, type MarkShape } from "@nano-agents/shared";
 import { LivingMark, Mark, type MarkMood } from "./Mark";
 
 /**
@@ -32,6 +42,9 @@ export function Avatar({
   person = false,
   shape = null,
   color = null,
+  material = null,
+  style = null,
+  gender = null,
   photo = null,
   mood = "idle",
   alive = true,
@@ -43,6 +56,9 @@ export function Avatar({
   person?: boolean;
   shape?: string | null;
   color?: string | null;
+  material?: string | null;
+  style?: string | null;
+  gender?: string | null;
   photo?: string | null;
   mood?: MarkMood;
   alive?: boolean;
@@ -57,23 +73,37 @@ export function Avatar({
       />
     );
   }
-  if (!person && (shape ?? color)) {
-    const known = markShapes.includes(shape as MarkShape);
-    const markShape = known ? (shape as MarkShape) : "square";
+  if (!person && (shape ?? color ?? material ?? style ?? gender)) {
+    const markShape: MarkShape = normalizeMarkShape(shape) ?? "cloud";
     const markColor = color ?? colorFor(id);
+    const markMaterial: MarkMaterial = normalizeMarkMaterial(material) ?? "plush";
+    const markStyle: MarkStyle = normalizeMarkStyle(style) ?? MARK_DEFAULT.style;
+    const markGender: MarkGender = normalizeMarkGender(gender) ?? MARK_DEFAULT.gender;
     const markSize = size * 0.72;
     if (alive) {
       return (
         <LivingMark
           shape={markShape}
           color={markColor}
+          material={markMaterial}
+          style={markStyle}
+          gender={markGender}
           size={markSize}
           mood={mood}
           interactive={interactive}
         />
       );
     }
-    return <Mark shape={markShape} color={markColor} size={markSize} />;
+    return (
+      <Mark
+        shape={markShape}
+        color={markColor}
+        material={markMaterial}
+        style={markStyle}
+        gender={markGender}
+        size={markSize}
+      />
+    );
   }
   const backgroundColor = person ? "#3A3A3C" : colorFor(id);
   const ink = backgroundColor === "#F2F2F7" ? "#111111" : "#FFFFFF";

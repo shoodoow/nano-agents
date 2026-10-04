@@ -1,11 +1,10 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Feather } from "@expo/vector-icons";
 import { FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { markShapes, type MarkShape } from "@nano-agents/shared";
 import type { RosterAgent } from "../api";
 import { colors } from "../theme/tokens";
 import { Avatar } from "../ui/Avatar";
-import { Mark } from "../ui/Mark";
+import { Mark, resolveMarkLook } from "../ui/Mark";
 import { GroupCluster, type GroupFace } from "../ui/GroupCluster";
 import { CircleButton } from "../ui/CircleButton";
 import { IconPlus, IconReply, IconSearch } from "../ui/icons";
@@ -152,7 +151,17 @@ export function InboxScreen({
             delayLongPress={350}
             style={({ pressed }) => [styles.row, pressed && styles.pressed]}
           >
-            <Avatar id={item.id} size={46} round={item.name.length % 2 === 0} shape={item.markShape} color={item.markColor} photo={item.avatarUrl} />
+            <Avatar
+              id={item.id}
+              size={46}
+              round={item.name.length % 2 === 0}
+              shape={item.markShape}
+              color={item.markColor}
+              material={item.markMaterial}
+              style={item.markStyle}
+              gender={item.markGender}
+              photo={item.avatarUrl}
+            />
             <View style={styles.rowBody}>
               <View style={styles.rowTop}>
                 <Text style={styles.name} numberOfLines={1}>
@@ -180,7 +189,17 @@ export function InboxScreen({
           {held ? (
             <Pressable style={styles.holdCard} onPress={() => {}}>
               <View style={styles.holdPreview}>
-                <Avatar id={held.id} size={28} shape={held.markShape} color={held.markColor} photo={held.avatarUrl} alive={false} />
+                <Avatar
+                  id={held.id}
+                  size={28}
+                  shape={held.markShape}
+                  color={held.markColor}
+                  material={held.markMaterial}
+                  style={held.markStyle}
+                  gender={held.markGender}
+                  photo={held.avatarUrl}
+                  alive={false}
+                />
                 <Text style={styles.holdName} numberOfLines={1}>{held.name}</Text>
               </View>
               <Text style={styles.holdBody} numberOfLines={4}>{held.role || `Message ${held.name}`}</Text>
@@ -220,14 +239,19 @@ export function InboxScreen({
 
 const PIN_BOX = 76;
 const PIN_SPAN: Record<string, number> = {
-  circle: 1,
-  blob: 1.08,
-  square: 1,
-  pill: 1.3,
+  round: 1,
   triangle: 0.96,
-  hexagon: 1,
+  pill: 1.3,
+  ears: 1.1,
   cloud: 1.2,
-  drop: 1,
+  heart: 1,
+  butterfly: 1.2,
+  sprout: 1,
+  scallop: 1.15,
+  hexagon: 1,
+  diamond: 1,
+  cat: 1.1,
+  robot: 1,
 };
 
 /** Draws one pinned face inside the same square, whatever the mark shape is. */
@@ -239,10 +263,17 @@ function PinnedFace({ agent }: { agent: RosterAgent }) {
       </View>
     );
   }
-  const shape = markShapes.includes(agent.markShape as MarkShape) ? (agent.markShape as MarkShape) : "square";
+  const look = resolveMarkLook(agent);
   return (
     <View style={styles.pinnedFace}>
-      <Mark shape={shape} color={agent.markColor || "#8B5CF6"} size={PIN_BOX / (PIN_SPAN[shape] ?? 1)} />
+      <Mark
+        shape={look.shape}
+        color={look.color}
+        material={look.material}
+        style={look.style}
+        gender={look.gender}
+        size={PIN_BOX / (PIN_SPAN[look.shape] ?? 1)}
+      />
     </View>
   );
 }

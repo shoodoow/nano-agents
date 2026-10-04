@@ -1,12 +1,14 @@
 import { View, Text } from "react-native";
-import { markShapes, type MarkShape } from "@nano-agents/shared";
 import { Avatar } from "./Avatar";
-import { Mark } from "./Mark";
+import { Mark, resolveMarkLook } from "./Mark";
 
 export type GroupFace = {
   id: string;
   markShape?: string | null;
   markColor?: string | null;
+  markMaterial?: string | null;
+  markStyle?: string | null;
+  markGender?: string | null;
   avatarUrl?: string | null;
 };
 
@@ -59,6 +61,15 @@ function Face({ member, size }: { member: GroupFace; size: number }) {
   if (member.avatarUrl) {
     return <Avatar id={member.id} size={size} photo={member.avatarUrl} alive={false} />;
   }
-  const shape = markShapes.includes(member.markShape as MarkShape) ? (member.markShape as MarkShape) : "square";
-  return <Mark shape={shape} color={member.markColor || "#8B5CF6"} size={size} />;
+  const look = resolveMarkLook({ ...member, markColor: member.markColor || "#FFCC38" });
+  return (
+    <Mark
+      shape={look.shape}
+      color={look.color}
+      material={look.material}
+      style={look.style}
+      gender={look.gender}
+      size={size}
+    />
+  );
 }

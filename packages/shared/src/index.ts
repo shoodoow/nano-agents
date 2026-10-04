@@ -69,9 +69,184 @@ export const agentFlagsSchema = z.object({
   hidden: z.boolean(),
 });
 
-export const markShapes = ["circle", "blob", "square", "pill", "triangle", "hexagon", "cloud", "drop"] as const;
+/** Dot Avatar Maker classics + cat + robot. */
+export const markShapes = [
+  "round",
+  "triangle",
+  "pill",
+  "ears",
+  "cloud",
+  "heart",
+  "butterfly",
+  "sprout",
+  "scallop",
+  "hexagon",
+  "diamond",
+  "cat",
+  "robot",
+] as const;
 
 export type MarkShape = (typeof markShapes)[number];
+
+/** Dot Avatar Maker finishes. */
+export const markMaterials = [
+  "plush",
+  "longfur",
+  "felt",
+  "clay",
+  "ceramic",
+  "crackle",
+  "stoneware",
+  "pearl",
+  "vinyl",
+  "jelly",
+  "glass",
+  "chrome",
+] as const;
+
+export type MarkMaterial = (typeof markMaterials)[number];
+
+/** Maps retired mark ids onto the Dot catalog so old rows still render. */
+export function normalizeMarkShape(raw: string | null | undefined): MarkShape | null {
+  if (!raw) return null;
+  const legacy: Record<string, MarkShape> = {
+    circle: "round",
+    blob: "scallop",
+    square: "diamond",
+    drop: "heart",
+  };
+  if (legacy[raw]) return legacy[raw];
+  return (markShapes as readonly string[]).includes(raw) ? (raw as MarkShape) : null;
+}
+
+export function normalizeMarkMaterial(raw: string | null | undefined): MarkMaterial | null {
+  if (!raw) return null;
+  return (markMaterials as readonly string[]).includes(raw) ? (raw as MarkMaterial) : null;
+}
+
+/** Dot Avatar Maker palette (same order as the studio). */
+export const markColorPresets = [
+  "#FA70AB",
+  "#DD6ADC",
+  "#A25BFF",
+  "#4778FF",
+  "#00B1FF",
+  "#04BB9F",
+  "#B6D80B",
+  "#FFCC38",
+  "#FF8066",
+] as const;
+
+/** Dot studio outfit ids (gentleman, bow, …). */
+export const markStyles = [
+  "gentleman",
+  "royal",
+  "wizard",
+  "pirate",
+  "detective",
+  "ninja",
+  "lady",
+  "bow",
+  "princess",
+  "flowercrown",
+  "heartshades",
+  "kittyphones",
+  "witch",
+  "sunhat",
+  "minimal",
+  "artist",
+  "scholar",
+  "cool",
+  "music",
+  "outdoor",
+  "dreamer",
+  "gardener",
+  "playful",
+  "futuristic",
+  "cosmic",
+  "chef",
+  "astronaut",
+  "gamer",
+  "athlete",
+  "sleepy",
+  "sweetheart",
+  "flower",
+] as const;
+
+export type MarkStyle = (typeof markStyles)[number];
+
+export const markGenders = ["male", "female"] as const;
+export type MarkGender = (typeof markGenders)[number];
+
+/** Studio STYLE_GENDER: m/f = boy/girl only; absent = everyone. */
+export const markStyleGender: Partial<Record<MarkStyle, "m" | "f">> = {
+  gentleman: "m",
+  royal: "m",
+  wizard: "m",
+  pirate: "m",
+  detective: "m",
+  ninja: "m",
+  lady: "f",
+  bow: "f",
+  princess: "f",
+  flowercrown: "f",
+  heartshades: "f",
+  kittyphones: "f",
+  witch: "f",
+  sunhat: "f",
+  sweetheart: "f",
+  flower: "f",
+};
+
+export function styleFitsMark(style: MarkStyle, gender: MarkGender): boolean {
+  const slot = markStyleGender[style];
+  if (!slot) return true;
+  return slot === (gender === "female" ? "f" : "m");
+}
+
+export function defaultStyleForGender(gender: MarkGender): MarkStyle {
+  return gender === "female" ? "lady" : "gentleman";
+}
+
+export function defaultGenderForStyle(style: MarkStyle): MarkGender {
+  const slot = markStyleGender[style];
+  if (slot === "f") return "female";
+  if (slot === "m") return "male";
+  return "male";
+}
+
+export function normalizeMarkStyle(raw: string | null | undefined): MarkStyle | null {
+  if (!raw) return null;
+  return (markStyles as readonly string[]).includes(raw) ? (raw as MarkStyle) : null;
+}
+
+export function normalizeMarkGender(raw: string | null | undefined): MarkGender | null {
+  if (!raw) return null;
+  return (markGenders as readonly string[]).includes(raw) ? (raw as MarkGender) : null;
+}
+
+export type AgentMark = {
+  markShape: MarkShape;
+  markColor: string;
+  markMaterial: MarkMaterial;
+  markStyle: MarkStyle;
+  markGender: MarkGender;
+};
+
+/** Dot studio “Surprise me”: random form, color, material, style, and gender. */
+export function randomSurpriseMark(): AgentMark {
+  const pick = <T,>(arr: readonly T[]): T => arr[Math.floor(Math.random() * arr.length)]!;
+  const markGender: MarkGender = Math.random() < 0.5 ? "female" : "male";
+  const fitting = markStyles.filter((id) => styleFitsMark(id, markGender));
+  const markStyle = pick(fitting.length > 0 ? fitting : markStyles);
+  return {
+    markShape: pick(markShapes),
+    markMaterial: Math.random() < 0.45 ? "plush" : pick(markMaterials),
+    markColor: pick(markColorPresets),
+    markStyle,
+    markGender,
+  };
+}
 
 export const agentProfileSchema = agentFlagsSchema.extend({
   notify: z.boolean().optional(),
@@ -88,9 +263,12 @@ export const agentProfileSchema = agentFlagsSchema.extend({
   markColor: z
     .string()
     .trim()
-    .regex(/^#[0-9a-fA-F]{6}$/, "Mark color must be a hex color like #8B5CF6.")
+    .regex(/^#[0-9a-fA-F]{6}$/, "Mark color must be a hex color like #FFCC38.")
     .nullable()
     .optional(),
+  markMaterial: z.enum(markMaterials).nullable().optional(),
+  markStyle: z.enum(markStyles).nullable().optional(),
+  markGender: z.enum(markGenders).nullable().optional(),
   avatarUrl: z.string().trim().min(1).max(8_000_000).nullable().optional(),
 });
 

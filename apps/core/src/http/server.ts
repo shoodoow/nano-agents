@@ -825,6 +825,27 @@ function mountRoutes(app: Express, ctx: AppContext): void {
       .limit(50);
     res.json(rows);
   });
+  notificationsRouter.post("/:id/ack", guard, async (req, res) => {
+    // The phone showed this ping in-app. Why: without a push device the row
+    // stays pending, and acking stops the banner from repeating.
+    const accountId = queryAccountId(req);
+    const [row] = await ctx.db
+      .update(notifications)
+      .set({ status: "sent" })
+      .where(
+        and(
+          eq(notifications.id, pathParam(req, "id")),
+          eq(notifications.accountId, accountId),
+          eq(notifications.status, "pending"),
+        ),
+      )
+      .returning({ id: notifications.id });
+    if (!row) {
+      res.status(404).json({ error: "Notification not found." });
+      return;
+    }
+    res.json({ id: row.id });
+  });
   app.use("/notifications", notificationsRouter);
 }
 

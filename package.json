@@ -7,6 +7,7 @@
   },
   "scripts": {
     "build": "tsc -b --pretty false",
+    "db:migrate": "pnpm --filter core db:migrate",
     "db:reset": "pnpm --filter core db:reset"
   },
   "devDependencies": {

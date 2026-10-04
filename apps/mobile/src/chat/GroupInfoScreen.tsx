@@ -80,7 +80,17 @@ export function GroupInfoScreen({
             <View style={styles.card}>
               {members.map((member) => (
                 <Pressable key={member.id} accessibilityRole="button" onPress={() => onOpenMember(member)} style={styles.member}>
-                  <Avatar id={member.id} size={28} shape={member.markShape} color={member.markColor} photo={member.avatarUrl} alive={false} />
+                  <Avatar
+                    id={member.id}
+                    size={28}
+                    shape={member.markShape}
+                    color={member.markColor}
+                    material={member.markMaterial}
+                    style={member.markStyle}
+                    gender={member.markGender}
+                    photo={member.avatarUrl}
+                    alive={false}
+                  />
                   <Text style={styles.memberName} numberOfLines={1}>{member.label || member.name}</Text>
                   <IconChevron />
                 </Pressable>

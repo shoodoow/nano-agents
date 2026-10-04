@@ -74,9 +74,14 @@ describe("server", () => {
 
     const marked = await fetch(`${baseUrl}/agents/${agent.id}?accountId=${account.id}`, {
       method: "PATCH",
-      body: JSON.stringify({ markShape: "circle", markColor: "#FF3B30", avatarUrl: null }),
+      body: JSON.stringify({ markShape: "round", markColor: "#FF8066", markMaterial: "plush", avatarUrl: null }),
     });
-    expect(await marked.json()).toMatchObject({ markShape: "circle", markColor: "#FF3B30", avatarUrl: null });
+    expect(await marked.json()).toMatchObject({
+      markShape: "round",
+      markColor: "#FF8066",
+      markMaterial: "plush",
+      avatarUrl: null,
+    });
 
     const badMark = await fetch(`${baseUrl}/agents/${agent.id}?accountId=${account.id}`, {
       method: "PATCH",

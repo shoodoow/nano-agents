@@ -18,14 +18,29 @@ import { colors } from "../theme/tokens";
 import { CircleButton } from "../ui/CircleButton";
 import { Feather } from "@expo/vector-icons";
 import { IconBack, IconCheck, IconChevron, IconClock, IconDoc, IconMore, IconShare } from "../ui/icons";
-import type { MarkShape } from "@nano-agents/shared";
-import { markShapes } from "@nano-agents/shared";
-import { LivingMark, MARK_COLORS, MARK_DEFAULT, MARK_SHAPES, Mark } from "../ui/Mark";
+import type { MarkMaterial, MarkShape } from "@nano-agents/shared";
+import {
+  LivingMark,
+  MARK_COLORS,
+  MARK_DEFAULT,
+  MARK_MATERIALS,
+  MARK_SHAPES,
+  Mark,
+  resolveMarkLook,
+  type MarkLook,
+} from "../ui/Mark";
 import { openFileBlock } from "./blocks";
 import { collectShares, type SharedFile } from "./shares";
 
 type Page = "info" | "instructions" | "provider" | "routine";
 type Tab = "info" | "links" | "media" | "files";
+type CharacterTab = "shape" | "color" | "material";
+
+const CHARACTER_TABS: { id: CharacterTab; label: string }[] = [
+  { id: "shape", label: "Shape" },
+  { id: "color", label: "Color" },
+  { id: "material", label: "Material" },
+];
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "info", label: "Info" },
@@ -41,8 +56,8 @@ const TABS: { id: Tab; label: string }[] = [
  * Advanced (the reference has no slot for them, but the phone needs them).
  * Input: the editable profile draft, providers, routines, and actions.
  * Output: the info page with instructions / provider / routine sub-pages.
- * The mark shape, color, and photo save with the profile, so reopening
- * the page shows exactly what was picked.
+ * The mark shape, color, material, and photo save with the profile, so
+ * reopening the page shows exactly what was picked.
  */
 export function BotInfoScreen({
   profile,
@@ -80,15 +95,31 @@ export function BotInfoScreen({
   const selected = routines.find((row) => row.id === selectedId) ?? null;
 
   /** Stages one mark pick in the preview and the profile draft (clears photo). */
-  function pickMark(next: { shape: MarkShape; color: string }): void {
+  function pickMark(next: MarkLook): void {
     setMark(next);
-    onChange({ ...profile, markShape: next.shape, markColor: next.color, avatarUrl: null });
+    onChange({
+      ...profile,
+      markShape: next.shape,
+      markColor: next.color,
+      markMaterial: next.material,
+      markStyle: next.style,
+      markGender: next.gender,
+      avatarUrl: null,
+    });
   }
 
   /** Restores the default mark and clears the photo. */
   function resetMark(): void {
     setMark(MARK_DEFAULT);
-    onChange({ ...profile, markShape: MARK_DEFAULT.shape, markColor: MARK_DEFAULT.color, avatarUrl: null });
+    onChange({
+      ...profile,
+      markShape: MARK_DEFAULT.shape,
+      markColor: MARK_DEFAULT.color,
+      markMaterial: MARK_DEFAULT.material,
+      markStyle: MARK_DEFAULT.style,
+      markGender: MARK_DEFAULT.gender,
+      avatarUrl: null,
+    });
   }
 
   function share(): void {
@@ -165,12 +196,8 @@ export function BotInfoScreen({
 }
 
 /** Reads the saved mark, falling back to the default for legacy agents. */
-function initialMark(profile: RosterAgent): { shape: MarkShape; color: string } {
-  // Accept any saved shape (including retired picker options); only fall back when unknown.
-  const shape = markShapes.includes(profile.markShape as MarkShape)
-    ? (profile.markShape as MarkShape)
-    : MARK_DEFAULT.shape;
-  return { shape, color: profile.markColor ?? MARK_DEFAULT.color };
+function initialMark(profile: RosterAgent): MarkLook {
+  return resolveMarkLook(profile);
 }
 
 /**
@@ -202,10 +229,10 @@ function InfoPage({
   profile: RosterAgent;
   providers: ProviderSetting[];
   routines: Routine[];
-  mark: { shape: MarkShape; color: string };
+  mark: { shape: MarkShape; color: string; material: MarkMaterial };
   tab: Tab;
   onTab: (tab: Tab) => void;
-  onPickMark: (mark: { shape: MarkShape; color: string }) => void;
+  onPickMark: (mark: MarkLook) => void;
   onResetMark: () => void;
   onPickAvatar: () => void;
   onChange: (profile: RosterAgent) => void;
@@ -220,6 +247,7 @@ function InfoPage({
   messages: { conversationId?: string; body: string; blocks?: MessageBlock[] | null }[];
   onFetchBlob?: (conversationId: string, messageId: string, index: number) => Promise<{ url?: string; previewUrl?: string }>;
 }) {
+  const [characterTab, setCharacterTab] = useState<CharacterTab>("shape");
   const configured = providers.filter((row) => row.configured);
   const providerChoices: ProviderSetting["provider"][] = [
     ...new Set([...configured.map((row) => row.provider), ...(profile.provider ? [profile.provider] : [])]),
@@ -249,18 +277,21 @@ function InfoPage({
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Change bot photo"
-          onPress={onPickAvatar}
-          style={styles.markWrap}
-        >
+        <View style={styles.markWrap} accessibilityRole="image" accessibilityLabel="Bot character">
           {profile.avatarUrl ? (
             <Image source={{ uri: profile.avatarUrl }} contentFit="cover" style={styles.markPhoto} />
           ) : (
-            <LivingMark shape={mark.shape} color={mark.color} size={128} mood="idle" />
+            <LivingMark
+              shape={mark.shape}
+              color={mark.color}
+              material={mark.material}
+              style={mark.style}
+              gender={mark.gender}
+              size={168}
+              mood="idle"
+            />
           )}
-        </Pressable>
+        </View>
         <View style={styles.nameCard}>
           <TextInput
             value={profile.name}
@@ -298,71 +329,135 @@ function InfoPage({
           <View style={styles.scroll}>
             <Text style={styles.section}>Character</Text>
             <View style={styles.card}>
-              <View style={styles.shapeGrid}>
-                {MARK_SHAPES.map((entry) => (
+              <View style={styles.characterTabs}>
+                {CHARACTER_TABS.map((entry) => (
                   <Pressable
                     key={entry.id}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected: characterTab === entry.id }}
+                    onPress={() => setCharacterTab(entry.id)}
+                    style={styles.characterTab}
+                  >
+                    <Text style={[styles.characterTabText, characterTab === entry.id ? styles.characterTabOn : null]}>
+                      {entry.label}
+                    </Text>
+                    {characterTab === entry.id ? <View style={styles.characterTabBar} /> : null}
+                  </Pressable>
+                ))}
+              </View>
+              {characterTab === "shape" ? (
+                <View style={styles.shapeGrid}>
+                  {MARK_SHAPES.map((entry) => (
+                    <Pressable
+                      key={entry.id}
+                      accessibilityRole="button"
+                      accessibilityLabel={entry.label}
+                      accessibilityState={{ selected: !profile.avatarUrl && mark.shape === entry.id }}
+                      onPress={() => onPickMark({ ...mark, shape: entry.id })}
+                      style={styles.shapeCell}
+                      disabled={Boolean(profile.avatarUrl)}
+                    >
+                      <View
+                        style={[
+                          styles.shapeRing,
+                          !profile.avatarUrl && mark.shape === entry.id ? styles.ringOn : null,
+                          profile.avatarUrl ? styles.colorDim : null,
+                        ]}
+                      >
+                        <Mark
+                          shape={entry.id}
+                          color={mark.color}
+                          material={mark.material}
+                          style={mark.style}
+                          gender={mark.gender}
+                          size={44}
+                        />
+                      </View>
+                    </Pressable>
+                  ))}
+                  <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel={entry.label}
-                    accessibilityState={{ selected: !profile.avatarUrl && mark.shape === entry.id }}
-                    onPress={() => onPickMark({ ...mark, shape: entry.id })}
+                    accessibilityLabel="Upload photo"
+                    accessibilityState={{ selected: Boolean(profile.avatarUrl) }}
+                    onPress={onPickAvatar}
                     style={styles.shapeCell}
                   >
-                    <View
-                      style={[
-                        styles.shapeRing,
-                        !profile.avatarUrl && mark.shape === entry.id ? styles.ringOn : null,
-                      ]}
-                    >
-                      <Mark shape={entry.id} color={mark.color} size={30} />
+                    <View style={[styles.shapeRing, styles.photoRing, profile.avatarUrl ? styles.ringOn : null]}>
+                      {profile.avatarUrl ? (
+                        <Image source={{ uri: profile.avatarUrl }} contentFit="cover" style={styles.photoThumb} />
+                      ) : (
+                        <Feather name="image" size={24} color={colors.muted} />
+                      )}
                     </View>
                   </Pressable>
-                ))}
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Upload photo"
-                  accessibilityState={{ selected: Boolean(profile.avatarUrl) }}
-                  onPress={onPickAvatar}
-                  style={styles.shapeCell}
-                >
-                  <View style={[styles.shapeRing, styles.photoRing, profile.avatarUrl ? styles.ringOn : null]}>
-                    {profile.avatarUrl ? (
-                      <Image source={{ uri: profile.avatarUrl }} contentFit="cover" style={styles.photoThumb} />
-                    ) : (
-                      <Feather name="image" size={22} color={colors.muted} />
-                    )}
-                  </View>
-                </Pressable>
-              </View>
-              <View style={styles.colorGrid}>
-                {MARK_COLORS.map((color) => (
-                  <Pressable
-                    key={color}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Mark color ${color}`}
-                    accessibilityState={{ selected: mark.color === color }}
-                    onPress={() => onPickMark({ ...mark, color })}
-                    style={styles.colorCell}
-                    disabled={Boolean(profile.avatarUrl)}
-                  >
-                    <View
-                      style={[
-                        styles.colorRing,
-                        mark.color === color && !profile.avatarUrl ? styles.ringOn : null,
-                        profile.avatarUrl ? styles.colorDim : null,
-                      ]}
+                </View>
+              ) : null}
+              {characterTab === "color" ? (
+                <View style={styles.colorGrid}>
+                  {MARK_COLORS.map((color) => (
+                    <Pressable
+                      key={color}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Mark color ${color}`}
+                      accessibilityState={{ selected: mark.color === color }}
+                      onPress={() => onPickMark({ ...mark, color })}
+                      style={styles.colorCell}
+                      disabled={Boolean(profile.avatarUrl)}
                     >
-                      <View style={[styles.dot, { backgroundColor: color }]} />
-                    </View>
-                  </Pressable>
-                ))}
-              </View>
+                      <View
+                        style={[
+                          styles.colorRing,
+                          mark.color === color && !profile.avatarUrl ? styles.ringOn : null,
+                          profile.avatarUrl ? styles.colorDim : null,
+                        ]}
+                      >
+                        <View style={[styles.dot, { backgroundColor: color }]} />
+                      </View>
+                    </Pressable>
+                  ))}
+                </View>
+              ) : null}
+              {characterTab === "material" ? (
+                <View style={styles.materialGrid}>
+                  {MARK_MATERIALS.map((entry) => (
+                    <Pressable
+                      key={entry.id}
+                      accessibilityRole="button"
+                      accessibilityLabel={entry.label}
+                      accessibilityState={{ selected: mark.material === entry.id }}
+                      onPress={() => onPickMark({ ...mark, material: entry.id })}
+                      style={styles.materialCell}
+                      disabled={Boolean(profile.avatarUrl)}
+                    >
+                      <View
+                        style={[
+                          styles.materialChip,
+                          mark.material === entry.id && !profile.avatarUrl ? styles.materialOn : null,
+                          profile.avatarUrl ? styles.colorDim : null,
+                        ]}
+                      >
+                        <Mark
+                          shape={mark.shape}
+                          color={mark.color}
+                          material={entry.id}
+                          style={mark.style}
+                          gender={mark.gender}
+                          size={32}
+                        />
+                        <Text style={styles.materialLabel} numberOfLines={1}>
+                          {entry.label}
+                        </Text>
+                      </View>
+                    </Pressable>
+                  ))}
+                </View>
+              ) : null}
               <View style={styles.resetDivider} />
               <Pressable accessibilityRole="button" onPress={onResetMark} style={styles.resetRow}>
                 <Text style={styles.resetText}>Reset to default</Text>
               </Pressable>
             </View>
-            <Text style={styles.caption}>Pick a shape or upload a photo — used everywhere</Text>
+            <Text style={styles.caption}>Shape, color, and material tabs — or the image icon for a photo</Text>
             <Pressable accessibilityRole="button" onPress={onInstructions} style={styles.rowCard}>
               <IconDoc />
               <Text style={styles.rowLabel}>Instructions</Text>
@@ -759,8 +854,8 @@ const styles = StyleSheet.create({
   pageHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 8, paddingTop: 4 },
   pageTitle: { color: colors.text, fontSize: 17, fontWeight: "600", flexShrink: 1 },
   spacer: { width: 44 },
-  markWrap: { alignItems: "center", paddingTop: 4, minHeight: 132, justifyContent: "center" },
-  markPhoto: { width: 128, height: 120, borderRadius: 36, borderCurve: "continuous" },
+  markWrap: { alignItems: "center", paddingTop: 8, minHeight: 176, justifyContent: "center" },
+  markPhoto: { width: 168, height: 156, borderRadius: 40, borderCurve: "continuous" },
   // Narrow pill like Grok — not full-bleed, not a tiny island.
   nameCard: {
     alignSelf: "center",
@@ -812,34 +907,53 @@ const styles = StyleSheet.create({
     paddingBottom: 4,
   },
   cardBody: { flex: 1, gap: 2 },
-  // 3×2 grid: five shapes + photo upload — balanced, nothing missing.
+  characterTabs: { flexDirection: "row", marginBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
+  characterTab: { flex: 1, alignItems: "center", paddingVertical: 10 },
+  characterTabText: { color: colors.muted, fontSize: 14, fontWeight: "500" },
+  characterTabOn: { color: colors.text },
+  characterTabBar: { position: "absolute", bottom: 0, width: 36, height: 2, borderRadius: 1, backgroundColor: colors.text },
   shapeGrid: { flexDirection: "row", flexWrap: "wrap" },
-  shapeCell: { width: "33.33%", alignItems: "center", paddingVertical: 8 },
+  shapeCell: { width: "25%", alignItems: "center", paddingVertical: 8 },
   shapeRing: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: 68,
+    height: 68,
+    borderRadius: 34,
     borderWidth: 1.5,
     borderColor: "transparent",
     alignItems: "center",
     justifyContent: "center",
   },
   photoRing: { backgroundColor: colors.control, overflow: "hidden" },
-  photoThumb: { width: 56, height: 56, borderRadius: 28 },
+  photoThumb: { width: 68, height: 68, borderRadius: 34 },
   ringOn: { borderColor: "#636366" },
   colorGrid: { flexDirection: "row", flexWrap: "wrap", marginTop: 4 },
-  colorCell: { width: "16.66%", alignItems: "center", paddingVertical: 5 },
+  colorCell: { width: "20%", alignItems: "center", paddingVertical: 5 },
   colorRing: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     borderWidth: 1.5,
     borderColor: "transparent",
     alignItems: "center",
     justifyContent: "center",
   },
   colorDim: { opacity: 0.35 },
-  dot: { width: 30, height: 30, borderRadius: 15 },
+  dot: { width: 28, height: 28, borderRadius: 14 },
+  materialGrid: { flexDirection: "row", flexWrap: "wrap", marginTop: 8 },
+  materialCell: { width: "33.33%", paddingHorizontal: 3, paddingVertical: 3 },
+  materialChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: "transparent",
+    backgroundColor: colors.control,
+  },
+  materialOn: { borderColor: "#636366" },
+  materialLabel: { color: colors.text, fontSize: 11, fontWeight: "500", flexShrink: 1 },
   resetDivider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.line, marginTop: 8, marginHorizontal: 6 },
   resetRow: { paddingVertical: 12, paddingHorizontal: 6 },
   resetText: { color: colors.link, fontSize: 16 },

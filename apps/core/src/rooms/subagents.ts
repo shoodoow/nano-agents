@@ -1,4 +1,5 @@
 import { delegateSchema, spawnWorkerInputSchema, subagentCreateSchema, workerRefSchema } from "@nano-agents/agent-tools";
+import { randomSurpriseMark } from "@nano-agents/shared";
 import {
   packWorkerJobDescription,
   unpackWorkerJobDescription,
@@ -152,6 +153,7 @@ export async function hireSubagent(
   if (existing.length >= MAX_ROOM_MEMBERS) throw new RoomCapacityError();
 
   const baseName = data.label.trim().replace(/\s+/g, "-").slice(0, 60) || "subagent";
+  const surprise = randomSurpriseMark();
   const [child] = await store
     .insert(agents)
     .values({
@@ -165,6 +167,11 @@ export async function hireSubagent(
       modelId: data.modelId ?? parent.modelId,
       parentId: input.parentAgentId,
       teamId: input.teamId ?? parent.teamId ?? parent.id,
+      markShape: surprise.markShape,
+      markColor: surprise.markColor,
+      markMaterial: surprise.markMaterial,
+      markStyle: surprise.markStyle,
+      markGender: surprise.markGender,
     })
     .returning();
   if (!child) throw new Error("Subagent insert returned no row.");
@@ -481,6 +488,7 @@ export async function spawnWorker(
     }
 
     const baseName = data.label.trim().replace(/\s+/g, "-").slice(0, 60) || "worker";
+    const surprise = randomSurpriseMark();
     const [child] = await store
       .insert(agents)
       .values({
@@ -495,6 +503,11 @@ export async function spawnWorker(
         parentId: input.parentAgentId,
         teamId: parent.teamId ?? parent.id,
         hidden: true,
+        markShape: surprise.markShape,
+        markColor: surprise.markColor,
+        markMaterial: surprise.markMaterial,
+        markStyle: surprise.markStyle,
+        markGender: surprise.markGender,
       })
       .returning();
     if (!child) throw new Error("Worker insert returned no row.");
