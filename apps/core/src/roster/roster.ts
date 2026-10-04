@@ -3,6 +3,7 @@ import { and, eq, sql } from "drizzle-orm";
 import type { getDb, Store } from "../db/client.js";
 import { accounts, agents } from "../db/schema.js";
 import { createLinux } from "../linux/linux.js";
+import { resolveGatewayContextWindow } from "../model/gateway-models.js";
 
 type Database = ReturnType<typeof getDb>;
 
@@ -54,6 +55,7 @@ export async function createAgent(db: Database, accountId: string, input: unknow
     throw new AgentNameError();
   }
   const surprise = randomSurpriseMark();
+  const modelContextWindow = await resolveGatewayContextWindow(data.provider, data.modelId);
   const [row] = await db
     .insert(agents)
     .values({
@@ -65,6 +67,7 @@ export async function createAgent(db: Database, accountId: string, input: unknow
       jobDescription: data.jobDescription,
       provider: data.provider,
       modelId: data.modelId,
+      modelContextWindow,
       linuxProfile: null,
       markShape: surprise.markShape,
       markColor: surprise.markColor,
@@ -94,6 +97,16 @@ export async function updateAgentFlags(db: Store, accountId: string, agentId: st
     data.role !== undefined ||
     data.personality !== undefined ||
     data.jobDescription !== undefined;
+  let modelContextWindow: number | null | undefined;
+  if (data.provider !== undefined || data.modelId !== undefined) {
+    const current = await getAgent(db, accountId, agentId);
+    if (current) {
+      modelContextWindow = await resolveGatewayContextWindow(
+        data.provider ?? current.provider,
+        data.modelId ?? current.modelId,
+      );
+    }
+  }
   const [row] = await db
     .update(agents)
     .set({
@@ -107,6 +120,7 @@ export async function updateAgentFlags(db: Store, accountId: string, agentId: st
       ...(data.jobDescription !== undefined ? { jobDescription: data.jobDescription } : {}),
       ...(data.provider !== undefined ? { provider: data.provider } : {}),
       ...(data.modelId !== undefined ? { modelId: data.modelId } : {}),
+      ...(modelContextWindow !== undefined ? { modelContextWindow } : {}),
       ...(data.markShape !== undefined ? { markShape: data.markShape } : {}),
       ...(data.markColor !== undefined ? { markColor: data.markColor } : {}),
       ...(data.markMaterial !== undefined ? { markMaterial: data.markMaterial } : {}),

@@ -59,7 +59,7 @@ export type ChatContextInfo = {
     provider: string;
     modelId: string;
     contextWindow: number | null;
-    capacitySource: "plugin" | "builtin-estimate" | "unknown";
+    capacitySource: "gateway" | "plugin" | "builtin-estimate" | "unknown";
     /** Share of window one estimated turn occupies, or null when unknown. */
     estTurnShare: number | null;
   };
@@ -159,7 +159,7 @@ export async function buildChatContextInfo(
 
   const provider = owner?.provider ?? "unknown";
   const modelId = owner?.modelId ?? "unknown";
-  const capacity = modelInfoFor(provider, modelId);
+  const capacity = modelInfoFor(provider, modelId, owner?.modelContextWindow);
   const estTokens = Math.ceil((prefixChars + tailChars) / CHARS_PER_TOKEN);
 
   return {

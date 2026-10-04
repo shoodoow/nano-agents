@@ -28,6 +28,8 @@ export const agents = pgTable(
     jobDescription: text("job_description").notNull(),
     provider: text("provider").notNull(),
     modelId: text("model_id").notNull(),
+    /** Context window (tokens) from Vercel AI Gateway at hire / model change. */
+    modelContextWindow: integer("model_context_window"),
     linuxProfile: text("linux_profile"),
     promptVersion: integer("prompt_version").notNull().default(1),
     notify: boolean("notify").notNull().default(true),

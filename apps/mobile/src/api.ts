@@ -134,7 +134,7 @@ export type ChatContextInfo = {
     provider: string;
     modelId: string;
     contextWindow: number | null;
-    capacitySource: "plugin" | "builtin-estimate" | "unknown";
+    capacitySource: "gateway" | "plugin" | "builtin-estimate" | "unknown";
     estTurnShare: number | null;
   };
 };

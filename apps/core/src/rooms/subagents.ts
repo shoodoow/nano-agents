@@ -14,6 +14,7 @@ import type { Store } from "../db/client.js";
 import type { getDb } from "../db/client.js";
 import { keyFor } from "../keys/keys.js";
 import { getModel } from "../model/get-model.js";
+import { resolveGatewayContextWindow } from "../model/gateway-models.js";
 import { buildWorkerToolSet } from "../turn/tools/build-tools.js";
 import type { ToolContext } from "../turn/tools/context.js";
 import { appendEvent } from "./events.js";
@@ -154,6 +155,9 @@ export async function hireSubagent(
 
   const baseName = data.label.trim().replace(/\s+/g, "-").slice(0, 60) || "subagent";
   const surprise = randomSurpriseMark();
+  const provider = data.provider ?? parent.provider;
+  const modelId = data.modelId ?? parent.modelId;
+  const modelContextWindow = await resolveGatewayContextWindow(provider, modelId);
   const [child] = await store
     .insert(agents)
     .values({
@@ -163,8 +167,9 @@ export async function hireSubagent(
       role: data.role,
       personality: data.personality ?? "",
       jobDescription: data.jobDescription,
-      provider: data.provider ?? parent.provider,
-      modelId: data.modelId ?? parent.modelId,
+      provider,
+      modelId,
+      modelContextWindow,
       parentId: input.parentAgentId,
       teamId: input.teamId ?? parent.teamId ?? parent.id,
       markShape: surprise.markShape,
@@ -361,6 +366,7 @@ async function assignWorkerRow(
     modelId: string;
   },
 ): Promise<{ workerId: string; delegationId: string; status: "running" }> {
+  const modelContextWindow = await resolveGatewayContextWindow(input.provider, input.modelId);
   await store
     .update(agents)
     .set({
@@ -370,6 +376,7 @@ async function assignWorkerRow(
       jobDescription: input.jobDescription,
       provider: input.provider,
       modelId: input.modelId,
+      modelContextWindow,
     })
     .where(and(eq(agents.id, input.childAgentId), eq(agents.accountId, input.accountId)));
   return startWorkerDelegation(store, {
@@ -489,6 +496,9 @@ export async function spawnWorker(
 
     const baseName = data.label.trim().replace(/\s+/g, "-").slice(0, 60) || "worker";
     const surprise = randomSurpriseMark();
+    const provider = workerMeta.provider;
+    const modelId = workerMeta.modelId;
+    const modelContextWindow = await resolveGatewayContextWindow(provider, modelId);
     const [child] = await store
       .insert(agents)
       .values({
@@ -498,8 +508,9 @@ export async function spawnWorker(
         role: data.role,
         personality: data.personality ?? "",
         jobDescription: packedJob,
-        provider: data.provider ?? parent.provider,
-        modelId: data.modelId ?? parent.modelId,
+        provider,
+        modelId,
+        modelContextWindow,
         parentId: input.parentAgentId,
         teamId: parent.teamId ?? parent.id,
         hidden: true,
@@ -600,24 +611,24 @@ export type WorkerGenerate = () => Promise<string>;
 
 export type WorkerSettled = { workerId: string; task: string; result: string; status: "done" | "failed" };
 
+function taskFingerprint(task: string): string {
+  return task.trim().slice(0, 80).toLowerCase();
+}
+
 /**
- * Counts this parent's failed workers.
- * Why: spawn_worker retries must stop after 2 failures — otherwise the model
- * loops workers forever on a wedged task. We check failures within a recent time window
- * (e.g. 5 minutes) as well as since the last human message.
- * This prevents a situation where a quick user correction ("I mean htop")
- * resets the failure counter to 0 and gives the agent 2 fresh attempts when the
- * underlying environment (e.g. no root/sudo password required) hasn't changed.
- * Input: store, account/room/parent ids. Output: failed delegation count.
+ * Counts this parent's failed workers on the same task since the last human message.
+ * Why: a new message (including "go") starts a fresh budget, and a different task
+ * must not inherit failures from an unrelated job.
+ * Input: store, account/room/parent ids, and the task being started.
+ * Output: failed delegation count for that task fingerprint. Omit task to count every failure since the person spoke.
  */
 export async function failuresSinceLastUser(
   store: Store,
   accountId: string,
   conversationId: string,
   parentAgentId: string,
-  windowMs = 5 * 60 * 1000,
+  task?: string,
 ): Promise<number> {
-  const cutoff = new Date(Date.now() - windowMs);
   const full = await store
     .select({ agentId: messages.agentId, createdAt: messages.createdAt })
     .from(messages)
@@ -626,7 +637,7 @@ export async function failuresSinceLastUser(
     .limit(50);
   const lastHuman = full.find((row) => row.agentId === null)?.createdAt ?? null;
   const failed = await store
-    .select({ createdAt: delegations.createdAt })
+    .select({ createdAt: delegations.createdAt, task: delegations.task })
     .from(delegations)
     .where(
       and(
@@ -636,14 +647,14 @@ export async function failuresSinceLastUser(
         eq(delegations.status, "failed"),
       ),
     );
-  const recentWindowFailures = failed.filter(
-    (row) => row.createdAt && row.createdAt.getTime() > cutoff.getTime(),
-  ).length;
   const sinceHuman = lastHuman
-    ? failed.filter((row) => row.createdAt && row.createdAt.getTime() > lastHuman.getTime()).length
-    : failed.length;
-
-  return Math.max(recentWindowFailures, sinceHuman);
+    ? failed.filter((row) => row.createdAt && row.createdAt.getTime() > lastHuman.getTime())
+    : failed;
+  const fingerprint = task ? taskFingerprint(task) : "";
+  const scoped = fingerprint
+    ? sinceHuman.filter((row) => taskFingerprint(row.task) === fingerprint)
+    : sinceHuman;
+  return scoped.length;
 }
 
 /**

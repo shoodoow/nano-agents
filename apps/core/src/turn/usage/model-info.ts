@@ -11,7 +11,7 @@ export type ModelInfo = {
   /** Billable context window in tokens, or null when unknown. */
   contextWindow: number | null;
   /** Where the number came from: plugin override, builtin estimate, unknown. */
-  source: "plugin" | "builtin-estimate" | "unknown";
+  source: "gateway" | "plugin" | "builtin-estimate" | "unknown";
 };
 
 export type ModelInfoProvider = {
@@ -41,8 +41,22 @@ function builtinEstimate(provider: string, modelId: string): number | null {
   return null;
 }
 
-export function modelInfoFor(provider: string, modelId: string): ModelInfo {
+export function modelInfoFor(
+  provider: string,
+  modelId: string,
+  storedContextWindow?: number | null,
+): ModelInfo {
+  if (typeof storedContextWindow === "number" && storedContextWindow > 0) {
+    return { contextWindow: Math.floor(storedContextWindow), source: "gateway" };
+  }
   for (const providerPlugin of providers) {
+    if (providerPlugin.name === "vercel-ai-gateway") {
+      const value = providerPlugin.contextWindowFor(provider, modelId);
+      if (typeof value === "number" && value > 0) {
+        return { contextWindow: Math.floor(value), source: "gateway" };
+      }
+      continue;
+    }
     const value = providerPlugin.contextWindowFor(provider, modelId);
     if (typeof value === "number" && value > 0) {
       return { contextWindow: Math.floor(value), source: "plugin" };
