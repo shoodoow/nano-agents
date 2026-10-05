@@ -20,6 +20,8 @@ describe("classifyRisk", () => {
     expect(classifyRisk("delete_routines", { all: true })).toBe("Delete all of your routines");
     expect(classifyRisk("delete_routines", { routineIds: ["b", "a"] })).toBe("Delete 2 routines");
     expect(classifyRisk("web_search", { query: "hi" })).toBeNull();
+    expect(classifyRisk("gmail_send", { to: "a@b.com", subject: "Hi", body: "Hello" })).toMatch(/Send email to a@b.com/);
+    expect(classifyRisk("gmail_search", { query: "inbox" })).toBeNull();
   });
 
   it("hashes retry flags out so approve-and-retry matches", () => {

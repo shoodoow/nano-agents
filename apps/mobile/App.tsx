@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Platform, SafeAreaView, StatusBar, StyleSheet, Text } from "react-native";
+import { Linking, Platform, SafeAreaView, StatusBar, StyleSheet, Text } from "react-native";
 import * as Notifications from "expo-notifications";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system";
@@ -11,6 +11,7 @@ import {
   createCore,
   type MessageBlock,
   type Proposal,
+  type PluginList,
   type ProviderSetting,
   type Reaction,
   type RichMessage,
@@ -22,6 +23,7 @@ import { blocksFromMaybeWidgetText, expandWidgetMarkupBlocks } from "@nano-agent
 import { configureForegroundBanners, getPushToken, onPushTap } from "./src/push";
 import { authClient } from "./src/auth";
 import { MenuSheet, type MenuPage, type SignedAccount } from "./src/account/MenuSheet";
+import { pluginSlug } from "./src/account/PluginsPage";
 import { ApprovalsScreen } from "./src/approvals/ApprovalsScreen";
 import { BotInfoScreen } from "./src/chat/BotInfoScreen";
 import { GroupInfoScreen } from "./src/chat/GroupInfoScreen";
@@ -137,6 +139,7 @@ export default function App() {
   const [accountId, setAccountId] = useState("");
   const [agents, setAgents] = useState<RosterAgent[]>([]);
   const [providers, setProviders] = useState<ProviderSetting[]>([]);
+  const [plugins, setPlugins] = useState<PluginList | null>(null);
   const [screen, setScreen] = useState<Screen>({ name: "inbox" });
   const [menu, setMenu] = useState<MenuPage | null>(null);
   const [creating, setCreating] = useState(false);
@@ -1061,6 +1064,33 @@ export default function App() {
     setNote("Provider saved.");
   }
 
+  async function refreshPlugins(): Promise<void> {
+    if (!accountId) return;
+    setPlugins(await core.listPlugins(accountId));
+  }
+
+  async function addPlugin(id: string): Promise<void> {
+    const row = plugins?.plugins.find((plugin) => plugin.id === id);
+    if (row?.kind !== "google") return;
+    const started = await core.startGooglePlugin(accountId, id);
+    if (started.installed) {
+      await refreshPlugins();
+      return;
+    }
+    await Linking.openURL(started.url);
+  }
+
+  async function saveCustomPlugin(name: string, url: string, secret: string): Promise<void> {
+    await core.saveMcpPlugin(accountId, { slug: pluginSlug(name), url: url.trim(), secret });
+    await refreshPlugins();
+    setMenu("plugins");
+  }
+
+  async function signInCustomPlugin(name: string, url: string): Promise<void> {
+    const started = await core.startMcpPlugin(accountId, pluginSlug(name), url.trim());
+    await Linking.openURL(started.url);
+  }
+
   return (
     <SafeAreaView style={styles.screen}>
       <StatusBar barStyle="light-content" />
@@ -1095,6 +1125,7 @@ export default function App() {
           onOpen={(agent) => void openAgent(agent).catch(show)}
           onPin={(agent) => void setRosterFlag(agent, { pinned: !agent.pinned }).catch(show)}
           onHide={(agent) => void setRosterFlag(agent, { hidden: true }).catch(show)}
+          onCloseMenu={() => setMenu(null)}
           menu={
             menu ? (
               <MenuSheet
@@ -1106,8 +1137,12 @@ export default function App() {
                 autoTimeZone={autoTimeZone}
                 timeZone={timeZone}
                 providers={providers}
+                plugins={plugins}
                 onClose={() => setMenu(null)}
-                onPage={setMenu}
+                onPage={(page) => {
+                  setMenu(page);
+                  if (page === "plugins") void refreshPlugins().catch(show);
+                }}
                 onNotifications={setNotifications}
                 onAutoReview={(value) => void persistAutoReview(value).catch(show)}
                 onAutoTimeZone={setAutoTimeZone}
@@ -1122,6 +1157,11 @@ export default function App() {
                 onSaveProvider={(provider, secret, baseUrl) =>
                   void saveProvider(provider, secret, baseUrl).catch(show)
                 }
+                onAddPlugin={(id) => void addPlugin(id).catch(show)}
+                onRemovePlugin={(id) => void core.deleteMcpPlugin(accountId, id).then(refreshPlugins).catch(show)}
+                onRefreshPlugins={() => void refreshPlugins().catch(show)}
+                onSaveCustomPlugin={(name, url, secret) => void saveCustomPlugin(name, url, secret).catch(show)}
+                onSignInCustomPlugin={(name, url) => void signInCustomPlugin(name, url).catch(show)}
                 onGoogle={() => void signInWithGoogle().catch(show)}
                 onSwitch={(id) => void switchAccount(id).catch(show)}
                 onSignOut={() => {

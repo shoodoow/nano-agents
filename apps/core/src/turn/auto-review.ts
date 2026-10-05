@@ -67,6 +67,10 @@ export function classifyRisk(name: string, input: Record<string, unknown>): stri
   if (name === "delete_routine") {
     return `Delete routine ${String(input.routineId ?? "")}`.trim();
   }
+  if (name === "gmail_send") {
+    const to = String(input.to ?? input.draftId ?? "a recipient");
+    return `Send email to ${to}`.slice(0, 180);
+  }
   if (name === "delete_routines") {
     if (input.all === true) return "Delete all of your routines";
     const ids = Array.isArray(input.routineIds) ? input.routineIds.map(String) : [];

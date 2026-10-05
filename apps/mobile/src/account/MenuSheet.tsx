@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import type { ProviderSetting } from "../api";
+import type { PluginList } from "../api";
 import { colors } from "../theme/tokens";
+import { CustomPluginPage, PluginsPage } from "./PluginsPage";
 import { Avatar } from "../ui/Avatar";
 import { CircleButton } from "../ui/CircleButton";
 import { IconBack, IconCheck, IconChevron, IconClose, IconTrash } from "../ui/icons";
@@ -12,7 +14,7 @@ export type SignedAccount = {
   email: string;
 };
 
-export type MenuPage = "menu" | "account" | "signup" | "providers";
+export type MenuPage = "menu" | "account" | "signup" | "providers" | "plugins" | "plugin-custom";
 
 /**
  * Shows the account menu, the account switcher, or signup.
@@ -28,6 +30,7 @@ export function MenuSheet({
   autoTimeZone,
   timeZone,
   providers,
+  plugins,
   onClose,
   onPage,
   onNotifications,
@@ -36,6 +39,11 @@ export function MenuSheet({
   onApprovals,
   onComputer,
   onSaveProvider,
+  onAddPlugin,
+  onRemovePlugin,
+  onRefreshPlugins,
+  onSaveCustomPlugin,
+  onSignInCustomPlugin,
   onGoogle,
   onSwitch,
   onSignOut,
@@ -49,6 +57,7 @@ export function MenuSheet({
   autoTimeZone: boolean;
   timeZone: string;
   providers: ProviderSetting[];
+  plugins: PluginList | null;
   onClose: () => void;
   onPage: (page: MenuPage) => void;
   onNotifications: (value: boolean) => void;
@@ -57,6 +66,11 @@ export function MenuSheet({
   onApprovals: () => void;
   onComputer: () => void;
   onSaveProvider: (provider: ProviderSetting["provider"], secret: string, baseUrl: string | null) => void;
+  onAddPlugin: (id: string) => void;
+  onRemovePlugin: (id: string) => void;
+  onRefreshPlugins: () => void;
+  onSaveCustomPlugin: (name: string, url: string, secret: string) => void;
+  onSignInCustomPlugin: (name: string, url: string) => void;
   onGoogle: () => void;
   onSwitch: (id: string) => void;
   onSignOut: () => void;
@@ -79,6 +93,7 @@ export function MenuSheet({
           onApprovals={onApprovals}
           onComputer={onComputer}
           onProviders={() => onPage("providers")}
+          onPlugins={() => onPage("plugins")}
         />
       ) : null}
       {page === "account" && account ? (
@@ -99,6 +114,19 @@ export function MenuSheet({
           onGoogle={onGoogle}
           onSwitch={onSwitch}
         />
+      ) : null}
+      {page === "plugins" ? (
+        <PluginsPage
+          plugins={plugins}
+          onBack={() => onPage("menu")}
+          onCustom={() => onPage("plugin-custom")}
+          onAdd={onAddPlugin}
+          onRemove={onRemovePlugin}
+          onRefresh={onRefreshPlugins}
+        />
+      ) : null}
+      {page === "plugin-custom" ? (
+        <CustomPluginPage onBack={() => onPage("plugins")} onSave={onSaveCustomPlugin} onSignIn={onSignInCustomPlugin} />
       ) : null}
       {page === "providers" ? (
         <ProviderPage
@@ -125,6 +153,7 @@ function MenuPageView({
   onApprovals,
   onComputer,
   onProviders,
+  onPlugins,
 }: {
   account: SignedAccount;
   notifications: boolean;
@@ -139,6 +168,7 @@ function MenuPageView({
   onApprovals: () => void;
   onComputer: () => void;
   onProviders: () => void;
+  onPlugins: () => void;
 }) {
   return (
     <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
@@ -161,6 +191,13 @@ function MenuPageView({
         <View style={styles.cardBody}>
           <Text style={styles.rowLabel}>AI Providers</Text>
           <Text style={styles.hint}>API keys and local OpenAI-compatible models</Text>
+        </View>
+        <IconChevron />
+      </Pressable>
+      <Pressable accessibilityRole="button" onPress={onPlugins} style={styles.card}>
+        <View style={styles.cardBody}>
+          <Text style={styles.rowLabel}>Plugins</Text>
+          <Text style={styles.hint}>Gmail, Calendar, Drive, and your own MCP servers</Text>
         </View>
         <IconChevron />
       </Pressable>

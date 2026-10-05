@@ -13,6 +13,10 @@ import { novncAssets, novncClientPage } from "./screen-client.js";
 import type { getDb } from "../db/client.js";
 import { devices, notifications, conversations as conversationsTable, messages } from "../db/schema.js";
 import { and, desc, eq } from "drizzle-orm";
+import { finishGoogleOAuth, startGoogleOAuth } from "../mcp/google-oauth.js";
+import { finishMcpOAuth, startMcpOAuth } from "../mcp/mcp-oauth.js";
+import { peekPending } from "../mcp/oauth-pending.js";
+import { listAccountPlugins } from "../mcp/plugins.js";
 import { deleteMcpServer, listMcpServers, saveMcpServer } from "../mcp/store.js";
 import { listProviderKeys, saveProviderKey } from "../keys/keys.js";
 import { saveSecret } from "../keys/secrets.js";
@@ -190,6 +194,26 @@ function mountRoutes(app: Express, ctx: AppContext): void {
       res.status(400).json({ error: error instanceof Error ? error.message : "Invalid secret." });
     }
   });
+  accounts.get("/:accountId/plugins", guard, async (req, res) => {
+    res.json(await listAccountPlugins(ctx.db, pathParam(req, "accountId")));
+  });
+  accounts.post("/:accountId/plugins/google/start", guard, async (req, res) => {
+    try {
+      const id = typeof req.body?.id === "string" ? req.body.id : "";
+      res.json(await startGoogleOAuth(ctx.db, pathParam(req, "accountId"), id));
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Could not start Google sign-in." });
+    }
+  });
+  accounts.post("/:accountId/plugins/mcp/oauth/start", guard, async (req, res) => {
+    try {
+      const slug = typeof req.body?.slug === "string" ? req.body.slug : "";
+      const url = typeof req.body?.url === "string" ? req.body.url : "";
+      res.json(await startMcpOAuth(ctx.db, pathParam(req, "accountId"), slug, url));
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Could not start plugin sign-in." });
+    }
+  });
   accounts.get("/:accountId/mcp", guard, async (req, res) => {
     res.json(await listMcpServers(ctx.db, pathParam(req, "accountId")));
   });
@@ -290,6 +314,23 @@ function mountRoutes(app: Express, ctx: AppContext): void {
       return;
     }
     res.status(201).json({ url, name: typeof name === "string" ? name : "upload", mime: typeof mime === "string" ? mime : null });
+  });
+  app.get("/plugins/oauth/callback", async (req, res) => {
+    const code = typeof req.query.code === "string" ? req.query.code : "";
+    const state = typeof req.query.state === "string" ? req.query.state : "";
+    const oauthError = typeof req.query.error === "string" ? req.query.error : "";
+    if (oauthError || !code || !state) {
+      res.status(400).type("html").send(pluginPage("The plugin was not connected."));
+      return;
+    }
+    try {
+      const pending = peekPending(state);
+      if (!pending) throw new Error("This plugin sign-in expired. Start it again.");
+      const name = pending.kind === "google" ? (await finishGoogleOAuth(ctx.db, state, code)).name : (await finishMcpOAuth(ctx.db, state, code)).slug;
+      res.type("html").send(pluginPage(`${name} is connected. You can close this window.`));
+    } catch (error) {
+      res.status(400).type("html").send(pluginPage(error instanceof Error ? error.message : "The plugin was not connected."));
+    }
   });
   app.use("/accounts", accounts);
   app.use(novncAssets());
@@ -1051,6 +1092,11 @@ function requestedAccountId(req: Request): string {
 function queryAccountId(req: Request): string {
   const value = req.query.accountId;
   return typeof value === "string" ? value : "";
+}
+
+function pluginPage(message: string): string {
+  const safe = message.replace(/[&<>]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[char] ?? char);
+  return `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Plugin</title><body style="font-family:sans-serif;padding:24px"><p>${safe}</p><script>location.href=${JSON.stringify("nano-agents://plugins")}</script>`;
 }
 
 function pathParam(req: Request, name: string): string {

@@ -462,6 +462,7 @@ export const mcpServers = pgTable(
     slug: text("slug").notNull(),
     url: text("url").notNull(),
     secret: text("secret").notNull().default(""),
+    kind: text("kind").notNull().default("remote"),
     enabled: boolean("enabled").notNull().default(true),
     toolsCache: jsonb("tools_cache").notNull().default([]),
     lastError: text("last_error"),
@@ -470,8 +471,18 @@ export const mcpServers = pgTable(
   (table) => [
     unique("mcp_servers_account_id_slug_unique").on(table.accountId, table.slug),
     check("mcp_servers_slug_check", sql`${table.slug} ~ '^[a-z][a-z0-9_-]{0,31}$'`),
+    check("mcp_servers_kind_check", sql`${table.kind} in ('remote', 'google')`),
   ],
 );
+
+/** One Google refresh token per account. Plugin rows do not each store a copy. */
+export const accountGoogleOauth = pgTable("account_google_oauth", {
+  accountId: uuid("account_id")
+    .primaryKey()
+    .references(() => accounts.id, { onDelete: "cascade" }),
+  secret: text("secret").notNull(),
+  scopes: text("scopes").notNull().default(""),
+});
 
 export const providerKeys = pgTable(
   "provider_keys",

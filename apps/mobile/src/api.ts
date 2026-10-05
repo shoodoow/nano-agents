@@ -79,6 +79,21 @@ export type AccountSettings = {
   autoReview: boolean;
 };
 
+export type PluginCard = {
+  id: string;
+  name: string;
+  description: string;
+  section: string;
+  kind: "google" | "remote";
+  mark: { icon: string | null; letter: string; color: string };
+  skills: { name: string; description: string }[];
+  installed: boolean;
+  configured: boolean;
+  lastError: string | null;
+};
+
+export type PluginList = { installed: number; plugins: PluginCard[] };
+
 export type RoutineRun = {
   id: string;
   status: "done" | "failed" | string;
@@ -217,6 +232,11 @@ export type CoreClient = {
   ) => Promise<RosterAgent>;
   listTeam: (accountId: string, agentId: string) => Promise<RosterAgent[]>;
   listProviders: (accountId: string) => Promise<ProviderSetting[]>;
+  listPlugins: (accountId: string) => Promise<PluginList>;
+  startGooglePlugin: (accountId: string, id: string) => Promise<{ installed: true } | { installed: false; url: string }>;
+  startMcpPlugin: (accountId: string, slug: string, url: string) => Promise<{ url: string }>;
+  saveMcpPlugin: (accountId: string, input: { slug: string; url: string; secret: string }) => Promise<unknown>;
+  deleteMcpPlugin: (accountId: string, slug: string) => Promise<void>;
   saveProvider: (
     accountId: string,
     input: { provider: ProviderSetting["provider"]; secret: string; baseUrl: string | null },
@@ -305,6 +325,11 @@ export function createCore(
     listTeam: (accountId, agentId) => listTeam(baseUrl, accountId, agentId, fetchImpl),
     listProviders: (accountId) => listProviders(baseUrl, accountId, fetchImpl),
     saveProvider: (accountId, input) => saveProvider(baseUrl, accountId, input, fetchImpl),
+    listPlugins: (accountId) => listPlugins(baseUrl, accountId, fetchImpl),
+    startGooglePlugin: (accountId, id) => startGooglePlugin(baseUrl, accountId, id, fetchImpl),
+    startMcpPlugin: (accountId, slug, url) => startMcpPlugin(baseUrl, accountId, slug, url, fetchImpl),
+    saveMcpPlugin: (accountId, input) => saveMcpPlugin(baseUrl, accountId, input, fetchImpl),
+    deleteMcpPlugin: (accountId, slug) => deleteMcpPlugin(baseUrl, accountId, slug, fetchImpl),
     listConversations: (accountId) => listConversations(baseUrl, accountId, fetchImpl),
     listMembers: (accountId, conversationId) => listMembers(baseUrl, accountId, conversationId, fetchImpl),
     chatContext: (accountId, conversationId) => chatContext(baseUrl, accountId, conversationId, fetchImpl),
@@ -359,11 +384,54 @@ async function listProviders(baseUrl: string, accountId: string, fetchImpl: type
   return readJson<ProviderSetting[]>(fetchImpl, `${baseUrl}/accounts/${accountId}/providers`);
 }
 
-/**
- * Saves one encrypted provider credential.
- * Input: the core base URL, account id, provider, secret, optional local URL, and fetch.
- * Output: provider metadata only. The secret is never returned.
- */
+/** Loads this account's plugin catalog. Secrets are never included. */
+async function listPlugins(baseUrl: string, accountId: string, fetchImpl: typeof fetch): Promise<PluginList> {
+  return readJson<PluginList>(fetchImpl, `${baseUrl}/accounts/${accountId}/plugins`);
+}
+
+async function startGooglePlugin(
+  baseUrl: string,
+  accountId: string,
+  id: string,
+  fetchImpl: typeof fetch,
+): Promise<{ installed: true } | { installed: false; url: string }> {
+  return readJson(fetchImpl, `${baseUrl}/accounts/${accountId}/plugins/google/start`, {
+    method: "POST",
+    body: JSON.stringify({ id }),
+  });
+}
+
+async function startMcpPlugin(baseUrl: string, accountId: string, slug: string, url: string, fetchImpl: typeof fetch): Promise<{ url: string }> {
+  return readJson(fetchImpl, `${baseUrl}/accounts/${accountId}/plugins/mcp/oauth/start`, {
+    method: "POST",
+    body: JSON.stringify({ slug, url }),
+  });
+}
+
+async function saveMcpPlugin(
+  baseUrl: string,
+  accountId: string,
+  input: { slug: string; url: string; secret: string },
+  fetchImpl: typeof fetch,
+): Promise<unknown> {
+  return readJson(fetchImpl, `${baseUrl}/accounts/${accountId}/mcp`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+}
+
+async function deleteMcpPlugin(baseUrl: string, accountId: string, slug: string, fetchImpl: typeof fetch): Promise<void> {
+  const cookie = readAuthCookie();
+  const response = await fetchImpl(`${baseUrl}/accounts/${accountId}/mcp/${slug}`, {
+    method: "DELETE",
+    headers: { ...(cookie ? { cookie } : {}) },
+  });
+  if (!response.ok && response.status !== 204) {
+    const failure = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(failure?.error ?? `Core returned ${response.status}.`);
+  }
+}
+
 async function saveProvider(
   baseUrl: string,
   accountId: string,

@@ -4,7 +4,9 @@
 import { jsonSchema, tool } from "ai";
 import type { getDb } from "../db/client.js";
 import type { ToolContext } from "../turn/tools/context.js";
+import { runGoogleTool } from "../computer/google-bridge.js";
 import { runMcpTool } from "../computer/mcp-bridge.js";
+import { catalogPlugin } from "./catalog.js";
 import { mcpRowsForAccount } from "./store.js";
 import type { McpToolCacheEntry } from "./types.js";
 
@@ -50,7 +52,8 @@ export async function appendMcpTools(
 ): Promise<void> {
   const rows = await mcpRowsForAccount(ctx.db, ctx.accountId);
   for (const row of rows) {
-    const tools = (Array.isArray(row.toolsCache) ? row.toolsCache : []) as McpToolCacheEntry[];
+    const catalog = row.kind === "google" ? catalogPlugin(row.slug) : undefined;
+    const tools = catalog?.tools ?? ((Array.isArray(row.toolsCache) ? row.toolsCache : []) as McpToolCacheEntry[]);
     if (tools.length === 0) continue;
     for (const entry of tools) {
       const fullName = `${row.slug}_${entry.name}`;
@@ -66,6 +69,7 @@ export async function appendMcpTools(
           if (!ctx.linuxProfile) {
             return { error: "Connectors run inside this account's computer, which is not ready yet." };
           }
+          if (row.kind === "google") return runGoogleTool(ctx.db, ctx.accountId, row.slug, entry.name, input);
           return runMcpTool(ctx.accountId, row.slug, entry.name, input);
         }) as never,
       });

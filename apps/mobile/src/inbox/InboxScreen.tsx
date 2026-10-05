@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Feather } from "@expo/vector-icons";
-import { FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { FlatList, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import type { RosterAgent } from "../api";
 import { colors } from "../theme/tokens";
 import { Avatar } from "../ui/Avatar";
@@ -28,6 +28,7 @@ export function InboxScreen({
   onPin,
   onHide,
   menu,
+  onCloseMenu,
 }: {
   agents: RosterAgent[];
   groups: { id: string; title: string; memberCount: number; members: GroupFace[] }[];
@@ -39,6 +40,7 @@ export function InboxScreen({
   onPin: (agent: RosterAgent) => void;
   onHide: (agent: RosterAgent) => void;
   menu?: ReactNode;
+  onCloseMenu?: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
@@ -183,7 +185,13 @@ export function InboxScreen({
           </Pressable>
         )}
       />
-      {menu ? <View style={styles.menu}>{menu}</View> : null}
+      {menu && Platform.OS === "ios" ? (
+        <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={onCloseMenu}>
+          <View style={styles.iosSheet}>{menu}</View>
+        </Modal>
+      ) : menu ? (
+        <View style={styles.menu}>{menu}</View>
+      ) : null}
       <Modal visible={held !== null} transparent animationType="fade" onRequestClose={() => setHeld(null)}>
         <Pressable accessibilityLabel="Dismiss" style={styles.scrim} onPress={() => setHeld(null)}>
           {held ? (
@@ -286,6 +294,7 @@ const styles = StyleSheet.create({
   pingBadge: { backgroundColor: colors.danger, borderRadius: 11, minWidth: 22, height: 22, alignItems: "center", justifyContent: "center", paddingHorizontal: 6 },
   pingText: { color: "#fff", fontSize: 12, fontWeight: "700" },
   menu: { position: "absolute", top: 60, left: 8, right: 8, bottom: 12 },
+  iosSheet: { flex: 1, backgroundColor: colors.sheet },
   search: {
     marginHorizontal: 16,
     marginTop: 8,

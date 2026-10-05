@@ -1,0 +1,148 @@
+import type { McpToolCacheEntry } from "./types.js";
+
+/** Icon is shown when set. Letter and color are the fallback when it is missing or fails to load. */
+export type PluginMark = { icon: string | null; letter: string; color: string };
+
+/** A skill copied into the account when this plugin is added. */
+export type PluginSkill = { name: string; description: string; body: string };
+
+export type CatalogPlugin = {
+  id: string;
+  name: string;
+  description: string;
+  section: string;
+  kind: "google";
+  mark: PluginMark;
+  skills: PluginSkill[];
+  scopes: string[];
+  tools: McpToolCacheEntry[];
+};
+
+const confirm = " Confirm with the person before creating or changing anything.";
+
+/** Featured plugins this product can actually connect. Other companies' listings are not copied here. */
+export const PLUGIN_CATALOG: CatalogPlugin[] = [
+  {
+    id: "gmail",
+    name: "Gmail",
+    description: "Search, read, draft, and send email. Sending waits for your approval.",
+    section: "Featured",
+    kind: "google",
+    mark: { icon: "https://www.gstatic.com/images/branding/product/1x/gmail_2020q4_32dp.png", letter: "M", color: "#EA4335" },
+    skills: [
+      { name: "gmail-search", description: "Look up and read messages in this account.", body: "Use gmail_search and gmail_read. Do not send mail from this skill." },
+      { name: "gmail-draft", description: "Prepare a message without sending it.", body: "Use gmail_create_draft. Leave the message as a draft." },
+      { name: "gmail-send", description: "Send mail after the person approves.", body: "Use gmail_send only after Auto-review approves that exact message." },
+    ],
+    scopes: [
+      "https://www.googleapis.com/auth/gmail.readonly",
+      "https://www.googleapis.com/auth/gmail.compose",
+      "https://www.googleapis.com/auth/gmail.send",
+    ],
+    tools: [
+      {
+        name: "search",
+        description: "Search this account's Gmail." + confirm,
+        inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+      },
+      {
+        name: "read",
+        description: "Read one Gmail message by id." + confirm,
+        inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+      },
+      {
+        name: "create_draft",
+        description: "Create a Gmail draft. This does not send it." + confirm,
+        inputSchema: {
+          type: "object",
+          properties: { to: { type: "string" }, subject: { type: "string" }, body: { type: "string" } },
+          required: ["to", "subject", "body"],
+        },
+      },
+      {
+        name: "send",
+        description: "Send an email. Auto-review holds this until the person approves the exact message.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            to: { type: "string" },
+            subject: { type: "string" },
+            body: { type: "string" },
+            draftId: { type: "string" },
+          },
+          required: ["to", "subject", "body"],
+        },
+      },
+    ],
+  },
+  {
+    id: "google-calendar",
+    name: "Google Calendar",
+    description: "Search events and create events.",
+    section: "Featured",
+    kind: "google",
+    mark: { icon: "https://www.gstatic.com/images/branding/product/1x/calendar_2020q4_32dp.png", letter: "31", color: "#4285F4" },
+    skills: [
+      { name: "calendar-find", description: "Look up events on the primary calendar.", body: "Use google-calendar_search_events." },
+      { name: "calendar-schedule", description: "Create an event after the person agrees.", body: "Use google-calendar_create_event only after the person confirms the time." },
+    ],
+    scopes: ["https://www.googleapis.com/auth/calendar.events"],
+    tools: [
+      {
+        name: "search_events",
+        description: "Search events on the primary calendar." + confirm,
+        inputSchema: {
+          type: "object",
+          properties: { query: { type: "string" }, timeMin: { type: "string" }, timeMax: { type: "string" } },
+        },
+      },
+      {
+        name: "create_event",
+        description: "Create an event on the primary calendar." + confirm,
+        inputSchema: {
+          type: "object",
+          properties: {
+            summary: { type: "string" },
+            start: { type: "string" },
+            end: { type: "string" },
+          },
+          required: ["summary", "start", "end"],
+        },
+      },
+    ],
+  },
+  {
+    id: "google-drive",
+    name: "Google Drive",
+    description: "Search and read files.",
+    section: "Featured",
+    kind: "google",
+    mark: { icon: "https://www.gstatic.com/images/branding/product/1x/drive_2020q4_32dp.png", letter: "D", color: "#34A853" },
+    skills: [
+      { name: "drive-search", description: "Find files in this account's Drive.", body: "Use google-drive_search." },
+      { name: "drive-read", description: "Read a file the search step found.", body: "Use google-drive_read with the file id from search." },
+    ],
+    scopes: ["https://www.googleapis.com/auth/drive.readonly"],
+    tools: [
+      {
+        name: "search",
+        description: "Search files in this account's Drive." + confirm,
+        inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+      },
+      {
+        name: "read",
+        description: "Read one Drive file's name and text when the file is plain text." + confirm,
+        inputSchema: { type: "object", properties: { fileId: { type: "string" } }, required: ["fileId"] },
+      },
+    ],
+  },
+];
+
+export function catalogPlugin(id: string): CatalogPlugin | undefined {
+  return PLUGIN_CATALOG.find((plugin) => plugin.id === id);
+}
+
+export function scopesCover(granted: string, required: string[]): boolean {
+  const have = new Set(granted.split(/\s+/).filter(Boolean));
+  return required.every((scope) => have.has(scope));
+}
