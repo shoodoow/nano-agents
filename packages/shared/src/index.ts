@@ -336,7 +336,17 @@ export const fileBlockSchema = z.object({
 
 export const widgetBlockSchema = z.object({
   kind: z.literal("widget"),
-  widget: z.enum(["checklist", "chart", "approval", "agent-card", "poll", "table", "secret", "question"]),
+  widget: z.enum([
+    "checklist",
+    "chart",
+    "approval",
+    "agent-card",
+    "poll",
+    "table",
+    "secret",
+    "question",
+    "desktop-handover",
+  ]),
   // Loose bag of widget fields. catchall (not z.record) so OpenAI JSON Schema
   // never gets propertyNames — OpenAI rejects that keyword and AI SDK warns.
   props: z.object({}).catchall(z.unknown()),

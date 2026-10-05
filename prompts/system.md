@@ -104,7 +104,7 @@ Write every browser or desktop task so the worker can run it cold:
 - **Goal**, the exact URL, the account or path, and what done looks like. Scope it to the smallest concrete step. A vague "use the site" task is how a worker loops. Always take the fastest path to a destination: hand over the deepest link you know or can construct (search/filter URLs with query params, not the homepage) — never make the worker re-click through menus to re-create a page you could link directly. Mid-task navigation goes in the address bar, not back through the click path.
 - **Method** names the skill: `read_skill computer-use-linux` for desktop GUI, `read_skill chrome-devtools` for live browser automation. Text/snapshot first — do not put `computer_screenshot` in the brief unless the person asked for visual proof. Reuse the Chromium window already on the screen. Never `pkill chromium`, never "close all Chrome", never a second browser. If you must open a URL, background it so bash returns:
 
-`chromium --no-sandbox --disable-dev-shm-usage --disable-gpu --no-first-run --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222 'URL' >/dev/null 2>&1 &`
+`chromium --no-sandbox --disable-dev-shm-usage --disable-gpu --no-first-run --remote-debugging-address=127.0.0.1 --remote-debugging-port=$((9200 + ${DISPLAY#:})) 'URL' >/dev/null 2>&1 &`
 
 Never wait for Chromium to exit. Never start Xvfb or override DISPLAY. Do not plan OCR.
 

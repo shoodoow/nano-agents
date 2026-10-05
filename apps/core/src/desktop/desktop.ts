@@ -54,6 +54,17 @@ export function portsFor(profile: string): { rfbPort: number; novncPort: number 
 }
 
 /**
+ * Chrome DevTools port for one Linux profile.
+ * Why: every agent on an account shares one container; a single :9222 lets
+ * browser_* tools drive another agent's Chromium while the viewer shows a
+ * different display. Tie CDP to the same display number bash already uses.
+ * Input: Linux username. Output: localhost port 9210–9279.
+ */
+export function cdpPortFor(profile: string): number {
+  return 9200 + displayFor(profile);
+}
+
+/**
  * Starts this profile's virtual display, VNC, and noVNC inside the account Linux.
  * Why: idempotent and deterministic — the display/ports come from displayFor()
  * so restarts reconcile to the same :N instead of allocating a new one. The
@@ -95,7 +106,7 @@ export async function startDesktop(accountId: string, profile: string): Promise<
       `convert -size 48x48 xc:'#3c4043' -fill '#8ab4f8' -draw 'circle 24,24 24,8' /tmp/desktop-${display}/chrome.png`,
       `convert -size 48x48 xc:'#3c4043' -fill '#e8eaed' -draw 'rectangle 10,16 38,36' /tmp/desktop-${display}/files.png`,
       `convert -size 48x48 xc:'#202124' -fill '#e8eaed' -draw 'rectangle 12,22 20,26' -draw 'rectangle 24,22 36,26' /tmp/desktop-${display}/bash.png`,
-      `cat > /tmp/desktop-${display}/jwmrc << 'EOF'\n${jwmConfig(display)}\nEOF`,
+      `cat > /tmp/desktop-${display}/jwmrc << 'EOF'\n${jwmConfig(display, cdpPortFor(profile))}\nEOF`,
       `xsetroot -display :${display} -solid '#1a1a1a' || true`,
       `xsetroot -display :${display} -cursor_name left_ptr || true`,
       `timeout 3 display -window root /tmp/desktop-${display}/wallpaper.png >/tmp/desktop-${display}/wall.log 2>&1 || true`,
@@ -428,10 +439,10 @@ function bootDesktop(display: number, profile: string): string {
   ].join("\n");
 }
 
-function jwmConfig(display: number): string {
+function jwmConfig(display: number, cdpPort: number): string {
   const root = `/tmp/desktop-${display}`;
   const chrome =
-    "chromium --no-sandbox --disable-dev-shm-usage --disable-gpu --no-first-run --start-maximized --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222";
+    `chromium --no-sandbox --disable-dev-shm-usage --disable-gpu --no-first-run --start-maximized --remote-debugging-address=127.0.0.1 --remote-debugging-port=${cdpPort}`;
   return `<JWM>
 <WindowStyle>
 <Font>DejaVu Sans-11</Font>

@@ -6,7 +6,7 @@ import type { MessageBlock } from "../api";
 import { blocksFromMaybeWidgetText } from "@nano-agents/shared";
 import { parseMarkdownBlocks } from "./markdown";
 import { colors } from "../theme/tokens";
-import { IconClose, IconShield } from "../ui/icons";
+import { IconClose, IconMonitor, IconShield } from "../ui/icons";
 
 // Client-side bytes cache: one fetch per attachment no matter how often the
 // thread re-renders or refreshes. Keyed messageId:index, process-lifetime.
@@ -29,6 +29,7 @@ export function BlockView({
   onSubmitPoll,
   onQuestionPick,
   onSubmitSecret,
+  onOpenDesktop,
   fetchBlob,
 }: {
   block: MessageBlock;
@@ -38,6 +39,7 @@ export function BlockView({
   onSubmitPoll?: (text: string) => void;
   onQuestionPick?: (messageId: string, pick: { value: string; label: string }) => void;
   onSubmitSecret?: (name: string, secret: string) => Promise<void>;
+  onOpenDesktop?: () => void;
   fetchBlob?: (messageId: string, index: number) => Promise<{ url?: string; previewUrl?: string }>;
 }) {
   if (block.kind === "text") {
@@ -56,6 +58,7 @@ export function BlockView({
                 onSubmitPoll={onSubmitPoll}
                 onQuestionPick={onQuestionPick}
                 onSubmitSecret={onSubmitSecret}
+                onOpenDesktop={onOpenDesktop}
                 fetchBlob={fetchBlob}
               />
             ))}
@@ -113,6 +116,7 @@ export function BlockView({
       onSubmitPoll={onSubmitPoll}
       onQuestionPick={onQuestionPick}
       onSubmitSecret={onSubmitSecret}
+      onOpenDesktop={onOpenDesktop}
     />
   );
 }
@@ -307,6 +311,7 @@ function WidgetView({
   onSubmitPoll,
   onQuestionPick,
   onSubmitSecret,
+  onOpenDesktop,
 }: {
   widget: string;
   props: Record<string, unknown>;
@@ -316,6 +321,7 @@ function WidgetView({
   onSubmitPoll?: (text: string) => void;
   onQuestionPick?: (messageId: string, pick: { value: string; label: string }) => void;
   onSubmitSecret?: (name: string, secret: string) => Promise<void>;
+  onOpenDesktop?: () => void;
 }) {
   if (widget === "checklist") {
     const items = Array.isArray(props.items) ? (props.items as { label: string; done?: boolean }[]) : [];
@@ -410,6 +416,35 @@ function WidgetView({
         aligns={parseAligns(props.aligns)}
         note={typeof props.note === "string" ? props.note : ""}
       />
+    );
+  }
+  if (widget === "desktop-handover") {
+    const message =
+      typeof props.message === "string" && props.message.trim()
+        ? props.message.trim()
+        : typeof props.title === "string" && props.title.trim()
+          ? props.title.trim()
+          : "Your agent needs you on the desktop.";
+    const buttonLabel =
+      typeof props.buttonLabel === "string" && props.buttonLabel.trim()
+        ? props.buttonLabel.trim()
+        : "Open desktop";
+    return (
+      <View style={styles.card}>
+        <Text style={styles.cardLine}>{message}</Text>
+        {typeof props.detail === "string" && props.detail.trim() ? (
+          <Text style={styles.handoverDetail}>{props.detail.trim()}</Text>
+        ) : null}
+        <Pressable
+          accessibilityRole="button"
+          style={[styles.handoverBtn, !onOpenDesktop ? styles.handoverBtnDisabled : null]}
+          disabled={!onOpenDesktop}
+          onPress={() => onOpenDesktop?.()}
+        >
+          <IconMonitor />
+          <Text style={styles.handoverBtnText}>{buttonLabel}</Text>
+        </Pressable>
+      </View>
     );
   }
   if (widget === "secret") {
@@ -860,6 +895,19 @@ const styles = StyleSheet.create({
   barRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   bar: { height: 10, borderRadius: 5, backgroundColor: colors.link },
   barValue: { color: colors.muted, fontSize: 12, width: 40 },
+  handoverDetail: { color: colors.muted, fontSize: 14, lineHeight: 20 },
+  handoverBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginTop: 6,
+    borderRadius: 10,
+    paddingVertical: 12,
+    backgroundColor: colors.link,
+  },
+  handoverBtnDisabled: { opacity: 0.45 },
+  handoverBtnText: { color: "#fff", fontWeight: "700", fontSize: 15 },
   approvalRow: { flexDirection: "row", gap: 8, marginTop: 4 },
   approvalStatus: { color: colors.muted, fontSize: 14, fontWeight: "600", marginTop: 2 },
   choice: { flex: 1, borderRadius: 10, paddingVertical: 10, alignItems: "center" },

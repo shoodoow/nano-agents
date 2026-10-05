@@ -23,6 +23,7 @@ Do **not** use this for public pages you can read with `web_search` / `web_fetch
 
 - Screen: **1280×800**. Coordinates: **0–1279** × **0–799**.
 - `DISPLAY` is already set. Never start Xvfb, never override `DISPLAY`.
+- Chrome DevTools is **per agent**: `--remote-debugging-port=$((9200 + ${DISPLAY#:}))` — never use port 9222 (that belongs to another agent on the same computer).
 - Never `pkill chromium`, never "close all Chrome", never open a second browser if one is already on screen.
 - One desktop worker at a time; serialize mutating GUI actions.
 - Home is private; `/shared` is account-wide. Screenshots land under `/shared/screenshots/…`.
@@ -55,7 +56,7 @@ Images burn tokens on every later step. Prefer text observation; screenshot only
 3. **Open URLs the fast way** — address bar or background launch (bash must return):
 
 ```bash
-chromium --no-sandbox --disable-dev-shm-usage --disable-gpu --no-first-run 'URL' >/dev/null 2>&1 &
+chromium --no-sandbox --disable-dev-shm-usage --disable-gpu --no-first-run --remote-debugging-address=127.0.0.1 --remote-debugging-port=$((9200 + ${DISPLAY#:})) 'URL' >/dev/null 2>&1 &
 ```
 
 Never wait for Chromium to exit. Mid-task navigation goes in the address bar, not menu click-paths.

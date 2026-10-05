@@ -1,3 +1,4 @@
+import { cdpPortFor } from "../desktop/desktop.js";
 import { execStdin } from "../linux/linux.js";
 
 /** Tools the in-container bridge accepts. Names match the agent tool list. */
@@ -45,16 +46,21 @@ export async function runBrowserTool(
   name: string,
   args: Record<string, unknown>,
 ): Promise<string> {
-  const body = browserBridgeRequest(name, args);
+  const cdpPort = cdpPortFor(profile);
+  const body = JSON.stringify({
+    ...JSON.parse(browserBridgeRequest(name, args)),
+    cdpPort,
+  });
   const result = await execStdin(
     accountId,
     ["node", "/opt/nano/browser-bridge.mjs"],
     Buffer.from(body),
     profile,
+    [`NANO_CDP_PORT=${cdpPort}`],
   );
   const text = result.stdout.toString("utf8").trim();
   if (result.code !== 0 && !text) {
-    return "Browser bridge failed. Chrome must be running with remote debugging on 127.0.0.1:9222 inside this computer.";
+    return `Browser bridge failed. Start Chromium on your desktop with remote debugging on 127.0.0.1:${cdpPort}.`;
   }
   return text.length > MAX_OUTPUT ? `${text.slice(0, MAX_OUTPUT)}\n[truncated]` : text;
 }

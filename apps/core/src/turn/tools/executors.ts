@@ -20,6 +20,7 @@ import {
   teammateUpdateSchema,
   workerRedirectInputSchema,
 } from "@nano-agents/agent-tools";
+import { takeOver } from "../../desktop/desktop.js";
 import { and, desc, eq } from "drizzle-orm";
 import { agents, conversations, delegations, members } from "../../db/schema.js";
 import { correct, readHistory, remember } from "../../memory/memory.js";
@@ -126,6 +127,12 @@ export async function executeSendMessage(ctx: ToolContext, input: Record<string,
     };
   }
   const asksSecret = parsed.blocks.some((block) => block.kind === "widget" && block.widget === "secret");
+  const asksDesktopHandover = parsed.blocks.some(
+    (block) => block.kind === "widget" && block.widget === "desktop-handover",
+  );
+  if (asksDesktopHandover && ctx.linuxProfile) {
+    takeOver(ctx.accountId, ctx.linuxProfile);
+  }
   let deliverableBlocks = parsed.blocks;
   try {
     deliverableBlocks = await inlineSharedOutputBlocks(ctx.accountId, parsed.blocks);
@@ -144,8 +151,8 @@ export async function executeSendMessage(ctx: ToolContext, input: Record<string,
   });
   ctx.emittedMessages.push(saved);
   await ctx.emit({ type: "message", message: saved });
-  if (asksSecret) ctx.endTurn = true;
-  return { messageId: saved.id, ...(asksSecret ? { endedTurn: true } : {}) };
+  if (asksSecret || asksDesktopHandover) ctx.endTurn = true;
+  return { messageId: saved.id, ...(asksSecret || asksDesktopHandover ? { endedTurn: true } : {}) };
 }
 
 export async function executeReact(ctx: ToolContext, input: Record<string, unknown>) {

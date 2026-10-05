@@ -2,7 +2,7 @@
  * One-shot Chrome DevTools helper. Core docker-execs this inside the account container.
  *
  * Why this exists: bash and other tools already run in the container, but Chrome's
- * debugging port is a WebSocket on 127.0.0.1:9222. That address is this container's
+ * debugging port is a WebSocket on 127.0.0.1 (one port per agent display). That address is this container's
  * own loopback, so the main server cannot open it, and we do not publish the port
  * on the host. This script speaks CDP locally, then exits. It does not listen.
  *
@@ -13,7 +13,14 @@ import crypto from "node:crypto";
 import net from "node:net";
 
 const CDP_HOST = "127.0.0.1";
-const CDP_PORT = 9222;
+
+function resolveCdpPort(request) {
+  const fromBody = Number(request?.cdpPort);
+  if (Number.isFinite(fromBody) && fromBody > 0) return fromBody;
+  const fromEnv = Number(process.env.NANO_CDP_PORT);
+  if (Number.isFinite(fromEnv) && fromEnv > 0) return fromEnv;
+  return 9222;
+}
 
 function readStdin() {
   return new Promise((resolve, reject) => {
@@ -24,9 +31,9 @@ function readStdin() {
   });
 }
 
-function getJson(path) {
+function getJson(path, cdpPort) {
   return new Promise((resolve, reject) => {
-    const req = http.get({ hostname: CDP_HOST, port: CDP_PORT, path }, (res) => {
+    const req = http.get({ hostname: CDP_HOST, port: cdpPort, path }, (res) => {
       const chunks = [];
       res.on("data", (chunk) => chunks.push(chunk));
       res.on("end", () => {
@@ -141,13 +148,15 @@ function connectCdp(wsUrl) {
   });
 }
 
-async function pageSocket() {
-  const pages = await getJson("/json/list");
+async function pageSocket(cdpPort) {
+  const pages = await getJson("/json/list", cdpPort);
   const page = pages.find((row) => row.type === "page" && row.webSocketDebuggerUrl) ?? pages[0];
   if (!page?.webSocketDebuggerUrl) {
-    throw new Error("No Chrome page. Start Chromium with --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222.");
+    throw new Error(
+      `No Chrome page. Start Chromium on your DISPLAY with --remote-debugging-address=127.0.0.1 --remote-debugging-port=${cdpPort}.`,
+    );
   }
-  const local = page.webSocketDebuggerUrl.replace(/^ws:\/\/[^/]+/, `ws://${CDP_HOST}:${CDP_PORT}`);
+  const local = page.webSocketDebuggerUrl.replace(/^ws:\/\/[^/]+/, `ws://${CDP_HOST}:${cdpPort}`);
   return connectCdp(local);
 }
 
@@ -171,12 +180,13 @@ async function main() {
   const request = JSON.parse(raw);
   const tool = request.tool;
   const args = request.args ?? {};
+  const cdpPort = resolveCdpPort(request);
   if (tool === "browser_list_pages") {
-    const pages = await getJson("/json/list");
+    const pages = await getJson("/json/list", cdpPort);
     process.stdout.write(JSON.stringify(pages.map((page) => ({ id: page.id, title: page.title, url: page.url, type: page.type }))));
     return;
   }
-  const cdp = await pageSocket();
+  const cdp = await pageSocket(cdpPort);
   await cdp.send("Runtime.enable");
   await cdp.send("Page.enable");
   if (tool === "browser_navigate") {

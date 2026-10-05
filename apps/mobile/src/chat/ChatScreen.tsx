@@ -354,6 +354,7 @@ export function ChatScreen({
                           onSubmitPoll={onPollSubmit}
                           onQuestionPick={onQuestionPick}
                           onSubmitSecret={onSecretSubmit}
+                          onOpenDesktop={onDesktop}
                           fetchBlob={onFetchBlob}
                         />
                       ))}

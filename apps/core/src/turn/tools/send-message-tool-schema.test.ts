@@ -39,4 +39,17 @@ describe("send_message tool shape", () => {
     });
     expect(parsed.success).toBe(true);
   });
+
+  it("accepts a desktop-handover widget", () => {
+    const parsed = sendMessageInputSchema.safeParse({
+      blocks: [
+        {
+          kind: "widget",
+          widget: "desktop-handover",
+          props: { message: "Sign in to Instagram, then tell me to continue.", buttonLabel: "Take over" },
+        },
+      ],
+    });
+    expect(parsed.success).toBe(true);
+  });
 });

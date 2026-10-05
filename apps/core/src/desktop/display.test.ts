@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agentDisplay, clampPoint, displayFor, displayName, novncPort, portsFor } from "./desktop.js";
+import { agentDisplay, cdpPortFor, clampPoint, displayFor, displayName, novncPort, portsFor } from "./desktop.js";
 
 /**
  * Locks the single-source-of-truth display contract: agent tools, bash
@@ -19,6 +19,14 @@ describe("deterministic display", () => {
     expect(agentDisplay("acct-1", profile)).toBe(displayName(profile));
     expect(novncPort("acct-1", profile)).toBe(portsFor(profile).novncPort);
     expect(novncPort("acct-1", profile)).toBe(6900 + displayFor(profile));
+    expect(cdpPortFor(profile)).toBe(9200 + displayFor(profile));
+  });
+
+  it("gives each profile its own CDP port on a shared container", () => {
+    const ana = "uc0bf3479a7ba471c";
+    const melanie = "ua8488019b9ff4510";
+    expect(cdpPortFor(ana)).not.toBe(cdpPortFor(melanie));
+    expect(cdpPortFor(ana)).toBe(9200 + displayFor(ana));
   });
 
   it("clamps grounding coordinates to 1280x800", () => {
