@@ -11,6 +11,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useKeyboardInset } from "../ui/useKeyboardInset";
 import type { ProviderSetting, RosterAgent } from "../api";
 import { colors } from "../theme/tokens";
 import { IconCheck } from "../ui/icons";
@@ -60,6 +61,7 @@ export function NewRoomSheet({
     configured.some((row) => row.provider === provider);
   const groupReady = title.trim().length > 0 && picked.length >= 2;
   const insets = useSafeAreaInsets();
+  const keyboardInset = useKeyboardInset();
 
   /**
    * Toggles one agent in the group.
@@ -74,9 +76,14 @@ export function NewRoomSheet({
     <Modal visible={open} animationType="slide" transparent onRequestClose={onClose}>
       <KeyboardAvoidingView
         style={styles.modalRoot}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        enabled={Platform.OS === "ios"}
       >
-        <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Close new room">
+        <Pressable
+          style={[styles.backdrop, Platform.OS === "android" && keyboardInset > 0 ? { paddingBottom: keyboardInset } : null]}
+          onPress={onClose}
+          accessibilityLabel="Close new room"
+        >
           <Pressable style={[styles.sheet, { paddingBottom: Math.max(36, insets.bottom + 16) }]} onPress={() => undefined}>
             <ScrollView
               keyboardShouldPersistTaps="handled"

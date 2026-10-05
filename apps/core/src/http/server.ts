@@ -10,6 +10,7 @@ import { reactionSchema, routineCreateInputSchema, subagentCreateSchema } from "
 import { createAuth, localBrowserOrigins } from "../auth/auth.js";
 import { handBack, profileOnAccount, startDesktop, takeOver } from "../desktop/desktop.js";
 import { novncAssets, novncClientPage } from "./screen-client.js";
+import { mintScreenToken, verifyScreenToken } from "./screen-token.js";
 import type { getDb } from "../db/client.js";
 import { devices, notifications, conversations as conversationsTable, messages } from "../db/schema.js";
 import { and, desc, eq } from "drizzle-orm";
@@ -284,6 +285,15 @@ function mountRoutes(app: Express, ctx: AppContext): void {
   });
   accounts.post("/:accountId/screens/:profile/takeover", guard, (req, res) => setScreen(ctx.db, req, res, "takeover"));
   accounts.post("/:accountId/screens/:profile/handback", guard, (req, res) => setScreen(ctx.db, req, res, "handback"));
+  accounts.get("/:accountId/screens/:profile/ws-token", guard, async (req, res) => {
+    const accountId = pathParam(req, "accountId");
+    const profile = decodeURIComponent(pathParam(req, "profile"));
+    if (!(await profileOnAccount(ctx.db, accountId, profile))) {
+      res.status(404).json({ error: "Screen not found." });
+      return;
+    }
+    res.json({ token: mintScreenToken(accountId, profile, screenAuthSecret()) });
+  });
   accounts.get("/:accountId/screens/:profile/client", novncClientPage);
   accounts.post("/:accountId/uploads", guard, async (req, res) => {
     // Scoped under the account so requireSession can match the session's
@@ -994,15 +1004,24 @@ async function proxyScreen(db: Database, auth: Auth, request: IncomingMessage, s
     return;
   }
   const accountId = match[1] ?? "";
+  const profile = decodeURIComponent(match[2] ?? "");
   if (process.env.NODE_ENV !== "test") {
-    const session = await auth.api.getSession({ headers: fromNodeHeaders(request.headers) });
-    const sessionAccountId = String((session?.user as { accountId?: string | null } | undefined)?.accountId ?? "");
-    if (!session || sessionAccountId !== accountId) {
-      socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
-      return;
+    const token = url.searchParams.get("token");
+    const tokenOk =
+      token != null &&
+      (() => {
+        const payload = verifyScreenToken(token, screenAuthSecret());
+        return payload?.accountId === accountId && payload.profile === profile;
+      })();
+    if (!tokenOk) {
+      const session = await auth.api.getSession({ headers: fromNodeHeaders(request.headers) });
+      const sessionAccountId = String((session?.user as { accountId?: string | null } | undefined)?.accountId ?? "");
+      if (!session || sessionAccountId !== accountId) {
+        socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+        return;
+      }
     }
   }
-  const profile = decodeURIComponent(match[2] ?? "");
   const owned = await profileOnAccount(db, accountId, profile);
   if (!owned) {
     socket.end("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
@@ -1019,6 +1038,10 @@ async function proxyScreen(db: Database, auth: Auth, request: IncomingMessage, s
   const preamble = Buffer.concat([Buffer.from(`${lines.join("\r\n")}\r\n\r\n`), head]);
   logger.info({ accountId, profile }, "screen proxy opened");
   await pipeExec(accountId, ["socat", "STDIO", `TCP:127.0.0.1:${session.novncPort}`], socket, preamble);
+}
+
+function screenAuthSecret(): string {
+  return process.env.BETTER_AUTH_SECRET ?? "dev-only-secret-change-before-production-01";
 }
 
 function securityHeaders(_req: Request, res: Response, next: NextFunction): void {

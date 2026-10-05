@@ -44,17 +44,39 @@ export function DesktopScreen({
   const [live, setLive] = useState(false);
   const [keyboard, setKeyboard] = useState(false);
   const [typed, setTyped] = useState("");
+  const [page, setPage] = useState("");
   const webRef = useRef<WebView>(null);
   const inputRef = useRef<TextInput>(null);
 
-  // The pointer and keyboard belong to whoever is watching: the viewer is live
-  // from the first frame rather than view-only until a take-over button.
-  const page = profile
-    ? `${core.screenPageUrl(accountId, profile)}?${new URLSearchParams({
-        url: core.screenUrl(accountId, profile),
-        viewOnly: "0",
-      }).toString()}`
-    : "";
+  // HTTPS cores use HttpOnly session cookies; the WebView cannot plant them for
+  // the screen socket, so fetch a short-lived ws token with the app session first.
+  useEffect(() => {
+    if (!profile) {
+      setPage("");
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { token } = await core.getScreenToken(accountId, profile);
+        if (cancelled) {
+          return;
+        }
+        const viewer = `${core.screenPageUrl(accountId, profile)}?${new URLSearchParams({
+          url: core.screenUrl(accountId, profile, token),
+          viewOnly: "0",
+        }).toString()}`;
+        setPage(viewer);
+      } catch (error) {
+        if (!cancelled) {
+          onError(error);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId, profile, onError]);
 
   // The WebView keeps its own cookie jar and the expo client keeps the session
   // in SecureStore, so the cookie has to be copied across before the viewer can
@@ -67,11 +89,9 @@ export function DesktopScreen({
   // does not exist. Raising __nanoSessionReady is what tells the viewer it may
   // connect.
   const seed = authClient.getCookie();
-  const planted = seed
-    ? `document.cookie = ${JSON.stringify(`${seed}; path=/`)};
-     window.__nanoSessionReady = true;`
-    : "window.__nanoNoSession = true;";
+  const planted = seed ? "window.__nanoSessionReady = true;" : "window.__nanoNoSession = true;";
   const injected = `${planted} true;`;
+  const webSource = seed ? { uri: page, headers: { Cookie: seed } } : { uri: page };
 
   const sendKey = useCallback((keysym: number) => {
     // Omitting `down` makes noVNC send a press followed by a release; passing
@@ -182,7 +202,9 @@ export function DesktopScreen({
         {page ? (
           <WebView
             ref={webRef}
-            source={{ uri: page }}
+            source={webSource}
+            sharedCookiesEnabled
+            thirdPartyCookiesEnabled
             originWhitelist={["http://*", "https://*"]}
             injectedJavaScriptBeforeContentLoaded={injected}
             // Planting the cookie again once the page is loaded is what makes

@@ -264,6 +264,7 @@ export function ChatScreen({
       <FlatList
         ref={listRef}
         key={conversationId}
+        style={styles.threadList}
         inverted
         data={thread}
         keyExtractor={(message) => message.id}
@@ -509,6 +510,7 @@ const styles = StyleSheet.create({
   mentionRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10, paddingHorizontal: 12 },
   mentionName: { color: colors.text, fontSize: 16 },
   headerSpacer: { width: 44 },
+  threadList: { flex: 1 },
   // With inverted lists, paddingTop is the visual bottom (near composer).
   thread: { flexGrow: 1, paddingHorizontal: 12, paddingTop: 16, paddingBottom: 12, gap: 8 },
   emptyInvert: { transform: [{ scaleY: -1 }] },

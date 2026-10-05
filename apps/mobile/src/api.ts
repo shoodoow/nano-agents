@@ -291,8 +291,9 @@ export type CoreClient = {
   createRoutine: (accountId: string, agentId: string, input: RoutineInput) => Promise<Routine>;
   updateRoutine: (accountId: string, agentId: string, routineId: string, input: RoutinePatch) => Promise<Routine>;
   deleteRoutine: (accountId: string, agentId: string, routineId: string) => Promise<void>;
-  screenUrl: (accountId: string, profile: string) => string;
+  screenUrl: (accountId: string, profile: string, token?: string) => string;
   screenPageUrl: (accountId: string, profile: string) => string;
+  getScreenToken: (accountId: string, profile: string) => Promise<{ token: string }>;
   takeOver: (accountId: string, profile: string) => Promise<void>;
   handBack: (accountId: string, profile: string) => Promise<void>;
 };
@@ -365,8 +366,9 @@ export function createCore(baseUrl = coreBaseUrl(), fetchImpl: typeof fetch = fe
     updateRoutine: (accountId, agentId, routineId, input) =>
       updateRoutine(baseUrl, accountId, agentId, routineId, input, fetchImpl),
     deleteRoutine: (accountId, agentId, routineId) => deleteRoutine(baseUrl, accountId, agentId, routineId, fetchImpl),
-    screenUrl: (accountId, profile) => screenUrl(baseUrl, accountId, profile),
+    screenUrl: (accountId, profile, token) => screenUrl(baseUrl, accountId, profile, token),
     screenPageUrl: (accountId, profile) => screenPageUrl(baseUrl, accountId, profile),
+    getScreenToken: (accountId, profile) => getScreenToken(baseUrl, accountId, profile, fetchImpl),
     takeOver: (accountId, profile) => screenFlag(baseUrl, accountId, profile, "takeover", fetchImpl),
     handBack: (accountId, profile) => screenFlag(baseUrl, accountId, profile, "handback", fetchImpl),
   };
@@ -1243,12 +1245,24 @@ async function wakeCue(
  * Input: the core base URL, the account id, and the Linux username.
  * Output: a core websocket URL. It uses the core host, not a container port.
  */
-export function screenUrl(baseUrl: string, accountId: string, profile: string): string {
+export function screenUrl(baseUrl: string, accountId: string, profile: string, token?: string): string {
   const url = new URL(baseUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.pathname = `/accounts/${accountId}/screens/${encodeURIComponent(profile)}`;
   url.search = "";
+  if (token) {
+    url.searchParams.set("token", token);
+  }
   return url.toString();
+}
+
+async function getScreenToken(
+  baseUrl: string,
+  accountId: string,
+  profile: string,
+  fetchImpl: typeof fetch,
+): Promise<{ token: string }> {
+  return readJson(fetchImpl, `${baseUrl}/accounts/${accountId}/screens/${encodeURIComponent(profile)}/ws-token`);
 }
 
 /**

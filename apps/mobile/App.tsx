@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { KeyboardAvoidingView, Linking, Platform, StatusBar, StyleSheet, Text } from "react-native";
+import { Linking, Platform, StatusBar, StyleSheet, Text } from "react-native";
+import { AppKeyboardShell } from "./src/ui/AppKeyboardShell";
 import { authCallbackURL } from "./src/auth-callback-url";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import * as DocumentPicker from "expo-document-picker";
@@ -1139,7 +1140,7 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-    <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+    <AppKeyboardShell>
     <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
       <StatusBar barStyle="light-content" />
       <DotBakery />
@@ -1364,7 +1365,7 @@ export default function App() {
         onCreateGroup={(title, agentIds) => void createGroup(title, agentIds).catch(show)}
       />
     </SafeAreaView>
-    </KeyboardAvoidingView>
+    </AppKeyboardShell>
     </SafeAreaProvider>
   );
 }
