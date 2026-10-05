@@ -11,11 +11,13 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { AttachMenu } from "./AttachMenu";
 import type { MessageBlock, Reaction, RosterAgent } from "../api";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors } from "../theme/tokens";
 import { Avatar, colorFor } from "../ui/Avatar";
 import { CircleButton } from "../ui/CircleButton";
+import { PillButton } from "../ui/PrimaryButton";
 import { ContextUsageRing } from "../ui/ContextUsageRing";
 import { IconBack, IconMonitor, IconPlus } from "../ui/icons";
 import { BlockView } from "./blocks";
@@ -113,15 +115,12 @@ export function ChatScreen({
   error,
   replyTo,
   attachments,
-  attachOpen,
   onDraft,
   onSend,
-  onAttach,
-  onCloseAttach,
   onPickImage,
+  onPickCamera,
   onPickFile,
   onRemoveAttachment,
-  onMention,
   onReply,
   onClearReply,
   onPollSubmit,
@@ -149,15 +148,12 @@ export function ChatScreen({
   error: string;
   replyTo: Bubble | null;
   attachments: ComposerAttachment[];
-  attachOpen: boolean;
   onDraft: (value: string) => void;
   onSend: () => void;
-  onAttach: () => void;
-  onCloseAttach: () => void;
   onPickImage: () => void;
+  onPickCamera: () => void;
   onPickFile: () => void;
   onRemoveAttachment: (id: string) => void;
-  onMention: () => void;
   onReply: (bubble: Bubble) => void;
   onClearReply: () => void;
   onPollSubmit: (text: string) => void;
@@ -172,7 +168,10 @@ export function ChatScreen({
   onAgentMenu: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const [attachOpen, setAttachOpen] = useState(false);
   const listRef = useRef<FlatList<Bubble>>(null);
+  const composerBottom = Math.max(8, insets.bottom) + 52;
+  const canSend = (draft.trim().length > 0 || attachments.length > 0) && !sending;
   const [pickingFor, setPickingFor] = useState<string | null>(null);
   const [highlightId, setHighlightId] = useState<string | null>(null);
   // Newest-first + inverted FlatList opens on the latest message with no
@@ -181,6 +180,7 @@ export function ChatScreen({
   useEffect(() => {
     setPickingFor(null);
     setHighlightId(null);
+    setAttachOpen(false);
   }, [conversationId]);
 
   /** Scrolls the inverted thread to the parent of a swipe-reply. */
@@ -424,8 +424,42 @@ export function ChatScreen({
           ))}
         </View>
       ) : null}
+      <Modal visible={attachOpen} transparent animationType="fade" onRequestClose={() => setAttachOpen(false)}>
+        <Pressable style={styles.attachBackdrop} onPress={() => setAttachOpen(false)} accessibilityLabel="Close attach menu">
+          <View style={[styles.attachAnchor, { bottom: composerBottom }]} pointerEvents="box-none">
+            <AttachMenu
+              actions={[
+                {
+                  icon: "image",
+                  label: "Attach Image",
+                  onPress: () => {
+                    setAttachOpen(false);
+                    onPickImage();
+                  },
+                },
+                {
+                  icon: "camera",
+                  label: "Take Photo",
+                  onPress: () => {
+                    setAttachOpen(false);
+                    onPickCamera();
+                  },
+                },
+                {
+                  icon: "folder",
+                  label: "Choose File",
+                  onPress: () => {
+                    setAttachOpen(false);
+                    onPickFile();
+                  },
+                },
+              ]}
+            />
+          </View>
+        </Pressable>
+      </Modal>
       <View style={[styles.composer, { paddingBottom: Math.max(8, insets.bottom) }]}>
-        <CircleButton label="Attach" onPress={onAttach}>
+        <CircleButton label="Attach" active={attachOpen} onPress={() => setAttachOpen((open) => !open)}>
           <IconPlus />
         </CircleButton>
         <View style={styles.inputWrap}>
@@ -448,28 +482,8 @@ export function ChatScreen({
             </View>
           ) : null}
         </View>
-        <Pressable accessibilityLabel="Send" accessibilityRole="button" onPress={onSend} style={styles.send}>
-          <Text style={styles.sendText}>Send</Text>
-        </Pressable>
+        <PillButton label="Send" onPress={onSend} disabled={!canSend} busy={sending} />
       </View>
-      <Modal visible={attachOpen} transparent animationType="fade" onRequestClose={onCloseAttach}>
-        <Pressable style={styles.sheetBackdrop} onPress={onCloseAttach}>
-          <View style={styles.sheet}>
-            <Pressable style={styles.sheetRow} onPress={onPickImage}>
-              <Text style={styles.sheetText}>🖼  Photo library</Text>
-            </Pressable>
-            <Pressable style={styles.sheetRow} onPress={onPickFile}>
-              <Text style={styles.sheetText}>📄  File</Text>
-            </Pressable>
-            <Pressable style={styles.sheetRow} onPress={onMention}>
-              <Text style={styles.sheetText}>@  Mention {agent.name}</Text>
-            </Pressable>
-            <Pressable style={[styles.sheetRow, styles.sheetCancel]} onPress={onCloseAttach}>
-              <Text style={styles.sheetText}>Cancel</Text>
-            </Pressable>
-          </View>
-        </Pressable>
-      </Modal>
     </View>
   );
 }
@@ -547,17 +561,9 @@ const styles = StyleSheet.create({
   fileGlyph: { fontSize: 20 },
   chipName: { color: colors.text, fontSize: 12, flexShrink: 1 },
   chipX: { color: colors.muted, fontSize: 14, paddingHorizontal: 4 },
+  attachBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)" },
+  attachAnchor: { position: "absolute", left: 10 },
   composer: { flexDirection: "row", alignItems: "flex-end", paddingHorizontal: 8, paddingBottom: 8, gap: 2 },
-  send: {
-    minWidth: 64,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.link,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 16,
-  },
-  sendText: { color: "#fff", fontSize: 16, fontWeight: "700" },
   inputWrap: {
     flex: 1,
     minHeight: 44,
@@ -587,9 +593,4 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
   },
   inputWithRing: { paddingRight: 38 },
-  sheetBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
-  sheet: { backgroundColor: colors.control, borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 12, gap: 4 },
-  sheetRow: { paddingVertical: 14, paddingHorizontal: 12, borderRadius: 10 },
-  sheetCancel: { alignItems: "center", marginTop: 4, backgroundColor: colors.bubble },
-  sheetText: { color: colors.text, fontSize: 16 },
 });

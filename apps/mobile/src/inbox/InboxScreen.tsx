@@ -7,6 +7,7 @@ import { Avatar } from "../ui/Avatar";
 import { Mark, resolveMarkLook } from "../ui/Mark";
 import { GroupCluster, type GroupFace } from "../ui/GroupCluster";
 import { CircleButton } from "../ui/CircleButton";
+import { pressableStyle } from "../ui/pressableStyles";
 import { IconPlus, IconReply, IconSearch } from "../ui/icons";
 
 /**
@@ -59,7 +60,12 @@ export function InboxScreen({
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
-        <Pressable accessibilityLabel="Account" accessibilityRole="button" onPress={onAccount} style={styles.account}>
+        <Pressable
+          accessibilityLabel="Account"
+          accessibilityRole="button"
+          onPress={onAccount}
+          style={({ pressed }) => pressableStyle(styles.account, { pressed })}
+        >
           <Avatar id="account" size={36} person />
         </Pressable>
         <View style={styles.headerActions}>
@@ -68,7 +74,7 @@ export function InboxScreen({
               <Text style={styles.pingText}>{pendingCount > 99 ? "99+" : String(pendingCount)}</Text>
             </View>
           ) : null}
-          <CircleButton label="Search" onPress={() => setSearching((open) => !open)}>
+          <CircleButton label="Search" active={searching} onPress={() => setSearching((open) => !open)}>
             <IconSearch />
           </CircleButton>
           <CircleButton label="New chat" onPress={onNew}>

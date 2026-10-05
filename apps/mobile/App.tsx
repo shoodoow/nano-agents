@@ -43,6 +43,8 @@ import { DesktopScreen } from "./src/desktop/DesktopScreen";
 import { InboxScreen } from "./src/inbox/InboxScreen";
 import { DotBakery } from "./src/ui/DotStage";
 import { NewRoomSheet } from "./src/inbox/NewRoomSheet";
+import { documentPickerOptions } from "./src/media/documentPickerOptions";
+import { cameraPickerOptions, imageLibraryPickerOptions } from "./src/media/imagePickerOptions";
 import { colors } from "./src/theme/tokens";
 import type { GroupFace } from "./src/ui/GroupCluster";
 
@@ -168,7 +170,6 @@ export default function App() {
   const expectReply = useRef(false);
   const [replyTo, setReplyTo] = useState<Bubble | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [attachOpen, setAttachOpen] = useState(false);
   const [note, setNote] = useState("");
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [toolApprovals, setToolApprovals] = useState<ToolApproval[]>([]);
@@ -561,7 +562,6 @@ export default function App() {
     setDraft("");
     setReplyTo(null);
     setAttachments([]);
-    setAttachOpen(false);
     setNote("");
   }
 
@@ -680,7 +680,6 @@ export default function App() {
     setAttachments([]);
     const target = replyTo;
     setReplyTo(null);
-    setAttachOpen(false);
     setNote("");
     setMessages((current) => [...current, pending]);
     // A failed POST must restore the composer so nothing the user wrote is lost.
@@ -822,22 +821,7 @@ export default function App() {
    * grounding receives pixels, not a phone-local path it cannot open.
    * Compresses to cap the row size. Input: none (uses picker UI). Output: nothing.
    */
-  async function pickImage(): Promise<void> {
-    setAttachOpen(false);
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      setNote("Photo access is needed to attach images.");
-      return;
-    }
-    const picked = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      base64: true,
-      quality: 0.7,
-    });
-    if (picked.canceled || picked.assets.length === 0) {
-      return;
-    }
-    const asset = picked.assets[0]!;
+  async function stagePickedImage(asset: ImagePicker.ImagePickerAsset): Promise<void> {
     if (!asset.base64) {
       setNote("That image could not be read. Try another.");
       return;
@@ -861,6 +845,32 @@ export default function App() {
     ]);
   }
 
+  async function pickImage(): Promise<void> {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      setNote("Photo access is needed to attach images.");
+      return;
+    }
+    const picked = await ImagePicker.launchImageLibraryAsync(imageLibraryPickerOptions());
+    if (picked.canceled || picked.assets.length === 0) {
+      return;
+    }
+    await stagePickedImage(picked.assets[0]!);
+  }
+
+  async function pickCamera(): Promise<void> {
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permission.granted) {
+      setNote("Camera access is needed to take a photo.");
+      return;
+    }
+    const picked = await ImagePicker.launchCameraAsync(cameraPickerOptions());
+    if (picked.canceled || picked.assets.length === 0) {
+      return;
+    }
+    await stagePickedImage(picked.assets[0]!);
+  }
+
   /**
    * Picks one file and stages it as an attachment.
    * Why: small working files (text, csv, pdf) embed as data URIs in file
@@ -869,8 +879,7 @@ export default function App() {
    * Input: none (uses picker UI). Output: nothing.
    */
   async function pickFile(): Promise<void> {
-    setAttachOpen(false);
-    const picked = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
+    const picked = await DocumentPicker.getDocumentAsync(documentPickerOptions());
     if (picked.canceled || picked.assets.length === 0) {
       return;
     }
@@ -1056,11 +1065,7 @@ export default function App() {
       setNote("Photo access is needed for the bot photo.");
       return;
     }
-    const picked = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      base64: true,
-      quality: 0.7,
-    });
+    const picked = await ImagePicker.launchImageLibraryAsync(imageLibraryPickerOptions());
     if (picked.canceled || picked.assets.length === 0) {
       return;
     }
@@ -1249,15 +1254,12 @@ export default function App() {
           error={note}
           replyTo={replyTo}
           attachments={attachments}
-          attachOpen={attachOpen}
           onDraft={setDraft}
           onSend={() => void send(screen.conversationId).catch(show).finally(() => setSending(false))}
-          onAttach={() => setAttachOpen((open) => !open)}
-          onCloseAttach={() => setAttachOpen(false)}
           onPickImage={() => void pickImage().catch(show)}
+          onPickCamera={() => void pickCamera().catch(show)}
           onPickFile={() => void pickFile().catch(show)}
           onRemoveAttachment={(id) => setAttachments((current) => current.filter((attachment) => attachment.id !== id))}
-          onMention={() => setDraft(core.mention(draft, screen.agent.name))}
           onReply={setReplyTo}
           onClearReply={() => setReplyTo(null)}
           onPollSubmit={(text) => void sendText(screen.conversationId, text).catch(show)}

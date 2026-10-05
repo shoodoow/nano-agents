@@ -201,6 +201,80 @@ Google sign-in flow: app → `https://api.example.com` → Google → callback �
 
 ---
 
+## 9. Expo account and Metro (daily dev)
+
+```bash
+npx expo login
+cd apps/mobile
+pnpm start:clear       # from repo root: pnpm --filter mobile start:clear
+```
+
+EAS CLI is **not** installed globally by default. Use **`npx eas-cli`** (or `pnpm exec eas-cli` from `apps/mobile` after `pnpm add -D eas-cli`).
+
+| Platform | Open the app |
+|----------|----------------|
+| **iOS device** | Camera → scan QR (same Expo account as CLI) |
+| **Android device** | Expo Go → Scan QR |
+| **Simulator** | Press `i` / `a` in Metro, or `pnpm --filter mobile ios` / `android:local` |
+
+Metro URL (`exp://192.168.x.x:8081`) is **only** the JS bundle. The API stays `EXPO_PUBLIC_CORE_URL` (your public HTTPS core).
+
+---
+
+## 10. Push notifications
+
+The core sends pushes via [Expo Push API](https://docs.expo.dev/push-notifications/sending-notifications/) (`exp.host`). After sign-in, the app registers an **Expo push token** with `POST /devices` on the core.
+
+### What works where
+
+| Runtime | Remote push |
+|---------|-------------|
+| **Expo Go on Android** | **No** (SDK 53+; app skips token registration) |
+| **Expo Go on iOS** | Unreliable for production; use a dev build for real push |
+| **EAS development / production build** | **Yes** (recommended) |
+
+Without `extra.eas.projectId` in app config, `getPushToken()` returns null — chat still works via SSE while the app is open.
+
+### One-time EAS setup
+
+From `apps/mobile`:
+
+```bash
+cd apps/mobile
+npx eas-cli login
+npx eas-cli init   # links project; adds projectId under expo.extra.eas in app.json
+```
+
+Confirm `apps/mobile/app.config.js` keeps merged `extra` (it spreads `app.json`’s `extra`, including `eas.projectId`).
+
+### Credentials (dev / store builds)
+
+1. **iOS** — Apple Developer account required. On first `npx eas-cli build`, accept **Setup Push Notifications** and generate an **APNs key** (or `npx eas-cli credentials` → iOS → Push Notifications).
+2. **Android** — `npx eas-cli credentials` → Android → **Push Notifications: FCM** and upload/create a Firebase **FCM v1** service account key ([Expo FCM guide](https://docs.expo.dev/push-notifications/fcm-credentials/)).
+
+### Install a development build on your phone
+
+```bash
+cd apps/mobile
+npx eas-cli build --profile development --platform ios     # or android
+# install the build from the EAS link (or internal distribution)
+npx expo start --dev-client
+```
+
+Use the **development build** (not Expo Go) for push on both platforms. Keep `EXPO_PUBLIC_CORE_URL` pointed at your tunnel/VPS core.
+
+### Verify push end-to-end
+
+1. Core running and reachable from the phone.
+2. Sign in with Google in the app.
+3. Allow notifications when prompted.
+4. Background the app and trigger an agent notification (e.g. approval / action-needed ping).
+5. Tap notification — app should open the room from push `data`.
+
+Core does **not** need an Expo secret for basic push send; optional [Expo access token](https://docs.expo.dev/accounts/programmatic-access/) helps for higher-volume or secured sends later.
+
+---
+
 ## Production on a VPS (recommended)
 
 | Topic | Recommendation |
@@ -240,6 +314,9 @@ Laptop + tunnel is fine for **personal dev**; for anything shared or always-on, 
 | **401** on agents/chat | Sign in again; check `EXPO_PUBLIC_CORE_URL` matches `BETTER_AUTH_URL` |
 | Desktop stuck on **Connecting** | Restart core (ws-token support); agent must have `linuxProfile`; tunnel must allow **WebSockets** |
 | iOS Expo “sign in required” | Same Expo account on CLI and Expo Go |
+| No push on Android | Expected in **Expo Go** — use an **EAS development build** + FCM credentials |
+| Push never registers | Run `npx eas-cli init`; check `expo.extra.eas.projectId`; grant notification permission |
+| `eas: command not found` | Use `npx eas-cli …` or install globally: `npm install -g eas-cli` |
 
 ---
 

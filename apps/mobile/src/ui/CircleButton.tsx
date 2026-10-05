@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
-import { Pressable, StyleSheet, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
 import { colors } from "../theme/tokens";
+import { pressableStyle } from "./pressableStyles";
 
 /**
  * Renders one round chrome button.
@@ -11,19 +12,31 @@ export function CircleButton({
   label,
   onPress,
   children,
+  disabled,
+  busy,
+  active,
 }: {
   label: string;
   onPress: () => void;
   children: ReactNode;
+  disabled?: boolean;
+  busy?: boolean;
+  /** Toggle-on highlight (search open, attach menu, etc.). */
+  active?: boolean;
 }) {
+  const off = disabled || busy;
   return (
     <Pressable
       accessibilityLabel={label}
       accessibilityRole="button"
+      accessibilityState={{ disabled: off, busy, selected: active }}
+      disabled={off}
       onPress={onPress}
-      style={({ pressed }) => [styles.hit, pressed && styles.pressed]}
+      style={(state) => pressableStyle(styles.hit, { ...state, disabled: off })}
     >
-      <View style={styles.circle}>{children}</View>
+      <View style={[styles.circle, active ? styles.circleActive : null]}>
+        {busy ? <ActivityIndicator color={colors.text} size="small" /> : children}
+      </View>
     </Pressable>
   );
 }
@@ -38,5 +51,5 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  pressed: { opacity: 0.55, transform: [{ scale: 0.96 }] },
+  circleActive: { backgroundColor: colors.line },
 });

@@ -48,6 +48,14 @@ describe("novnc viewer page", () => {
     expect(novncShell("/assets/novnc/")).toContain('src="/assets/novnc/shell.js"');
   });
 
+  it("supports optional trackpad mode and runtime pointer controls", () => {
+    const script = novncShellScript("/assets/novnc");
+    expect(script).toContain('params.get("trackpad") === "1"');
+    expect(script).toContain("window.nanoSetTrackpad");
+    expect(script).toContain("window.nanoRecenterPointer");
+    expect(script).toContain("rfb.showDotCursor = true");
+  });
+
   it("separates a refused socket from an ordinary disconnect", () => {
     const script = novncShellScript("/assets/novnc");
     // A socket that never connected means the core rejected the page's cookie,

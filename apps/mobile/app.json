@@ -8,6 +8,9 @@
     "userInterfaceStyle": "dark",
     "backgroundColor": "#000000",
     "newArchEnabled": true,
+    "eas": {
+      "projectId": "47834947-adeb-4aa2-b980-bc72ac43be47"
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.nanoagents.app"

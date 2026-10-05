@@ -1,0 +1,49 @@
+import type { ReactNode } from "react";
+import { Pressable, StyleSheet, type StyleProp, type ViewStyle } from "react-native";
+import { colors } from "../theme/tokens";
+import { interaction, pressableStyle } from "./pressableStyles";
+
+/** Tappable card (account menu entries, inbox rows). */
+export function CardButton({
+  onPress,
+  onLongPress,
+  children,
+  style,
+  disabled,
+}: {
+  onPress: () => void;
+  onLongPress?: () => void;
+  children: ReactNode;
+  style?: StyleProp<ViewStyle>;
+  disabled?: boolean;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      disabled={disabled}
+      onPress={onPress}
+      onLongPress={onLongPress}
+      style={(state) =>
+        pressableStyle([styles.card, state.pressed && !disabled ? styles.cardPressed : null, style], {
+          ...state,
+          disabled,
+        })
+      }
+    >
+      {children}
+    </Pressable>
+  );
+}
+
+const styles = StyleSheet.create({
+  card: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: colors.card,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  cardPressed: { backgroundColor: interaction.rowPressedBackground },
+});

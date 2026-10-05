@@ -5,7 +5,11 @@ import type { PluginList } from "../api";
 import { colors } from "../theme/tokens";
 import { CustomPluginPage, PluginsPage } from "./PluginsPage";
 import { Avatar } from "../ui/Avatar";
+import { CardButton } from "../ui/CardButton";
 import { CircleButton } from "../ui/CircleButton";
+import { PrimaryButton } from "../ui/PrimaryButton";
+import { SettingsRow } from "../ui/SettingsRow";
+import { pressableStyle } from "../ui/pressableStyles";
 import { IconBack, IconCheck, IconChevron, IconClose, IconTrash } from "../ui/icons";
 
 export type SignedAccount = {
@@ -175,32 +179,32 @@ function MenuPageView({
       <CircleButton label="Close menu" onPress={onClose}>
         <IconClose />
       </CircleButton>
-      <Pressable accessibilityRole="button" onPress={onAccount} style={styles.card}>
+      <CardButton onPress={onAccount}>
         <Avatar id={account.id} size={44} person />
         <View style={styles.cardBody}>
           <Text style={styles.name}>{account.name}</Text>
           <Text style={styles.email}>{account.email}</Text>
         </View>
         <IconChevron />
-      </Pressable>
-      <Pressable accessibilityRole="button" onPress={onApprovals} style={styles.card}>
+      </CardButton>
+      <CardButton onPress={onApprovals}>
         <Text style={styles.rowLabel}>Usage</Text>
         <IconChevron />
-      </Pressable>
-      <Pressable accessibilityRole="button" onPress={onProviders} style={styles.card}>
+      </CardButton>
+      <CardButton onPress={onProviders}>
         <View style={styles.cardBody}>
           <Text style={styles.rowLabel}>AI Providers</Text>
           <Text style={styles.hint}>API keys and local OpenAI-compatible models</Text>
         </View>
         <IconChevron />
-      </Pressable>
-      <Pressable accessibilityRole="button" onPress={onPlugins} style={styles.card}>
+      </CardButton>
+      <CardButton onPress={onPlugins}>
         <View style={styles.cardBody}>
           <Text style={styles.rowLabel}>Plugins</Text>
           <Text style={styles.hint}>Gmail, Calendar, Drive, and your own MCP servers</Text>
         </View>
         <IconChevron />
-      </Pressable>
+      </CardButton>
       <Text style={styles.section}>Bot</Text>
       <View style={styles.group}>
         <View style={styles.groupRow}>
@@ -210,13 +214,13 @@ function MenuPageView({
           </View>
           <Switch value={autoReview} onValueChange={onAutoReview} trackColor={{ true: colors.green, false: colors.line }} />
         </View>
-        <Pressable accessibilityRole="button" onPress={onApprovals} style={styles.groupRow}>
+        <SettingsRow onPress={onApprovals}>
           <Text style={styles.rowLabel}>Auto-review Rules</Text>
           <View style={styles.trailing}>
             <Text style={styles.trailingText}>Approvals</Text>
             <IconChevron />
           </View>
-        </Pressable>
+        </SettingsRow>
         <View style={styles.groupRow}>
           <View style={styles.cardBody}>
             <Text style={styles.rowLabel}>Set Time Zone Automatically</Text>
@@ -228,10 +232,10 @@ function MenuPageView({
           <Text style={styles.rowLabel}>Time Zone</Text>
           <Text style={styles.trailingText}>{timeZone}</Text>
         </View>
-        <Pressable accessibilityRole="button" onPress={onComputer} style={styles.groupRow}>
+        <SettingsRow onPress={onComputer}>
           <Text style={styles.rowLabel}>Bot Computer</Text>
           <IconChevron />
-        </Pressable>
+        </SettingsRow>
       </View>
       <View style={styles.group}>
         <View style={styles.groupRow}>
@@ -288,11 +292,11 @@ function ProviderPage({
       <Text style={styles.hint}>Keys are encrypted on the server and never returned to this phone.</Text>
       <View style={styles.group}>
         {providerNames.map((name) => (
-          <Pressable key={name} accessibilityRole="button" onPress={() => setProvider(name)} style={styles.groupRow}>
+          <SettingsRow key={name} onPress={() => setProvider(name)}>
             <Text style={styles.rowLabel}>{name === "xai" ? "xAI" : name[0]?.toUpperCase() + name.slice(1)}</Text>
             {providers.some((row) => row.provider === name && row.configured) ? <Text style={styles.configured}>Configured</Text> : null}
             {provider === name ? <IconCheck /> : null}
-          </Pressable>
+          </SettingsRow>
         ))}
       </View>
       <TextInput
@@ -318,14 +322,11 @@ function ProviderPage({
           style={styles.input}
         />
       ) : null}
-      <Pressable
-        accessibilityRole="button"
+      <PrimaryButton
+        label="Save provider"
         disabled={!ready}
         onPress={() => onSave(provider, secret, provider === "local" ? baseUrl.trim() : null)}
-        style={[styles.primary, !ready && styles.disabled]}
-      >
-        <Text style={styles.primaryText}>Save provider</Text>
-      </Pressable>
+      />
     </ScrollView>
   );
 }
@@ -365,19 +366,19 @@ function AccountPage({
       <Text style={styles.section}>Switch Account</Text>
       <View style={styles.group}>
         {accounts.map((row) => (
-          <Pressable key={row.id} accessibilityRole="button" onPress={() => onSwitch(row.id)} style={styles.groupRow}>
+          <SettingsRow key={row.id} onPress={() => onSwitch(row.id)}>
             <Text style={styles.rowLabel}>{row.email}</Text>
             {row.id === account.id ? <IconCheck /> : null}
-          </Pressable>
+          </SettingsRow>
         ))}
-        <Pressable accessibilityRole="button" onPress={onAdd} style={styles.groupRow}>
+        <SettingsRow onPress={onAdd}>
           <Text style={styles.rowLabel}>+  Add Account</Text>
-        </Pressable>
+        </SettingsRow>
       </View>
-      <Pressable accessibilityRole="button" onPress={onSignOut} style={styles.dangerButton}>
+      <Pressable accessibilityRole="button" onPress={onSignOut} style={(state) => pressableStyle(styles.dangerButton, state)}>
         <Text style={styles.dangerText}>Sign Out</Text>
       </Pressable>
-      <Pressable accessibilityRole="button" onPress={onDelete} style={styles.dangerButton}>
+      <Pressable accessibilityRole="button" onPress={onDelete} style={(state) => pressableStyle(styles.dangerButton, state)}>
         <IconTrash />
         <Text style={styles.dangerText}>Delete Account</Text>
       </Pressable>
@@ -411,14 +412,12 @@ function SignupPage({
       ) : null}
       <Text style={styles.signupTitle}>Sign in</Text>
       <Text style={styles.hint}>Google creates your account. Chats and groups use that account id.</Text>
-      <Pressable accessibilityRole="button" onPress={onGoogle} style={styles.primary}>
-        <Text style={styles.primaryText}>Continue with Google</Text>
-      </Pressable>
+      <PrimaryButton label="Continue with Google" onPress={onGoogle} />
       {accounts.length > 0 ? <Text style={styles.section}>On this phone</Text> : null}
       {accounts.map((row) => (
-        <Pressable key={row.id} accessibilityRole="button" onPress={() => onSwitch(row.id)} style={styles.card}>
+        <CardButton key={row.id} onPress={() => onSwitch(row.id)}>
           <Text style={styles.rowLabel}>{row.email}</Text>
-        </Pressable>
+        </CardButton>
       ))}
     </ScrollView>
   );
@@ -477,7 +476,4 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     fontSize: 16,
   },
-  primary: { backgroundColor: colors.text, borderRadius: 22, height: 48, alignItems: "center", justifyContent: "center" },
-  primaryText: { color: colors.bg, fontSize: 16, fontWeight: "600" },
-  disabled: { opacity: 0.4 },
 });

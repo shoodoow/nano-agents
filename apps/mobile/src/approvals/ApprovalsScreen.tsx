@@ -2,6 +2,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import type { Proposal, ToolApproval } from "../api";
 import { colors } from "../theme/tokens";
 import { CircleButton } from "../ui/CircleButton";
+import { pressableStyle } from "../ui/pressableStyles";
 import { IconBack } from "../ui/icons";
 
 /**
@@ -43,10 +44,18 @@ export function ApprovalsScreen({
             <Text style={styles.kind}>{row.tool}</Text>
             <Text style={styles.body}>{row.summary}</Text>
             <View style={styles.actions}>
-              <Pressable accessibilityRole="button" onPress={() => onApproveTool(row.id)} style={styles.action}>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => onApproveTool(row.id)}
+                style={(state) => pressableStyle(styles.action, state)}
+              >
                 <Text style={styles.actionText}>Approve</Text>
               </Pressable>
-              <Pressable accessibilityRole="button" onPress={() => onDenyTool(row.id)} style={styles.action}>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => onDenyTool(row.id)}
+                style={(state) => pressableStyle(styles.action, state)}
+              >
                 <Text style={styles.rejectText}>Deny</Text>
               </Pressable>
             </View>
@@ -57,10 +66,18 @@ export function ApprovalsScreen({
             <Text style={styles.kind}>{proposal.kind}</Text>
             <Text style={styles.body}>{proposal.body}</Text>
             <View style={styles.actions}>
-              <Pressable accessibilityRole="button" onPress={() => onApprove(proposal.id)} style={styles.action}>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => onApprove(proposal.id)}
+                style={(state) => pressableStyle(styles.action, state)}
+              >
                 <Text style={styles.actionText}>Approve</Text>
               </Pressable>
-              <Pressable accessibilityRole="button" onPress={() => onReject(proposal.id)} style={styles.action}>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => onReject(proposal.id)}
+                style={(state) => pressableStyle(styles.action, state)}
+              >
                 <Text style={styles.rejectText}>Reject</Text>
               </Pressable>
             </View>

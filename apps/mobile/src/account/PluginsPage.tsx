@@ -3,6 +3,8 @@ import { AppState, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Te
 import type { PluginCard, PluginList } from "../api";
 import { colors } from "../theme/tokens";
 import { CircleButton } from "../ui/CircleButton";
+import { PrimaryButton } from "../ui/PrimaryButton";
+import { pressableStyle } from "../ui/pressableStyles";
 import { IconBack, IconClose, IconPlus, IconSearch } from "../ui/icons";
 
 /**
@@ -74,7 +76,12 @@ export function PluginsPage({
             .map((row) => {
               const live = rows.find((item) => item.id === row.id) ?? row;
               return (
-                <Pressable key={row.id} accessibilityRole="button" onPress={() => setSelected(live)} style={styles.row}>
+                <Pressable
+                  key={row.id}
+                  accessibilityRole="button"
+                  onPress={() => setSelected(live)}
+                  style={({ pressed }) => pressableStyle(styles.row, { pressed })}
+                >
                   <PluginGlyph mark={live.mark} name={live.name} />
                   <View style={styles.body}>
                     <Text style={styles.name}>{live.name}</Text>
@@ -136,12 +143,8 @@ export function CustomPluginPage({
       <TextInput value={name} onChangeText={setName} placeholder="Name" placeholderTextColor={colors.muted} autoCapitalize="none" keyboardAppearance="dark" style={styles.input} />
       <TextInput value={url} onChangeText={setUrl} placeholder="https://example.com/mcp" placeholderTextColor={colors.muted} autoCapitalize="none" autoCorrect={false} keyboardAppearance="dark" style={styles.input} />
       <TextInput value={secret} onChangeText={setSecret} placeholder="Bearer token, if the server uses one" placeholderTextColor={colors.muted} autoCapitalize="none" autoCorrect={false} secureTextEntry keyboardAppearance="dark" style={styles.input} />
-      <Pressable accessibilityRole="button" disabled={!ready} onPress={() => onSave(name, url, secret)} style={[styles.primary, !ready && styles.disabled]}>
-        <Text style={styles.primaryText}>Add</Text>
-      </Pressable>
-      <Pressable accessibilityRole="button" disabled={!ready} onPress={() => onSignIn(name, url)} style={[styles.secondary, !ready && styles.disabled]}>
-        <Text style={styles.addText}>Sign in</Text>
-      </Pressable>
+      <PrimaryButton label="Add" disabled={!ready} onPress={() => onSave(name, url, secret)} />
+      <PrimaryButton label="Sign in" variant="secondary" disabled={!ready} onPress={() => onSignIn(name, url)} />
     </ScrollView>
   );
 }

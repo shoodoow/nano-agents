@@ -113,6 +113,150 @@ const withSession = (start) => {
   }, 100);
 };
 
+let trackpadWanted = params.get("trackpad") === "1";
+let trackpadCleanup = null;
+
+const fbToElement = (rfb, fbX, fbY) => {
+  const scale = rfb._display.scale;
+  const vp = rfb._display._viewportLoc;
+  return { x: (fbX - vp.x) * scale, y: (fbY - vp.y) * scale };
+};
+
+const moveTrackpadPointer = (rfb, fbX, fbY) => {
+  const w = rfb._display.width;
+  const h = rfb._display.height;
+  if (w <= 0 || h <= 0) {
+    return;
+  }
+  fbX = Math.max(0, Math.min(w - 1, fbX));
+  fbY = Math.max(0, Math.min(h - 1, fbY));
+  rfb._trackpadFbX = fbX;
+  rfb._trackpadFbY = fbY;
+  const el = fbToElement(rfb, fbX, fbY);
+  rfb._flushMouseMoveTimer(el.x, el.y);
+  rfb._sendMouse(el.x, el.y, rfb._mouseButtonMask);
+  const canvas = rfb._canvas;
+  const rect = canvas.getBoundingClientRect();
+  const clientX = rect.left + (el.x / canvas.width) * rect.width;
+  const clientY = rect.top + (el.y / canvas.height) * rect.height;
+  rfb._cursor.move(clientX, clientY);
+};
+
+const applyTrackpad = (rfb, on) => {
+  if (trackpadCleanup) {
+    trackpadCleanup();
+    trackpadCleanup = null;
+  }
+  trackpadWanted = on;
+  if (!on) {
+    rfb._gestures.attach(rfb._canvas);
+    return;
+  }
+  rfb._gestures.detach();
+  rfb.showDotCursor = true;
+  if (rfb._trackpadFbX == null) {
+    rfb._trackpadFbX = rfb._display.width / 2;
+    rfb._trackpadFbY = rfb._display.height / 2;
+  }
+  moveTrackpadPointer(rfb, rfb._trackpadFbX, rfb._trackpadFbY);
+
+  const canvas = rfb._canvas;
+  const TAP = 10;
+  const LONG = 500;
+  let lastX = 0;
+  let lastY = 0;
+  let active = false;
+  let moved = false;
+  let longTimer = null;
+
+  const onStart = (e) => {
+    if (rfb.viewOnly || e.touches.length !== 1) {
+      return;
+    }
+    e.preventDefault();
+    active = true;
+    moved = false;
+    lastX = e.touches[0].clientX;
+    lastY = e.touches[0].clientY;
+    longTimer = setTimeout(() => {
+      if (active && !moved) {
+        const el = fbToElement(rfb, rfb._trackpadFbX, rfb._trackpadFbY);
+        rfb._sendMouse(el.x, el.y, 4);
+        rfb._sendMouse(el.x, el.y, 0);
+        moved = true;
+      }
+    }, LONG);
+  };
+
+  const onMove = (e) => {
+    if (!active || rfb.viewOnly || e.touches.length !== 1) {
+      return;
+    }
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const dx = (e.touches[0].clientX - lastX) * (canvas.width / rect.width);
+    const dy = (e.touches[0].clientY - lastY) * (canvas.height / rect.height);
+    lastX = e.touches[0].clientX;
+    lastY = e.touches[0].clientY;
+    if (Math.hypot(dx, dy) > TAP) {
+      if (longTimer) {
+        clearTimeout(longTimer);
+        longTimer = null;
+      }
+      moved = true;
+    }
+    if (!moved) {
+      return;
+    }
+    const scale = rfb._display.scale;
+    moveTrackpadPointer(rfb, rfb._trackpadFbX + dx / scale, rfb._trackpadFbY + dy / scale);
+  };
+
+  const onEnd = () => {
+    if (longTimer) {
+      clearTimeout(longTimer);
+      longTimer = null;
+    }
+    if (active && !moved && !rfb.viewOnly) {
+      const el = fbToElement(rfb, rfb._trackpadFbX, rfb._trackpadFbY);
+      rfb._sendMouse(el.x, el.y, 1);
+      rfb._sendMouse(el.x, el.y, 0);
+    }
+    active = false;
+  };
+
+  canvas.addEventListener("touchstart", onStart, { passive: false });
+  canvas.addEventListener("touchmove", onMove, { passive: false });
+  canvas.addEventListener("touchend", onEnd, { passive: false });
+  canvas.addEventListener("touchcancel", onEnd, { passive: false });
+
+  trackpadCleanup = () => {
+    if (longTimer) {
+      clearTimeout(longTimer);
+    }
+    canvas.removeEventListener("touchstart", onStart);
+    canvas.removeEventListener("touchmove", onMove);
+    canvas.removeEventListener("touchend", onEnd);
+    canvas.removeEventListener("touchcancel", onEnd);
+  };
+};
+
+window.nanoSetTrackpad = (on) => {
+  trackpadWanted = !!on;
+  const rfb = window.nanoRfb;
+  if (rfb && rfb._rfbConnectionState === "connected") {
+    applyTrackpad(rfb, trackpadWanted);
+  }
+};
+
+window.nanoRecenterPointer = () => {
+  const rfb = window.nanoRfb;
+  if (!rfb || !trackpadWanted) {
+    return;
+  }
+  moveTrackpadPointer(rfb, rfb._display.width / 2, rfb._display.height / 2);
+};
+
 const begin = () => {
   const rfb = new RFB(screen, url, { shared: true });
   window.nanoRfb = rfb;
@@ -139,6 +283,9 @@ const begin = () => {
 
   rfb.addEventListener("connect", () => {
     everConnected = true;
+    if (trackpadWanted) {
+      applyTrackpad(rfb, true);
+    }
     post({ kind: "connect" });
   });
   rfb.addEventListener("disconnect", () => post({ kind: everConnected ? "disconnect" : "auth" }));

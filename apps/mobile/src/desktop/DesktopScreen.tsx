@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { createCore } from "../api";
 import type { RosterAgent } from "../api";
@@ -8,6 +8,8 @@ import { colors } from "../theme/tokens";
 import { Avatar } from "../ui/Avatar";
 import { CircleButton } from "../ui/CircleButton";
 import { IconBack, IconHelp, IconKeyboard, IconMore } from "../ui/icons";
+import { DesktopInputMenu } from "./DesktopInputMenu";
+import { getTrackpadMode, setTrackpadMode } from "./desktopPrefs";
 
 const core = createCore();
 
@@ -45,14 +47,44 @@ export function DesktopScreen({
   const [keyboard, setKeyboard] = useState(false);
   const [typed, setTyped] = useState("");
   const [page, setPage] = useState("");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [trackpad, setTrackpad] = useState(false);
+  const [prefsReady, setPrefsReady] = useState(false);
   const webRef = useRef<WebView>(null);
   const inputRef = useRef<TextInput>(null);
+  const trackpadRef = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getTrackpadMode().then((enabled) => {
+      if (!cancelled) {
+        trackpadRef.current = enabled;
+        setTrackpad(enabled);
+        setPrefsReady(true);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const applyTrackpad = useCallback((enabled: boolean) => {
+    webRef.current?.injectJavaScript(
+      `window.nanoSetTrackpad && window.nanoSetTrackpad(${enabled}); true;`,
+    );
+  }, []);
+
+  const recenterPointer = useCallback(() => {
+    webRef.current?.injectJavaScript(`window.nanoRecenterPointer && window.nanoRecenterPointer(); true;`);
+  }, []);
 
   // HTTPS cores use HttpOnly session cookies; the WebView cannot plant them for
   // the screen socket, so fetch a short-lived ws token with the app session first.
   useEffect(() => {
-    if (!profile) {
-      setPage("");
+    if (!profile || !prefsReady) {
+      if (!profile) {
+        setPage("");
+      }
       return;
     }
     let cancelled = false;
@@ -65,6 +97,7 @@ export function DesktopScreen({
         const viewer = `${core.screenPageUrl(accountId, profile)}?${new URLSearchParams({
           url: core.screenUrl(accountId, profile, token),
           viewOnly: "0",
+          trackpad: trackpadRef.current ? "1" : "0",
         }).toString()}`;
         setPage(viewer);
       } catch (error) {
@@ -76,7 +109,7 @@ export function DesktopScreen({
     return () => {
       cancelled = true;
     };
-  }, [accountId, profile, onError]);
+  }, [accountId, profile, onError, prefsReady]);
 
   // The WebView keeps its own cookie jar and the expo client keeps the session
   // in SecureStore, so the cookie has to be copied across before the viewer can
@@ -124,6 +157,7 @@ export function DesktopScreen({
     }
     if (payload.kind === "connect") {
       setLive(true);
+      applyTrackpad(trackpadRef.current);
     } else if (payload.kind === "disconnect") {
       setLive(false);
     } else if (payload.kind === "error") {
@@ -153,6 +187,14 @@ export function DesktopScreen({
     setTyped(next);
   }
 
+  function toggleTrackpad(): void {
+    const next = !trackpadRef.current;
+    trackpadRef.current = next;
+    setTrackpad(next);
+    applyTrackpad(next);
+    void setTrackpadMode(next).catch(() => {});
+  }
+
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
@@ -179,25 +221,40 @@ export function DesktopScreen({
             onPress={() =>
               Alert.alert(
                 "Desktop",
-                "You are driving this agent's screen. Touch to click and drag, or open the keyboard to type.",
+                trackpad
+                  ? "Trackpad mode moves a visible cursor without jumping under your finger. Tap to click; drag to move the pointer."
+                  : "Direct touch maps taps to the spot under your finger. Turn on trackpad mode in the menu for a laptop-style pointer.",
               )
             }
           >
             <IconHelp />
           </CircleButton>
-          <CircleButton
-            label="More"
-            onPress={() =>
-              Alert.alert(agent.name, undefined, [
-                { text: "Approvals", onPress: onApprovals },
-                { text: "Cancel", style: "cancel" },
-              ])
-            }
-          >
-            <IconMore />
-          </CircleButton>
+          <View style={styles.menuAnchor}>
+            <CircleButton label="Desktop options" onPress={() => setMenuOpen((open) => !open)}>
+              <IconMore />
+            </CircleButton>
+            {menuOpen ? (
+              <View style={styles.menuCard}>
+                <DesktopInputMenu
+                  trackpad={trackpad}
+                  onToggleTrackpad={toggleTrackpad}
+                  onRecenterPointer={recenterPointer}
+                  onApprovals={onApprovals}
+                  onClose={() => setMenuOpen(false)}
+                />
+              </View>
+            ) : null}
+          </View>
         </View>
       </View>
+      {menuOpen ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close menu"
+          onPress={() => setMenuOpen(false)}
+          style={styles.menuScrim}
+        />
+      ) : null}
       <View style={styles.stage}>
         {page ? (
           <WebView
@@ -286,4 +343,7 @@ const styles = StyleSheet.create({
   live: { color: "#7ddc7d" },
   hidden: { position: "absolute", top: 0, left: 0, width: 1, height: 1, opacity: 0 },
   footer: { flexDirection: "row", justifyContent: "center", paddingHorizontal: 16, paddingVertical: 18 },
+  menuAnchor: { position: "relative", zIndex: 2 },
+  menuCard: { position: "absolute", top: 44, right: 0, zIndex: 3 },
+  menuScrim: { ...StyleSheet.absoluteFill, zIndex: 1 },
 });

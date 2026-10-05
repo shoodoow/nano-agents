@@ -15,6 +15,8 @@ import { useKeyboardInset } from "../ui/useKeyboardInset";
 import type { ProviderSetting, RosterAgent } from "../api";
 import { colors } from "../theme/tokens";
 import { IconCheck } from "../ui/icons";
+import { PrimaryButton } from "../ui/PrimaryButton";
+import { pressableStyle } from "../ui/pressableStyles";
 
 /**
  * Creates a direct chat or a group on the signed-in account.
@@ -93,10 +95,18 @@ export function NewRoomSheet({
             >
           <Text style={styles.title}>New</Text>
           <View style={styles.kinds}>
-            <Pressable accessibilityRole="button" onPress={() => setKind("chat")} style={[styles.kind, kind === "chat" && styles.kindOn]}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setKind("chat")}
+              style={({ pressed }) => pressableStyle([styles.kind, kind === "chat" && styles.kindOn], { pressed })}
+            >
               <Text style={[styles.kindText, kind === "chat" && styles.kindTextOn]}>Chat</Text>
             </Pressable>
-            <Pressable accessibilityRole="button" onPress={() => setKind("group")} style={[styles.kind, kind === "group" && styles.kindOn]}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setKind("group")}
+              style={({ pressed }) => pressableStyle([styles.kind, kind === "group" && styles.kindOn], { pressed })}
+            >
               <Text style={[styles.kindText, kind === "group" && styles.kindTextOn]}>Group</Text>
             </Pressable>
           </View>
@@ -126,7 +136,9 @@ export function NewRoomSheet({
                     key={row.provider}
                     accessibilityRole="button"
                     onPress={() => setProvider(row.provider)}
-                    style={[styles.kind, provider === row.provider && styles.kindOn]}
+                    style={({ pressed }) =>
+                      pressableStyle([styles.kind, provider === row.provider && styles.kindOn], { pressed })
+                    }
                   >
                     <Text style={[styles.kindText, provider === row.provider && styles.kindTextOn]}>{row.provider}</Text>
                   </Pressable>
@@ -143,33 +155,28 @@ export function NewRoomSheet({
                 autoCorrect={false}
                 style={styles.input}
               />
-              <Pressable
-                accessibilityRole="button"
+              <PrimaryButton
+                label="Create chat"
                 disabled={!chatReady}
                 onPress={() => onCreateChat(name.trim(), role.trim(), job.trim(), provider, modelId.trim())}
-                style={[styles.primary, !chatReady && styles.disabled]}
-              >
-                <Text style={styles.primaryText}>Create chat</Text>
-              </Pressable>
+              />
             </>
           ) : (
             <>
               <TextInput value={title} onChangeText={setTitle} placeholder="Group name" placeholderTextColor={colors.muted} keyboardAppearance="dark" style={styles.input} />
               {agents.length < 2 ? <Text style={styles.hint}>Create at least two chats before a group.</Text> : null}
               {agents.map((agent) => (
-                <Pressable key={agent.id} accessibilityRole="button" onPress={() => toggle(agent.id)} style={styles.agent}>
+                <Pressable
+                  key={agent.id}
+                  accessibilityRole="button"
+                  onPress={() => toggle(agent.id)}
+                  style={({ pressed }) => pressableStyle(styles.agent, { pressed })}
+                >
                   <Text style={styles.agentName}>{agent.name}</Text>
                   {picked.includes(agent.id) ? <IconCheck /> : null}
                 </Pressable>
               ))}
-              <Pressable
-                accessibilityRole="button"
-                disabled={!groupReady}
-                onPress={() => onCreateGroup(title.trim(), picked)}
-                style={[styles.primary, !groupReady && styles.disabled]}
-              >
-                <Text style={styles.primaryText}>Create group</Text>
-              </Pressable>
+              <PrimaryButton label="Create group" disabled={!groupReady} onPress={() => onCreateGroup(title.trim(), picked)} />
             </>
           )}
             </ScrollView>
@@ -195,7 +202,4 @@ const styles = StyleSheet.create({
   hint: { color: colors.muted, fontSize: 14 },
   agent: { flexDirection: "row", alignItems: "center", backgroundColor: colors.card, borderRadius: 14, paddingHorizontal: 14, height: 48 },
   agentName: { color: colors.text, fontSize: 16, flex: 1 },
-  primary: { backgroundColor: colors.text, borderRadius: 22, height: 48, alignItems: "center", justifyContent: "center", marginTop: 4 },
-  primaryText: { color: colors.bg, fontSize: 16, fontWeight: "600" },
-  disabled: { opacity: 0.4 },
 });
