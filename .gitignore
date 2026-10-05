@@ -4,6 +4,9 @@ dist
 *.tsbuildinfo
 .env
 .DS_Store
-apps/core/.tool-trace.log
+.planning/
+text.txt
+*.log
+.tool-trace.log
 apps/mobile/design/*.PNG
 apps/mobile/.expo/dev/logs/start.log
