@@ -229,7 +229,7 @@ function InfoPage({
   profile: RosterAgent;
   providers: ProviderSetting[];
   routines: Routine[];
-  mark: { shape: MarkShape; color: string; material: MarkMaterial };
+  mark: MarkLook;
   tab: Tab;
   onTab: (tab: Tab) => void;
   onPickMark: (mark: MarkLook) => void;

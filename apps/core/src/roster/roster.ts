@@ -150,7 +150,7 @@ export async function listAgents(db: Database, accountId: string) {
  * Input: a database client, the account id, and the agent id.
  * Output: the agent row, or null when the account does not own it.
  */
-export async function getAgent(db: Database, accountId: string, agentId: string) {
+export async function getAgent(db: Store, accountId: string, agentId: string) {
   const [row] = await db
     .select()
     .from(agents)

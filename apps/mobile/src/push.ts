@@ -123,19 +123,13 @@ export function configureForegroundBanners(): void {
     void ensureLocalNotificationsReady();
     try {
       Notifications.setNotificationHandler({
-        handleNotification: async () =>
-          Platform.OS === "ios"
-            ? {
-                shouldPlaySound: true,
-                shouldSetBadge: false,
-                shouldShowBanner: true,
-                shouldShowList: true,
-              }
-            : {
-                shouldShowAlert: true,
-                shouldPlaySound: true,
-                shouldSetBadge: false,
-              },
+        handleNotification: async () => ({
+          shouldPlaySound: true,
+          shouldSetBadge: false,
+          shouldShowBanner: true,
+          shouldShowList: true,
+          shouldShowAlert: true,
+        }),
       });
     } catch {
       // Notifications unavailable.
