@@ -13,13 +13,34 @@
       "bundleIdentifier": "com.nanoagents.app"
     },
     "android": {
-      "package": "com.nanoagents.app"
+      "package": "com.nanoagents.app",
+      "usesCleartextTraffic": true,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "data": [{ "scheme": "nano-agents" }],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ],
+      "permissions": [
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.INTERNET"
+      ]
     },
     "web": {
       "bundler": "metro"
     },
     "plugins": [
-      "expo-sharing"
+      "expo-web-browser",
+      "expo-sharing",
+      ["expo-notifications", { "defaultChannel": "default" }],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Nano Agents to attach photos to messages.",
+          "cameraPermission": "Allow Nano Agents to take photos for messages."
+        }
+      ]
     ]
   }
 }

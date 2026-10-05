@@ -46,8 +46,15 @@ export function createAuth(db: Database) {
     .split(",")
     .map((origin) => origin.trim())
     .filter(Boolean);
+  let publicOrigin: string | undefined;
+  try {
+    publicOrigin = new URL(baseURL).origin;
+  } catch {
+    publicOrigin = undefined;
+  }
   return betterAuth({
     baseURL,
+    advanced: { trustedProxyHeaders: true },
     secret: authSecret(),
     database: drizzleAdapter(db, {
       provider: "pg",
@@ -61,10 +68,18 @@ export function createAuth(db: Database) {
     plugins: [expo()],
     trustedOrigins: [
       "nano-agents://",
+      ...(publicOrigin ? [publicOrigin] : []),
       ...extraOrigins,
       ...(process.env.NODE_ENV === "production"
         ? []
-        : ["http://127.0.0.1:8081", "http://localhost:8081", "exp://", "exp://**", "exp://192.168.*.*:*/**"]),
+        : [
+            "http://127.0.0.1:8081",
+            "http://localhost:8081",
+            "exp://",
+            "exp://**",
+            "exp://192.168.*.*:*/**",
+            "exp://192.168.*.*:*/--/**",
+          ]),
     ],
     user: {
       additionalFields: {

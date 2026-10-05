@@ -3,10 +3,8 @@ import {
   Animated,
   FlatList,
   Image,
-  KeyboardAvoidingView,
   Modal,
   PanResponder,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -14,6 +12,7 @@ import {
   View,
 } from "react-native";
 import type { MessageBlock, Reaction, RosterAgent } from "../api";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors } from "../theme/tokens";
 import { Avatar, colorFor } from "../ui/Avatar";
 import { CircleButton } from "../ui/CircleButton";
@@ -172,6 +171,7 @@ export function ChatScreen({
   onDesktop: () => void;
   onAgentMenu: () => void;
 }) {
+  const insets = useSafeAreaInsets();
   const listRef = useRef<FlatList<Bubble>>(null);
   const [pickingFor, setPickingFor] = useState<string | null>(null);
   const [highlightId, setHighlightId] = useState<string | null>(null);
@@ -214,7 +214,7 @@ export function ChatScreen({
   }
 
   return (
-    <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+    <View style={styles.screen}>
       <View style={styles.header}>
         <CircleButton label="Back" onPress={onBack}>
           <IconBack />
@@ -269,6 +269,7 @@ export function ChatScreen({
         keyExtractor={(message) => message.id}
         contentContainerStyle={styles.thread}
         keyboardShouldPersistTaps="handled"
+        automaticallyAdjustKeyboardInsets
         onScrollToIndexFailed={({ index }) => {
           // Off-screen rows need a layout pass before scrollToIndex works.
           setTimeout(() => {
@@ -422,7 +423,7 @@ export function ChatScreen({
           ))}
         </View>
       ) : null}
-      <View style={styles.composer}>
+      <View style={[styles.composer, { paddingBottom: Math.max(8, insets.bottom) }]}>
         <CircleButton label="Attach" onPress={onAttach}>
           <IconPlus />
         </CircleButton>
@@ -468,7 +469,7 @@ export function ChatScreen({
           </View>
         </Pressable>
       </Modal>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 

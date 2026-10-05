@@ -5,7 +5,10 @@
   "main": "expo/AppEntry.js",
   "scripts": {
     "start": "expo start",
+    "start:clear": "expo start -c",
     "ios": "EXPO_PUBLIC_CORE_URL=http://127.0.0.1:3000 expo start --ios",
+    "android": "expo start --android",
+    "android:local": "EXPO_PUBLIC_CORE_URL=http://10.0.2.2:3000 expo start --android",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
@@ -30,6 +33,7 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.3",
+    "react-native-safe-area-context": "~5.7.0",
     "react-native-svg": "15.15.4",
     "react-native-web": "0.21.2",
     "react-native-webview": "13.16.1"

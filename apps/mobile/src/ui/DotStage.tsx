@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { StyleSheet, View } from "react-native";
+import { Platform, StyleSheet, View } from "react-native";
 import { Image } from "expo-image";
 import { Asset } from "expo-asset";
-import { File } from "expo-file-system";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { markStyleGender, type MarkGender, type MarkMaterial, type MarkShape, type MarkStyle } from "@nano-agents/shared";
 import { ShapeGlyph } from "./ShapeGlyph";
@@ -31,6 +30,12 @@ export function studioHtml(): Promise<string> {
       await asset.downloadAsync();
       const uri = asset.localUri ?? asset.uri;
       if (!uri) throw new Error("Dot studio asset missing");
+      if (Platform.OS === "web") {
+        const res = await fetch(uri);
+        if (!res.ok) throw new Error(`Dot studio asset failed (${res.status})`);
+        return res.text();
+      }
+      const { File } = await import("expo-file-system");
       return new File(uri).text();
     })();
   }

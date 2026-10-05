@@ -1,5 +1,16 @@
 import { useState } from "react";
-import { Modal, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import {
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { ProviderSetting, RosterAgent } from "../api";
 import { colors } from "../theme/tokens";
 import { IconCheck } from "../ui/icons";
@@ -48,6 +59,7 @@ export function NewRoomSheet({
     modelId.trim().length > 0 &&
     configured.some((row) => row.provider === provider);
   const groupReady = title.trim().length > 0 && picked.length >= 2;
+  const insets = useSafeAreaInsets();
 
   /**
    * Toggles one agent in the group.
@@ -60,8 +72,18 @@ export function NewRoomSheet({
 
   return (
     <Modal visible={open} animationType="slide" transparent onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Close new room">
-        <Pressable style={styles.sheet} onPress={() => undefined}>
+      <KeyboardAvoidingView
+        style={styles.modalRoot}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+      >
+        <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Close new room">
+          <Pressable style={[styles.sheet, { paddingBottom: Math.max(36, insets.bottom + 16) }]} onPress={() => undefined}>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              bounces={false}
+              contentContainerStyle={styles.scrollContent}
+            >
           <Text style={styles.title}>New</Text>
           <View style={styles.kinds}>
             <Pressable accessibilityRole="button" onPress={() => setKind("chat")} style={[styles.kind, kind === "chat" && styles.kindOn]}>
@@ -143,15 +165,19 @@ export function NewRoomSheet({
               </Pressable>
             </>
           )}
+            </ScrollView>
+          </Pressable>
         </Pressable>
-      </Pressable>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
+  modalRoot: { flex: 1 },
   backdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.45)" },
-  sheet: { backgroundColor: colors.sheet, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 36, gap: 10 },
+  sheet: { backgroundColor: colors.sheet, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, maxHeight: "92%" },
+  scrollContent: { gap: 10 },
   title: { color: colors.text, fontSize: 20, fontWeight: "600" },
   kinds: { flexDirection: "row", gap: 8 },
   kind: { flex: 1, height: 40, borderRadius: 14, backgroundColor: colors.card, alignItems: "center", justifyContent: "center" },

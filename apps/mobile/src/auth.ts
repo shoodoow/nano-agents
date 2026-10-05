@@ -1,8 +1,14 @@
 import { expoClient } from "@better-auth/expo/client";
 import { createAuthClient } from "better-auth/react";
 import * as SecureStore from "expo-secure-store";
+import * as WebBrowser from "expo-web-browser";
+import { Platform } from "react-native";
+import { coreBaseUrl } from "./core-url";
 
-declare const process: { env: { EXPO_PUBLIC_CORE_URL?: string } };
+// Required so Android/iOS can close the Chrome tab and return after OAuth deep link.
+if (Platform.OS !== "web") {
+  WebBrowser.maybeCompleteAuthSession();
+}
 
 /**
  * Talks to the core's Better Auth routes.
@@ -10,12 +16,14 @@ declare const process: { env: { EXPO_PUBLIC_CORE_URL?: string } };
  * Output: the Google sign-in client. The session is stored on the phone.
  */
 export const authClient = createAuthClient({
-  baseURL: process.env.EXPO_PUBLIC_CORE_URL ?? "http://127.0.0.1:3000",
+  baseURL: coreBaseUrl(),
+  basePath: "/api/auth",
   plugins: [
     expoClient({
       scheme: "nano-agents",
       storagePrefix: "nano-agents",
       storage: SecureStore,
+      webBrowserOptions: { createTask: false },
     }),
   ],
 });

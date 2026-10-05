@@ -185,12 +185,15 @@ export function InboxScreen({
           </Pressable>
         )}
       />
-      {menu && Platform.OS === "ios" ? (
-        <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={onCloseMenu}>
+      {menu ? (
+        <Modal
+          visible
+          animationType="slide"
+          presentationStyle={Platform.OS === "ios" ? "pageSheet" : "fullScreen"}
+          onRequestClose={onCloseMenu}
+        >
           <View style={styles.iosSheet}>{menu}</View>
         </Modal>
-      ) : menu ? (
-        <View style={styles.menu}>{menu}</View>
       ) : null}
       <Modal visible={held !== null} transparent animationType="fade" onRequestClose={() => setHeld(null)}>
         <Pressable accessibilityLabel="Dismiss" style={styles.scrim} onPress={() => setHeld(null)}>

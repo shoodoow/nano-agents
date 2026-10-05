@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Linking, Platform, SafeAreaView, StatusBar, StyleSheet, Text } from "react-native";
-import * as Notifications from "expo-notifications";
+import { KeyboardAvoidingView, Linking, Platform, StatusBar, StyleSheet, Text } from "react-native";
+import { authCallbackURL } from "./src/auth-callback-url";
+import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
@@ -20,8 +21,17 @@ import {
   type ToolApproval,
 } from "./src/api";
 import { blocksFromMaybeWidgetText, expandWidgetMarkupBlocks } from "@nano-agents/shared";
-import { configureForegroundBanners, getPushToken, onPushTap } from "./src/push";
+import {
+  configureForegroundBanners,
+  ensureLocalNotificationsReady,
+  getPushToken,
+  onPushTap,
+  scheduleLocalNotification,
+} from "./src/push";
 import { authClient } from "./src/auth";
+import { installOAuthReturnHandler } from "./src/auth-oauth-return";
+import * as WebBrowser from "expo-web-browser";
+import { coreBaseUrl } from "./src/core-url";
 import { MenuSheet, type MenuPage, type SignedAccount } from "./src/account/MenuSheet";
 import { pluginSlug } from "./src/account/PluginsPage";
 import { ApprovalsScreen } from "./src/approvals/ApprovalsScreen";
@@ -240,12 +250,42 @@ export default function App() {
    * Output: nothing. Later chats and groups use that account id.
    */
   async function signInWithGoogle(): Promise<void> {
-    const callbackURL = Platform.OS === "web" ? globalThis.location.origin : "nano-agents://";
-    const result = await authClient.signIn.social({ provider: "google", callbackURL });
-    if (result.error) {
-      throw new Error(result.error.message ?? "Google sign in failed.");
+    const base = coreBaseUrl();
+    try {
+      const probe = await fetch(`${base}/api/auth/get-session`);
+      if (!probe.ok) {
+        throw new Error(`Core auth returned ${probe.status}.`);
+      }
+    } catch (error) {
+      throw new Error(
+        error instanceof Error && error.message.includes("Core auth")
+          ? error.message
+          : `Cannot reach core at ${base}. Set EXPO_PUBLIC_CORE_URL in apps/mobile/.env (e.g. https://api.example.com), stop Metro, run pnpm --filter mobile start:clear, then reload Expo Go. Still seeing an old 192.168… URL? Clear Expo Go app data or reinstall.`,
+      );
+    }
+    const callbackURL = authCallbackURL();
+    try {
+      const result = await authClient.signIn.social({ provider: "google", callbackURL });
+      if (result.error) {
+        throw new Error(result.error.message ?? "Google sign in failed.");
+      }
+    } finally {
+      if (Platform.OS !== "web") {
+        try {
+          await WebBrowser.dismissBrowser();
+          await WebBrowser.dismissAuthSession();
+        } catch {
+          /* custom tab already closed */
+        }
+      }
     }
     await refreshSession();
+    const session = await authClient.getSession();
+    if (!session.data?.session) {
+      throw new Error(
+        "Google sign-in did not finish (browser closed or redirect failed). Confirm Google Console redirect URI https://api.example.com/api/auth/callback/google and try again.",
+      );
+    }
     if (afterSignup) {
       setAfterSignup(false);
       setCreating(true);
@@ -257,6 +297,12 @@ export default function App() {
   }, [show]);
 
   useEffect(() => {
+    return installOAuthReturnHandler(() => {
+      void refreshSession().catch(show);
+    });
+  }, [show]);
+
+  useEffect(() => {
     const id = accountId.trim();
     if (!id) return;
     let stopped = false;
@@ -265,18 +311,18 @@ export default function App() {
       const pending = await core.listNotifications(id).catch(() => []);
       if (stopped) return;
       setPendingCount(pending.length);
+      const canNotify = notifications && (await ensureLocalNotificationsReady());
       for (const note of pending) {
         if (shown.has(note.id)) continue;
         shown.add(note.id);
         setNote(`${note.title}: ${note.body}`.slice(0, 180));
-        await Notifications.scheduleNotificationAsync({
-          content: {
+        if (canNotify) {
+          await scheduleLocalNotification({
             title: note.title,
             body: note.body,
             data: { conversationId: note.conversationId, notificationId: note.id },
-          },
-          trigger: null,
-        }).catch(() => {});
+          }).catch(() => {});
+        }
         await core.ackNotification(id, note.id).catch(() => {});
       }
     };
@@ -286,7 +332,7 @@ export default function App() {
       stopped = true;
       clearInterval(timer);
     };
-  }, [accountId]);
+  }, [accountId, notifications]);
 
   useEffect(() => {
     configureForegroundBanners();
@@ -1092,7 +1138,9 @@ export default function App() {
   }
 
   return (
-    <SafeAreaView style={styles.screen}>
+    <SafeAreaProvider>
+    <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+    <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
       <StatusBar barStyle="light-content" />
       <DotBakery />
       {screen.name === "inbox" ? (
@@ -1316,6 +1364,8 @@ export default function App() {
         onCreateGroup={(title, agentIds) => void createGroup(title, agentIds).catch(show)}
       />
     </SafeAreaView>
+    </KeyboardAvoidingView>
+    </SafeAreaProvider>
   );
 }
 

@@ -10,6 +10,7 @@ import {
   type MarkStyle,
   type MessageBlock,
 } from "@nano-agents/shared";
+import { coreBaseUrl } from "./core-url";
 
 export type { MessageBlock };
 
@@ -296,7 +297,6 @@ export type CoreClient = {
   handBack: (accountId: string, profile: string) => Promise<void>;
 };
 
-declare const process: { env: { EXPO_PUBLIC_CORE_URL?: string } };
 let readAuthCookie = (): string => "";
 
 /**
@@ -313,10 +313,7 @@ export function configureAuthCookie(reader: () => string): void {
  * Input: an optional core base URL, and an optional fetch implementation.
  * Output: roster, chat, and mention helpers. The client never talks to Docker.
  */
-export function createCore(
-  baseUrl = process.env.EXPO_PUBLIC_CORE_URL ?? "http://127.0.0.1:3000",
-  fetchImpl: typeof fetch = fetch,
-): CoreClient {
+export function createCore(baseUrl = coreBaseUrl(), fetchImpl: typeof fetch = fetch): CoreClient {
   return {
     listAgents: (accountId) => listAgents(baseUrl, accountId, fetchImpl),
     hireAgent: (accountId, input) => hireAgent(baseUrl, accountId, input, fetchImpl),

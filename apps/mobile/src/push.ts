@@ -1,29 +1,100 @@
 import { Platform } from "react-native";
 import Constants from "expo-constants";
-import * as Notifications from "expo-notifications";
 
-/**
- * Registers this device for Expo Push and returns its token.
- * Why: isolated here so api.ts stays dependency-free (tests) and the app
- * degrades gracefully — no EAS projectId, denied permission, or web runtime
- * all resolve to null instead of crashing, leaving SSE/polling as fallback.
- * Input: none (reads extra.eas.projectId from app config). Output: token or null.
- */
+export const ANDROID_NOTIFICATION_CHANNEL = "default";
+
+type NotificationsModule = typeof import("expo-notifications");
+
+/** Importing expo-notifications on Android Expo Go throws at load time (SDK 53+). */
+export function isAndroidExpoGo(): boolean {
+  return Platform.OS === "android" && Constants.appOwnership === "expo";
+}
+
+let notificationsCache: NotificationsModule | null | undefined;
+
+async function loadNotifications(): Promise<NotificationsModule | null> {
+  if (Platform.OS === "web" || isAndroidExpoGo()) return null;
+  if (notificationsCache !== undefined) return notificationsCache;
+  try {
+    notificationsCache = await import("expo-notifications");
+    return notificationsCache;
+  } catch {
+    notificationsCache = null;
+    return null;
+  }
+}
+
+/** Expo Go on Android cannot use remote push (SDK 53+). */
+export function canUseRemotePush(): boolean {
+  if (Platform.OS === "web" || isAndroidExpoGo()) return false;
+  const projectId = (Constants.expoConfig?.extra as { eas?: { projectId?: string } } | undefined)?.eas
+    ?.projectId;
+  return Boolean(projectId);
+}
+
+async function ensureAndroidNotificationChannel(Notifications: NotificationsModule): Promise<void> {
+  if (Platform.OS !== "android") return;
+  await Notifications.setNotificationChannelAsync(ANDROID_NOTIFICATION_CHANNEL, {
+    name: "Agent updates",
+    importance: Notifications.AndroidImportance.DEFAULT,
+    vibrationPattern: [0, 200, 120, 200],
+  });
+}
+
+export async function ensureLocalNotificationsReady(): Promise<boolean> {
+  try {
+    const Notifications = await loadNotifications();
+    if (!Notifications) return false;
+    await ensureAndroidNotificationChannel(Notifications);
+    const { status: existing } = await Notifications.getPermissionsAsync();
+    const status =
+      existing === "granted" ? existing : (await Notifications.requestPermissionsAsync()).status;
+    return status === "granted";
+  } catch {
+    return false;
+  }
+}
+
+export function localNotificationContent(input: {
+  title: string;
+  body: string;
+  data: Record<string, unknown>;
+}) {
+  return {
+    title: input.title,
+    body: input.body,
+    data: input.data,
+    ...(Platform.OS === "android" ? { channelId: ANDROID_NOTIFICATION_CHANNEL } : {}),
+  };
+}
+
+export async function scheduleLocalNotification(input: {
+  title: string;
+  body: string;
+  data: Record<string, unknown>;
+}): Promise<void> {
+  const Notifications = await loadNotifications();
+  if (!Notifications) return;
+  if (!(await ensureLocalNotificationsReady())) return;
+  await Notifications.scheduleNotificationAsync({
+    content: localNotificationContent(input),
+    trigger: null,
+  });
+}
+
 export async function getPushToken(): Promise<{ token: string; platform: string } | null> {
   try {
-    if (Platform.OS === "web") return null;
-    const projectId = (Constants.expoConfig?.extra as { eas?: { projectId?: string } } | undefined)?.eas?.projectId;
+    if (!canUseRemotePush()) return null;
+    const Notifications = await loadNotifications();
+    if (!Notifications) return null;
+    const projectId = (Constants.expoConfig?.extra as { eas?: { projectId?: string } } | undefined)?.eas
+      ?.projectId;
     if (!projectId) return null;
     const { status: existing } = await Notifications.getPermissionsAsync();
     const status =
       existing === "granted" ? existing : (await Notifications.requestPermissionsAsync()).status;
     if (status !== "granted") return null;
-    if (Platform.OS === "android") {
-      await Notifications.setNotificationChannelAsync("default", {
-        name: "default",
-        importance: Notifications.AndroidImportance.MAX,
-      });
-    }
+    await ensureAndroidNotificationChannel(Notifications);
     const token = await Notifications.getExpoPushTokenAsync({ projectId });
     return { token: token.data, platform: Platform.OS };
   } catch {
@@ -31,37 +102,43 @@ export async function getPushToken(): Promise<{ token: string; platform: string 
   }
 }
 
-/**
- * Listens for taps on push notifications.
- * Why: a tap carries {conversationId} from the relay — the app opens that
- * exact room instead of dumping the user on the inbox.
- * Input: callback receiving the push data payload. Output: unsubscribe fn.
- */
 export function onPushTap(callback: (data: Record<string, unknown>) => void): () => void {
-  const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
-    const data = response.notification.request.content.data as Record<string, unknown> | undefined;
-    if (data) callback(data);
+  if (isAndroidExpoGo()) return () => {};
+  let remove = (): void => {};
+  void loadNotifications().then((Notifications) => {
+    if (!Notifications) return;
+    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      const data = response.notification.request.content.data as Record<string, unknown> | undefined;
+      if (data) callback(data);
+    });
+    remove = () => subscription.remove();
   });
-  return () => subscription.remove();
+  return () => remove();
 }
 
-/**
- * Shows incoming pushes as in-app banners while foregrounded.
- * Why: default iOS behavior suppresses foreground pushes — the user staring
- * at another room still sees the ping. Call once at startup.
- * Input: none. Output: nothing.
- */
 export function configureForegroundBanners(): void {
-  try {
-    Notifications.setNotificationHandler({
-      handleNotification: async () => ({
-        shouldPlaySound: true,
-        shouldSetBadge: false,
-        shouldShowBanner: true,
-        shouldShowList: true,
-      }),
-    });
-  } catch {
-    // Notifications unavailable (web/tests); banners simply stay off.
-  }
+  if (isAndroidExpoGo()) return;
+  void loadNotifications().then((Notifications) => {
+    if (!Notifications) return;
+    void ensureLocalNotificationsReady();
+    try {
+      Notifications.setNotificationHandler({
+        handleNotification: async () =>
+          Platform.OS === "ios"
+            ? {
+                shouldPlaySound: true,
+                shouldSetBadge: false,
+                shouldShowBanner: true,
+                shouldShowList: true,
+              }
+            : {
+                shouldShowAlert: true,
+                shouldPlaySound: true,
+                shouldSetBadge: false,
+              },
+      });
+    } catch {
+      // Notifications unavailable.
+    }
+  });
 }
