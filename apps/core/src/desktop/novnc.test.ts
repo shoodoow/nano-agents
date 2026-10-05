@@ -52,7 +52,9 @@ describe("novnc viewer page", () => {
     const script = novncShellScript("/assets/novnc");
     expect(script).toContain('params.get("trackpad") === "1"');
     expect(script).toContain("window.nanoSetTrackpad");
+    expect(script).toContain("window.nanoTrackpadStep");
     expect(script).toContain("window.nanoRecenterPointer");
+    expect(script).toContain("window.ReactNativeWebView");
     expect(script).toContain("rfb.showDotCursor = true");
   });
 

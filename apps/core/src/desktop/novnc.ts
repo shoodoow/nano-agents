@@ -42,9 +42,9 @@ export function novncShell(assetBase: string): string {
 <meta name="color-scheme" content="dark">
 <title>Desktop</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #111; overflow: hidden; }
-  #screen { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
-  #screen canvas { max-width: 100%; max-height: 100%; }
+  html, body { margin: 0; height: 100%; background: #111; overflow: hidden; touch-action: none; }
+  #screen { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; touch-action: none; }
+  #screen canvas { max-width: 100%; max-height: 100%; touch-action: none; }
 </style>
 </head>
 <body>
@@ -137,9 +137,76 @@ const moveTrackpadPointer = (rfb, fbX, fbY) => {
   rfb._sendMouse(el.x, el.y, rfb._mouseButtonMask);
   const canvas = rfb._canvas;
   const rect = canvas.getBoundingClientRect();
-  const clientX = rect.left + (el.x / canvas.width) * rect.width;
-  const clientY = rect.top + (el.y / canvas.height) * rect.height;
+  // Element coords match clientToElement (CSS px on the canvas box), not buffer width.
+  const clientX = rect.left + el.x;
+  const clientY = rect.top + el.y;
   rfb._cursor.move(clientX, clientY);
+};
+
+const TAP = 10;
+const LONG = 500;
+let trackpadActive = false;
+let trackpadMoved = false;
+let trackpadLongTimer = null;
+let trackpadLastX = 0;
+let trackpadLastY = 0;
+
+const trackpadStopLong = () => {
+  if (trackpadLongTimer) {
+    clearTimeout(trackpadLongTimer);
+    trackpadLongTimer = null;
+  }
+};
+
+const trackpadApplyDelta = (rfb, dx, dy) => {
+  const scale = rfb._display.scale;
+  if (scale <= 0) {
+    return;
+  }
+  moveTrackpadPointer(rfb, rfb._trackpadFbX + dx / scale, rfb._trackpadFbY + dy / scale);
+};
+
+window.nanoTrackpadStep = (phase, dx, dy) => {
+  const rfb = window.nanoRfb;
+  if (!trackpadWanted || !rfb || rfb.viewOnly) {
+    return;
+  }
+  if (phase === 0) {
+    trackpadActive = true;
+    trackpadMoved = false;
+    trackpadStopLong();
+    trackpadLongTimer = setTimeout(() => {
+      if (trackpadActive && !trackpadMoved) {
+        const el = fbToElement(rfb, rfb._trackpadFbX, rfb._trackpadFbY);
+        rfb._sendMouse(el.x, el.y, 4);
+        rfb._sendMouse(el.x, el.y, 0);
+        trackpadMoved = true;
+      }
+    }, LONG);
+    return;
+  }
+  if (phase === 1) {
+    if (!trackpadActive) {
+      return;
+    }
+    if (Math.hypot(dx, dy) > TAP) {
+      trackpadStopLong();
+      trackpadMoved = true;
+    }
+    if (trackpadMoved) {
+      trackpadApplyDelta(rfb, dx, dy);
+    }
+    return;
+  }
+  if (phase === 2) {
+    trackpadStopLong();
+    if (trackpadActive && !trackpadMoved) {
+      const el = fbToElement(rfb, rfb._trackpadFbX, rfb._trackpadFbY);
+      rfb._sendMouse(el.x, el.y, 1);
+      rfb._sendMouse(el.x, el.y, 0);
+    }
+    trackpadActive = false;
+  }
 };
 
 const applyTrackpad = (rfb, on) => {
@@ -148,6 +215,8 @@ const applyTrackpad = (rfb, on) => {
     trackpadCleanup = null;
   }
   trackpadWanted = on;
+  trackpadActive = false;
+  trackpadStopLong();
   if (!on) {
     rfb._gestures.attach(rfb._canvas);
     return;
@@ -160,84 +229,65 @@ const applyTrackpad = (rfb, on) => {
   }
   moveTrackpadPointer(rfb, rfb._trackpadFbX, rfb._trackpadFbY);
 
-  const canvas = rfb._canvas;
-  const TAP = 10;
-  const LONG = 500;
-  let lastX = 0;
-  let lastY = 0;
-  let active = false;
-  let moved = false;
-  let longTimer = null;
+  // In the phone WebView, React Native owns the full-stage trackpad surface.
+  if (window.ReactNativeWebView) {
+    return;
+  }
+
+  const touchSurface = screen;
+  let docBound = false;
+
+  const unbindDoc = () => {
+    if (!docBound) {
+      return;
+    }
+    document.removeEventListener("touchmove", onMove, { passive: false });
+    document.removeEventListener("touchend", onEnd, { passive: false });
+    document.removeEventListener("touchcancel", onEnd, { passive: false });
+    docBound = false;
+  };
 
   const onStart = (e) => {
-    if (rfb.viewOnly || e.touches.length !== 1) {
+    if (e.touches.length !== 1) {
       return;
     }
     e.preventDefault();
-    active = true;
-    moved = false;
-    lastX = e.touches[0].clientX;
-    lastY = e.touches[0].clientY;
-    longTimer = setTimeout(() => {
-      if (active && !moved) {
-        const el = fbToElement(rfb, rfb._trackpadFbX, rfb._trackpadFbY);
-        rfb._sendMouse(el.x, el.y, 4);
-        rfb._sendMouse(el.x, el.y, 0);
-        moved = true;
-      }
-    }, LONG);
+    trackpadLastX = e.touches[0].clientX;
+    trackpadLastY = e.touches[0].clientY;
+    window.nanoTrackpadStep(0, 0, 0);
+    unbindDoc();
+    document.addEventListener("touchmove", onMove, { passive: false });
+    document.addEventListener("touchend", onEnd, { passive: false });
+    document.addEventListener("touchcancel", onEnd, { passive: false });
+    docBound = true;
   };
 
   const onMove = (e) => {
-    if (!active || rfb.viewOnly || e.touches.length !== 1) {
+    if (!trackpadActive || e.touches.length !== 1) {
       return;
     }
     e.preventDefault();
-    const rect = canvas.getBoundingClientRect();
-    const dx = (e.touches[0].clientX - lastX) * (canvas.width / rect.width);
-    const dy = (e.touches[0].clientY - lastY) * (canvas.height / rect.height);
-    lastX = e.touches[0].clientX;
-    lastY = e.touches[0].clientY;
-    if (Math.hypot(dx, dy) > TAP) {
-      if (longTimer) {
-        clearTimeout(longTimer);
-        longTimer = null;
-      }
-      moved = true;
-    }
-    if (!moved) {
-      return;
-    }
-    const scale = rfb._display.scale;
-    moveTrackpadPointer(rfb, rfb._trackpadFbX + dx / scale, rfb._trackpadFbY + dy / scale);
+    const dx = e.touches[0].clientX - trackpadLastX;
+    const dy = e.touches[0].clientY - trackpadLastY;
+    trackpadLastX = e.touches[0].clientX;
+    trackpadLastY = e.touches[0].clientY;
+    window.nanoTrackpadStep(1, dx, dy);
   };
 
-  const onEnd = () => {
-    if (longTimer) {
-      clearTimeout(longTimer);
-      longTimer = null;
+  const onEnd = (e) => {
+    if (e) {
+      e.preventDefault();
     }
-    if (active && !moved && !rfb.viewOnly) {
-      const el = fbToElement(rfb, rfb._trackpadFbX, rfb._trackpadFbY);
-      rfb._sendMouse(el.x, el.y, 1);
-      rfb._sendMouse(el.x, el.y, 0);
-    }
-    active = false;
+    unbindDoc();
+    window.nanoTrackpadStep(2, 0, 0);
   };
 
-  canvas.addEventListener("touchstart", onStart, { passive: false });
-  canvas.addEventListener("touchmove", onMove, { passive: false });
-  canvas.addEventListener("touchend", onEnd, { passive: false });
-  canvas.addEventListener("touchcancel", onEnd, { passive: false });
-
+  touchSurface.addEventListener("touchstart", onStart, { passive: false, capture: true });
   trackpadCleanup = () => {
-    if (longTimer) {
-      clearTimeout(longTimer);
-    }
-    canvas.removeEventListener("touchstart", onStart);
-    canvas.removeEventListener("touchmove", onMove);
-    canvas.removeEventListener("touchend", onEnd);
-    canvas.removeEventListener("touchcancel", onEnd);
+    unbindDoc();
+    touchSurface.removeEventListener("touchstart", onStart, { capture: true });
+    trackpadStopLong();
+    trackpadActive = false;
   };
 };
 

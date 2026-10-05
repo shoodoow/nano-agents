@@ -10,6 +10,7 @@ import { CircleButton } from "../ui/CircleButton";
 import { IconBack, IconHelp, IconKeyboard, IconMore } from "../ui/icons";
 import { DesktopInputMenu } from "./DesktopInputMenu";
 import { getTrackpadMode, setTrackpadMode } from "./desktopPrefs";
+import { TrackpadCapture } from "./TrackpadCapture";
 
 const core = createCore();
 
@@ -284,11 +285,13 @@ export function DesktopScreen({
             showsHorizontalScrollIndicator={false}
             overScrollMode="never"
           />
-        ) : (
+        ) : null}
+        {page && trackpad && live ? <TrackpadCapture webRef={webRef} /> : null}
+        {!page ? (
           <View style={styles.empty}>
             <Text style={styles.emptyText}>This agent has no desktop yet.</Text>
           </View>
-        )}
+        ) : null}
         <Text style={[styles.status, live ? styles.live : null]} pointerEvents="none">
           {profile ? (live ? "Live" : "Connecting") : "No desktop"}
         </Text>
