@@ -20,6 +20,8 @@ Chat from your phone. Agents team up, run workers, remember, schedule routines, 
 
 > Drop a demo GIF here: `docs/demo.gif` — chat → worker → desktop takeover. PRs with screenshots welcome.
 
+> **Bring your own API keys** — This project does not include model API keys. After you sign in, open **Account → Providers** in the app and add keys for OpenAI, Anthropic, xAI, or an OpenAI-compatible base URL (per account, stored encrypted in Postgres). **Google OAuth** is only for login. Optional `EXA_API_KEY` / `BRAVE_API_KEY` in `apps/core/.env` are for shared web search, not chat models.
+
 ---
 
 ## Table of contents
