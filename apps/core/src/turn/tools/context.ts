@@ -39,6 +39,10 @@ export type ToolContext = {
   linuxProfile?: string | null;
   /** Stop the model loop after this tool (secret-request). */
   endTurn?: boolean;
+  /** Turn opened by the person (not a worker cue or routine-only wake). */
+  personTurn?: boolean;
+  /** Set after send_message succeeds — unlocks spawn_worker and other tools. */
+  userReplySent?: boolean;
   /** Agent id that should speak Auto-review cards (parent when a worker is blocked). */
   voiceAgentId?: string;
 };

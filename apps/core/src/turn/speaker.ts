@@ -236,6 +236,7 @@ export async function speakOnce(
           emit,
           messages: modelMessages,
           generate,
+          personTurn: !cue,
         });
   let result: ReturnType<typeof unwrapGenerateResult>;
   try {

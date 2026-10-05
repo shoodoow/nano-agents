@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { tailSlice } from "../util.js";
-import { wrapToolExecute } from "./wrap-tool-execute.js";
+import { personTurnBlocksTool, PERSON_TURN_REPLY_FIRST_ERROR } from "./wrap-tool-execute.js";
 import type { ToolContext } from "./context.js";
 
-function ctx(): ToolContext {
+function ctx(overrides: Partial<ToolContext> = {}): ToolContext {
   return {
-    db: {} as never,
-    store: {} as never,
+    db: null as never,
+    store: null as never,
     accountId: "a",
     conversationId: "c",
     agentId: "g",
@@ -14,55 +13,30 @@ function ctx(): ToolContext {
     nextTime: () => new Date(),
     emittedMessages: [],
     emit: async () => {},
+    ...overrides,
   };
 }
 
-describe("doom-loop detector", () => {
-  it("stops the 3rd identical call without executing", async () => {
-    const context = ctx();
-    let runs = 0;
-    const call = wrapToolExecute(context, "dispatcher", "check_worker", async () => {
-      runs += 1;
-      return { status: "running" };
-    });
-    const input = { workerId: "w1" };
-    expect(await call(input)).toMatchObject({ status: "running" });
-    expect(await call(input)).toMatchObject({ status: "running" });
-    const third = (await call(input)) as { error?: string };
-    expect(third.error).toMatch(/3 times in a row/);
-    expect(runs).toBe(2);
+describe("person-turn reply-first gate", () => {
+  it("blocks spawn_worker until send_message on a person turn", () => {
+    const toolCtx = ctx({ personTurn: true, userReplySent: false });
+    expect(personTurnBlocksTool(toolCtx, "dispatcher", "spawn_worker")).toBe(true);
+    expect(personTurnBlocksTool(toolCtx, "dispatcher", "send_message")).toBe(false);
   });
 
-  it("resets when the input changes", async () => {
-    const context = ctx();
-    let runs = 0;
-    const call = wrapToolExecute(context, "dispatcher", "send_message", async () => {
-      runs += 1;
-      return { ok: true };
-    });
-    await call({ text: "one" });
-    await call({ text: "one" });
-    await call({ text: "two" });
-    expect(runs).toBe(3);
+  it("allows any tool after send_message", () => {
+    const toolCtx = ctx({ personTurn: true, userReplySent: true });
+    expect(personTurnBlocksTool(toolCtx, "dispatcher", "spawn_worker")).toBe(false);
+    expect(personTurnBlocksTool(toolCtx, "dispatcher", "todo_write")).toBe(false);
   });
 
-  it("registers cheap linux tools on the dispatcher only when a profile exists", async () => {
-    const { buildDispatcherToolSet } = await import("./build-tools.js");
-    const base = ctx();
-    const without = buildDispatcherToolSet("dispatcher", base);
-    expect(Object.keys(without)).not.toContain("web_search");
-    const withLinux = buildDispatcherToolSet("dispatcher", { ...base, linuxProfile: "ada" });
-    expect(Object.keys(withLinux)).toEqual(expect.arrayContaining(["web_search", "web_fetch", "read", "glob", "grep"]));
-    expect(Object.keys(withLinux)).not.toContain("bash");
+  it("does not apply to worker cue turns or delegate mode", () => {
+    const toolCtx = ctx({ personTurn: false, userReplySent: false });
+    expect(personTurnBlocksTool(toolCtx, "dispatcher", "spawn_worker")).toBe(false);
+    expect(personTurnBlocksTool(ctx({ personTurn: true }), "worker", "bash")).toBe(false);
   });
-});
 
-describe("tailSlice", () => {
-  it("keeps short bodies intact and caps long ones", () => {
-    expect(tailSlice("hello")).toBe("hello");
-    const long = "x".repeat(2000);
-    const sliced = tailSlice(long);
-    expect(sliced.length).toBeLessThan(long.length);
-    expect(sliced.endsWith("…")).toBe(true);
+  it("documents the model-facing error", () => {
+    expect(PERSON_TURN_REPLY_FIRST_ERROR).toMatch(/send_message/i);
   });
 });

@@ -11,6 +11,14 @@ export const DOOM_LOOP_THRESHOLD = 3;
 export const DOOM_LOOP_ERROR =
   "Same call 3 times in a row — stop looping. send_message a short status and end the turn now. Finished worker results arrive on their own; failed ones re-wake you.";
 
+export const PERSON_TURN_REPLY_FIRST_ERROR =
+  "Reply to the person first with send_message (1–3 short sentences), then spawn_worker or other tools.";
+
+/** On person-opened turns the first tool must be send_message so the phone gets a bubble immediately. */
+export function personTurnBlocksTool(ctx: ToolContext, mode: AgentMode, name: string): boolean {
+  return mode === "dispatcher" && ctx.personTurn === true && !ctx.userReplySent && name !== "send_message";
+}
+
 export function wrapToolExecute(
   ctx: ToolContext,
   mode: AgentMode,
@@ -42,6 +50,19 @@ export function wrapToolExecute(
     }
     await ctx.traceSession?.emit({ type: "tool.call.start", toolCallId, name, input });
     try {
+      if (personTurnBlocksTool(ctx, mode, name)) {
+        const durationMs = Math.round(performance.now() - started);
+        await ctx.traceSession?.emit({
+          type: "tool.call.finish",
+          toolCallId,
+          name,
+          input,
+          outputPreview: tracePreview(PERSON_TURN_REPLY_FIRST_ERROR),
+          durationMs,
+          error: "reply_first",
+        });
+        return { error: PERSON_TURN_REPLY_FIRST_ERROR };
+      }
       const reviewed = await reviewToolCall(ctx, name, input ?? {});
       if (!reviewed.allow) {
         const durationMs = Math.round(performance.now() - started);
