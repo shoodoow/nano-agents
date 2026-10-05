@@ -1,5 +1,6 @@
-# Copy to ~/.cloudflared/config.yml (or pass --config to `cloudflared tunnel run`).
-# credentials-file must point at the JSON created by `cloudflared tunnel create`.
+# Full setup: deploy/SETUP.md
+# Copy to ~/.cloudflared/config.yml (or: cloudflared tunnel --config /path/to/config.yml run nano-agents)
+# credentials-file must point at the JSON from `cloudflared tunnel create`.
 tunnel: nano-agents
 credentials-file: /path/to/.cloudflared/<TUNNEL-UUID>.json
 
