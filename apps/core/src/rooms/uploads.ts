@@ -4,8 +4,8 @@ import { execBytes, execStdin } from "../linux/linux.js";
 // Why: phone attachments arrive as data: URIs. Stuffing megabytes of base64
 // into the prompt (and forcing the model to re-emit them through a write
 // tool) is slow, expensive, and lossy. Landing each file on the account Linux
-// first lets the agent work with paths — cp/mv/open — like Grok handing a
-// file to its computer. /shared/uploads is the handoff dir: every agent on
+// first lets the agent work with paths — cp/mv/open — on the account Linux.
+// /shared/uploads is the handoff dir: every agent on
 // the account can read it, and message ids keep each send isolated.
 export const UPLOADS_ROOT = "/shared/uploads";
 const MAX_FILES_PER_MESSAGE = 5;

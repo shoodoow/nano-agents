@@ -89,7 +89,7 @@ export async function teamDepth(store: Store, accountId: string, agentId: string
 
 /**
  * Creates a child specialist owned by the calling agent.
- * Why: Grok chief-of-staff pattern — coordinator hires specialists instead of
+ * Why: chief-of-staff pattern — coordinator hires specialists instead of
  * forcing the user to hire+mention each one. Child inherits provider/model
  * unless overridden, joins the same room so handoffs stay visible.
  * Input: store, account/room/caller ids, label/description/provider/modelId.
@@ -97,7 +97,7 @@ export async function teamDepth(store: Store, accountId: string, agentId: string
  */
 /**
  * Creates a child specialist owned by the calling agent.
- * Why: Grok chief-of-staff pattern — coordinator hires specialists instead of
+ * Why: chief-of-staff pattern — coordinator hires specialists instead of
  * forcing the user to hire+mention each one. Child inherits provider/model
  * unless overridden, joins the same room so handoffs stay visible.
  * Input: store, account/room/caller ids, label/role/personality/job (+provider/model).

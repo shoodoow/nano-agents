@@ -15,7 +15,7 @@ const blobCache = new Map<string, string>();
 /**
  * Renders one rich MessageBlock inside a bubble.
  * Why: send_message turns carry text/image/code/file/widget payloads; the
- * thread must show them inline like Grok instead of raw JSON or bare URLs.
+ * thread must show them inline instead of raw JSON or bare URLs.
  * Oversized images arrive as blobRefs (bytes stripped from lists) and resolve
  * lazily through fetchBlob; everything else renders inline.
  * Input: block + optional approve/deny handlers + blob fetcher.

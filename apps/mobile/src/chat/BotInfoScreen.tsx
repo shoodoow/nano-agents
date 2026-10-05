@@ -50,10 +50,9 @@ const TABS: { id: Tab; label: string }[] = [
 ];
 
 /**
- * Shows the bot info page from the Grok reference, opened by tapping the
- * agent name in chat. Why: name card, character mark, instructions,
- * routines, and notifications live here; provider/model/flags sit under
- * Advanced (the reference has no slot for them, but the phone needs them).
+ * Shows the bot info page, opened by tapping the agent name in chat.
+ * Why: name card, character mark, instructions, routines, and notifications
+ * live here; provider/model/flags sit under Advanced.
  * Input: the editable profile draft, providers, routines, and actions.
  * Output: the info page with instructions / provider / routine sub-pages.
  * The mark shape, color, material, and photo save with the profile, so
@@ -716,7 +715,7 @@ function ProviderPage({
 }
 
 /**
- * Shows one routine in the Grok-style detail layout: Active, Schedule,
+ * Shows one routine in the detail layout: Active, Schedule,
  * Instruction, and Run history. Delete stays with agent tools / Auto-review.
  */
 function RoutineDetailPage({
@@ -856,7 +855,7 @@ const styles = StyleSheet.create({
   spacer: { width: 44 },
   markWrap: { alignItems: "center", paddingTop: 8, minHeight: 176, justifyContent: "center" },
   markPhoto: { width: 168, height: 156, borderRadius: 40, borderCurve: "continuous" },
-  // Narrow pill like Grok — not full-bleed, not a tiny island.
+  // Narrow centered pill — not full-bleed, not a tiny island.
   nameCard: {
     alignSelf: "center",
     width: "58%",

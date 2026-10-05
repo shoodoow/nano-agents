@@ -15,7 +15,7 @@ import { accountShared, exec, execStdin } from "../linux/linux.js";
 import { assertInside } from "./find.js";
 
 // Why: the agent must work on its assigned desktop — the one the viewer shows
-// — never boot a private X server on another display (the Grok blank-viewer
+// — never boot a private X server on another display (the blank-viewer
 // bug). These patterns catch Xvfb/x11vnc/websockify startups and raw DISPLAY
 // overrides smuggled inside bash commands.
 const FORBIDDEN_DISPLAY = [

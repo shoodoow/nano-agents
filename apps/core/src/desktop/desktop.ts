@@ -10,7 +10,7 @@ export const DESKTOP_HEIGHT = 800;
 
 const sessions = new Map<string, Session>();
 const held = new Set<string>();
-// One computer-use task per screen at a time (Grok parity): bots run in
+// One computer-use task per screen at a time: bots run in
 // parallel across profiles, but serialize on their own display so mouse +
 // screenshot + type sequences never interleave.
 const computerLocks = new Map<string, Promise<void>>();
@@ -137,7 +137,7 @@ export function assertControllable(accountId: string, profile: string): void {
 
 /**
  * Serializes computer-use tasks on one screen.
- * Why: Grok parity — one bot runs one computer-use task on its screen at a
+ * Why: one bot runs one computer-use task on its screen at a
  * time, while different bots (profiles) proceed in parallel. Queuing per key
  * keeps mouse→screenshot→type sequences atomic without a global lock.
  * Input: account id, profile, and the async work. Output: the work's result.

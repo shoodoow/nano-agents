@@ -119,7 +119,7 @@ export async function saveSendMessage(
 
 /**
  * Saves one emoji tapback in its own short transaction.
- * Why: reactions are Grok-style acknowledgements that must not create message
+ * Why: reactions are lightweight acknowledgements that must not create message
  * noise; unique per (message, user, emoji) so retries are idempotent.
  * Input: store, account/conversation/agent ids, messageId, emoji.
  * Output: { reaction, created } so HTTP can wake the agent only on first tap.

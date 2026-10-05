@@ -1,6 +1,6 @@
 /**
  * Auto-review: block risky tool calls until a person approves them.
- * Why: Grok-style safety — destructive shell and irreversible room/schedule
+ * Why: destructive shell and irreversible room/schedule
  * deletes wait on a card instead of running on the model's first try.
  */
 import { createHash } from "node:crypto";

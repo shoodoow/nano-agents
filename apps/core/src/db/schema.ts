@@ -7,7 +7,7 @@ export const EMBEDDING_DIMS = 1536;
 export const accounts = pgTable("accounts", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
-  // Auto-review (Grok-style): risky tools wait for a person when true.
+  // Auto-review: risky tools wait for a person when true.
   autoReview: boolean("auto_review").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

@@ -11,7 +11,7 @@ import { pressableStyle } from "../ui/pressableStyles";
 import { IconPlus, IconReply, IconSearch } from "../ui/icons";
 
 /**
- * Shows the account roster plus group rooms, in the Grok chat-list layout.
+ * Shows the account roster plus group rooms in a chat-list layout.
  * Why: groups previously vanished after creation — agents alone cannot
  * reopen them. The groups section lists every group room with member counts.
  * Input: agents, groups, and handlers for account, search, new chat,

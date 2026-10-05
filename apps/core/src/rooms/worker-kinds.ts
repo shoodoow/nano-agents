@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** Built-in worker kinds (Grok-style specialists). `custom` uses parent-supplied instructions. */
+/** Built-in worker kinds (specialists). `custom` uses parent-supplied instructions. */
 export const WORKER_KINDS = [
   "executor",
   "computer",

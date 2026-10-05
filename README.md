@@ -10,10 +10,13 @@ Chat from your phone. Agents team up, run workers, remember, schedule routines, 
 [![pnpm 12](https://img.shields.io/badge/pnpm-12.6-orange)](https://pnpm.io)
 [![Docker](https://img.shields.io/badge/docker-required-blue)](https://www.docker.com)
 [![Expo](https://img.shields.io/badge/expo-57-black)](https://expo.dev)
+[![Status](https://img.shields.io/badge/status-active%20development-orange)](CONTRIBUTING.md)
 
 [Quickstart](#-60-second-quickstart) · [Features](#-features) · [How it works](#-how-it-works) · [Setup](deploy/SETUP.md) · [Contributing](CONTRIBUTING.md)
 
 </div>
+
+> **Work in progress** — This repo is the public open-source home for nano-agents. The project is under active development (pre-1.0): setup steps, APIs, and mobile UX can change between commits. Treat it as experimental self-hosting software, not a frozen production release; pin a commit or tag if you need stability. Issues and PRs are welcome.
 
 > Drop a demo GIF here: `docs/demo.gif` — chat → worker → desktop takeover. PRs with screenshots welcome.
 

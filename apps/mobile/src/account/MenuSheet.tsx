@@ -23,7 +23,7 @@ export type MenuPage = "menu" | "account" | "signup" | "providers" | "plugins" |
 /**
  * Shows the account menu, the account switcher, or signup.
  * Input: the signed-in accounts, the open page, and the menu actions.
- * Output: the sheet from the Grok menu screens.
+ * Output: the account menu sheet.
  */
 export function MenuSheet({
   page,

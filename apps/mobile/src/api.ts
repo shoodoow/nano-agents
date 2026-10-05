@@ -623,7 +623,7 @@ async function listTeam(
 
 /**
  * Hires a child specialist into the same room.
- * Why: lets users build Grok-style teams from the phone, not just via model tool.
+ * Why: lets users build teams from the phone, not just via model tool.
  */
 async function hireSubagent(
   baseUrl: string,
