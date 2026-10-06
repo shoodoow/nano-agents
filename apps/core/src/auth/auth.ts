@@ -90,7 +90,7 @@ export function createAuth(db: Database) {
       user: {
         create: {
           before: async (created) => {
-            const tenant = await createAccount(db, { name: created.name || "Account" });
+            const tenant = await createAccount(db, { name: created.name || "Account" }, { email: created.email });
             return { data: { ...created, accountId: tenant.id } };
           },
         },

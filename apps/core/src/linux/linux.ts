@@ -3,12 +3,14 @@ import { PassThrough, type Duplex } from "node:stream";
 import Dockerode from "dockerode";
 import { and, eq } from "drizzle-orm";
 import type { Store } from "../db/client.js";
-import { agents } from "../db/schema.js";
+import { getDb } from "../db/client.js";
+import { agents, user } from "../db/schema.js";
 
 const image = "nano-agents-linux:1";
 const memoryBytes = 10 * 1024 * 1024 * 1024;
 const storageSize = "50G";
 const toolchainRepairs = new Map<string, Promise<void>>();
+const containerNameByAccount = new Map<string, string>();
 
 const docker = new Dockerode({
   socketPath: process.env.DOCKER_SOCKET ?? "/var/run/docker.sock",
@@ -36,8 +38,9 @@ export function accountHome(_accountId: string, profile: string): string {
 
 /**
  * Starts one Linux container for one account.
- * Why: exactly one container per account (name nano-<accountId>). Test runs
- * label their containers nano.test=1 so cleanup can wipe test computers
+ * Why: exactly one container per account (name derived from the sign-in email;
+ * tests without a user row keep nano-<accountId>). Test runs label their
+ * containers nano.test=1 so cleanup can wipe test computers
  * without ever touching the developer's real account container on the same
  * Docker daemon. Concurrent first-use calls race safely: the loser of the
  * createContainer name race falls back to the winner's container instead of
@@ -45,10 +48,13 @@ export function accountHome(_accountId: string, profile: string): string {
  * Input: the account id.
  * Output: the container id. A second call returns the container that is already running.
  */
-export async function createLinux(accountId: string): Promise<string> {
+export async function createLinux(accountId: string, email?: string): Promise<string> {
   await ensureImage();
-  const name = containerName(accountId);
+  const name = await resolveContainerName(accountId, email);
   const labels: Record<string, string> = { "nano.account": accountId };
+  if (email) {
+    labels["nano.email"] = email.trim().toLowerCase();
+  }
   if (process.env.NODE_ENV === "test") {
     labels["nano.test"] = "1";
   }
@@ -116,7 +122,7 @@ export async function execBytes(
   user = "root",
   env?: string[],
 ): Promise<{ stdout: Buffer; code: number }> {
-  const container = docker.getContainer(containerName(accountId));
+  const container = docker.getContainer(await resolveContainerName(accountId));
   const running = await container.exec({
     Cmd: command,
     User: user,
@@ -151,7 +157,7 @@ export async function execStdin(
   user = "root",
   env?: string[],
 ): Promise<{ stdout: Buffer; code: number }> {
-  const container = docker.getContainer(containerName(accountId));
+  const container = docker.getContainer(await resolveContainerName(accountId));
   const running = await container.exec({
     Cmd: command,
     User: user,
@@ -180,7 +186,7 @@ export async function execStdin(
  * Output: nothing. Bytes flow both ways until either side closes.
  */
 export async function pipeExec(accountId: string, command: string[], socket: Duplex, preamble?: Buffer): Promise<void> {
-  const container = docker.getContainer(containerName(accountId));
+  const container = docker.getContainer(await resolveContainerName(accountId));
   const running = await container.exec({
     Cmd: command,
     AttachStdin: true,
@@ -291,8 +297,49 @@ export async function removeAccountContainers(options?: { testOnly?: boolean }):
   );
 }
 
-export function containerName(accountId: string): string {
-  return `nano-${accountId}`;
+/**
+ * Docker-safe container name for one account email.
+ * Input: the person's sign-in email. Output: nano-<sanitized-email>.
+ */
+export function containerName(email: string): string {
+  const trimmed = email.trim().toLowerCase();
+  const local = trimmed
+    .replace(/@/g, "-at-")
+    .replace(/\+/g, "-plus-")
+    .replace(/[^a-z0-9._-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const safe = local || "account";
+  return `nano-${safe}`;
+}
+
+async function resolveContainerName(accountId: string, emailHint?: string): Promise<string> {
+  const cached = containerNameByAccount.get(accountId);
+  if (cached) {
+    return cached;
+  }
+  if (emailHint?.trim()) {
+    const name = containerName(emailHint);
+    containerNameByAccount.set(accountId, name);
+    return name;
+  }
+  const databaseUrl = process.env.DATABASE_URL;
+  if (databaseUrl) {
+    const store = getDb(databaseUrl);
+    const [row] = await store
+      .select({ email: user.email })
+      .from(user)
+      .where(eq(user.accountId, accountId))
+      .limit(1);
+    if (row?.email) {
+      const name = containerName(row.email);
+      containerNameByAccount.set(accountId, name);
+      return name;
+    }
+  }
+  const fallback = `nano-${accountId}`;
+  containerNameByAccount.set(accountId, fallback);
+  return fallback;
 }
 
 /**

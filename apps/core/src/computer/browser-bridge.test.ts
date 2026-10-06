@@ -12,7 +12,7 @@ describe("browser bridge", () => {
 
   it("keeps each account in its own container with no docker socket", () => {
     const account = "11111111-1111-4111-8111-111111111111";
-    expect(containerName(account)).toBe(`nano-${account}`);
+    expect(containerName("alice@example.com")).toBe("nano-alice-at-example.com");
     const host = accountContainerHostConfig(account);
     expect(host.Binds).toEqual([`nano-account-${account}:/var/nano`]);
     expect(host.Privileged).toBe(false);

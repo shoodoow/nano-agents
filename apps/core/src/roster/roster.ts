@@ -21,14 +21,14 @@ export class AgentNameError extends Error {
  * Input: a database client and an object with a name.
  * Output: the saved account, including its id. A container exists for that id.
  */
-export async function createAccount(db: Database, input: unknown) {
+export async function createAccount(db: Database, input: unknown, options?: { email?: string }) {
   const data = accountSchema.parse(input);
   const [row] = await db.insert(accounts).values({ name: data.name }).returning();
   if (!row) {
     throw new Error("The account insert returned no row.");
   }
   try {
-    await createLinux(row.id);
+    await createLinux(row.id, options?.email);
   } catch (error) {
     await db.delete(accounts).where(eq(accounts.id, row.id));
     throw error;
