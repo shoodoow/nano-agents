@@ -62,14 +62,14 @@ export const allToolDefinitions: ToolDefinition[] = [
   {
     name: "add_to_group",
     description:
-      "Add an existing teammate to a group. Do not call this after hire_subagent — hire already adds them. From a private 1:1, pass conversationId from create_group. Never adds anyone to a private chat.",
+      "Add an existing teammate to a group. Never after hire_subagent — hire already adds. Copy conversationId from Groups: in your prompt. Never adds to a private chat.",
     surfaces: ["dispatcher"],
     inputSchema: memberAddInputSchema,
   },
   {
     name: "create_group",
     description:
-      "Open a new group room you own (title only is fine). Add teammates later with hire_subagent or add_to_group using agent UUIDs from list_team — not names. Never use this to change a private 1:1 chat.",
+      "Open a group room you own (title only is fine). Reuse a matching title from Groups: in your prompt instead of duplicating it. Add teammates with hire_subagent using UUIDs from Team: — not names. Never changes a private chat.",
     surfaces: ["dispatcher"],
     inputSchema: groupCreateInputSchema,
   },
@@ -83,7 +83,7 @@ export const allToolDefinitions: ToolDefinition[] = [
   {
     name: "delegate",
     description:
-      "Ask a lasting teammate to speak in a group. From a private 1:1, pass conversationId (the group id from create_group that you also passed to hire_subagent). Their turn runs in that group under their own name, and those messages are copied into this private chat. Do not call add_to_group first — hire already put them in the group. Text @mentions do not wake anyone. For hidden parent-only execution use spawn_worker.",
+      "Ask a lasting teammate to speak in a group. In a group omit conversationId; in a private chat copy it verbatim from Groups: in your prompt (teammate UUID from Team:). Runs in that group under their name and is copied here. Text @mentions never wake anyone. Hidden work uses spawn_worker.",
     surfaces: ["dispatcher"],
     inputSchema: delegateSchema,
   },
@@ -111,21 +111,20 @@ export const allToolDefinitions: ToolDefinition[] = [
   {
     name: "hire_subagent",
     description:
-      "Create a lasting teammate and add them to a group (max 10 visible teammates; hidden workers do not count). label is a human first name you invent, never the job. role is the job title. Also pass personality and jobDescription. For one task, use spawn_worker. In a private 1:1: create_group first, then hire_subagent with conversationId set to that group id. That hire is the add — do not call add_to_group afterward. Next, delegate with the same conversationId. In a group room, omit conversationId.",
+      "Create a lasting teammate in a group (max 10; hidden workers excluded). label is a first name, role is the job title, plus personality and jobDescription. One-off work uses spawn_worker. Private chat: create_group once, hire with that group id (already in Groups:), then delegate with the same id. Group room: omit conversationId. Hire already adds — no add_to_group after.",
     surfaces: ["dispatcher"],
     inputSchema: subagentCreateSchema,
   },
   {
     name: "update_teammate",
     description:
-      "Change a teammate you hired. agentId comes from list_team. label is their new human first name (one word, never the job). jobDescription replaces their standing instructions. role and personality are optional. Hidden workers cannot be updated.",
+      "Change a teammate you hired. agentId comes from Team: in your prompt. label is their new first name (never the job). jobDescription replaces standing instructions. role and personality optional. Hidden workers cannot be updated.",
     surfaces: ["dispatcher"],
     inputSchema: teammateUpdateSchema,
   },
   {
     name: "list_groups",
-    description:
-      "List group rooms you belong to (id, title, whether you own it). Use before delete_group or when you need a conversationId for hire_subagent from a private chat.",
+    description: "List group rooms you belong to (id, title, ownership). Rarely needed — Groups: in your prompt already covers it. Use before delete_group.",
     surfaces: ["dispatcher"],
     inputSchema: emptyToolInputSchema,
   },
@@ -138,8 +137,7 @@ export const allToolDefinitions: ToolDefinition[] = [
   },
   {
     name: "list_team",
-    description:
-      "List your team agents (id, name, label, role). Ids are for delegate and add_to_group. Being on this list does not mean they are in the private chat — they speak in the group you hired them into.",
+    description: "List team agents (id, name, label, role) for delegate and add_to_group. Rarely needed — Team: in your prompt already covers it. They speak in groups, not the private chat.",
     surfaces: ["dispatcher"],
     inputSchema: emptyToolInputSchema,
   },

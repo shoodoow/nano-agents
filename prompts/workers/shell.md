@@ -8,7 +8,7 @@ Stay inside the task. Run precise commands with `bash`. Prefer non-interactive f
 
 DISPLAY is already set for this agent's desktop. Never start Xvfb, never override DISPLAY, never `pkill chromium` or close all Chrome.
 
-If a program is missing, you may attempt `sudo apt-get install -y <pkg>` if privileges permit. However, if any command fails with an unrecoverable error (e.g. permission denied, sudo requires a password or user is not in sudoers, command not found with no install path, missing credentials, unreachable network), STOP immediately. Do NOT run futile workarounds, directory exploration, or repeat failed commands. Report the exact blocker in Blockers so the parent agent can decide the next step. Report exit codes and relevant stdout/stderr. Do not invent command output.
+If a program is missing, first verify with `command -v <tool>` — node, npm, python3, pip, git, build-essential, chromium are preinstalled on this box. Only as a last resort, attempt `sudo apt-get install -y <pkg>` if privileges permit. However, if any command fails with an unrecoverable error (e.g. permission denied, sudo requires a password or user is not in sudoers, command not found with no install path, missing credentials, unreachable network), STOP immediately. Do NOT run futile workarounds, directory exploration, or repeat failed commands. Report the exact blocker in Blockers so the parent agent can decide the next step. Report exit codes and relevant stdout/stderr. Do not invent command output.
 
 Do not drive the GUI from bash (no xdotool / Playwright). If the task needs clicks, say so in Blockers so the parent can spawn a `computer` worker with `read_skill computer-use-linux`.
 

@@ -134,6 +134,7 @@ export async function speakOnce(
     .where(
       and(
         eq(delegations.accountId, accountId),
+        eq(delegations.conversationId, conversationId),
         eq(delegations.parentAgentId, agentId),
         inArray(delegations.status, ["done", "failed"]),
       ),
@@ -158,12 +159,19 @@ export async function speakOnce(
     )
     .orderBy(desc(jobs.runAt))
     .limit(5);
+  const seenTasks = new Set<string>();
   const workHistory = [
     ...recentWorkers.map((item) => ({ ...item, kind: "worker" as const, outcome: item.outcome ?? "" })),
     ...recentRoutines.map((item) => ({ ...item, kind: "routine" as const, outcome: item.outcome ?? "" })),
   ]
     .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
-    .slice(0, 8);
+    .filter((item) => {
+      const head = item.title.replace(/\s+/g, " ").trim().slice(0, 80).toLowerCase();
+      if (seenTasks.has(head)) return false;
+      seenTasks.add(head);
+      return true;
+    })
+    .slice(0, 3);
 
   const context = buildContext({
     accountId,
@@ -186,7 +194,7 @@ export async function speakOnce(
       members: memberRows.map((member) => member.name),
       selfName: agent.name,
     },
-    person: await loadPerson(db, accountId, agentId, memberRows),
+    person: await loadPerson(db, accountId, agentId),
     activeWorkers,
     workHistory,
   });
@@ -318,29 +326,32 @@ export async function speakOnce(
 /**
  * Loads who the person is for this turn's tail.
  * Why: the room roster is agents; the human has to be named separately.
- * Input: account id and the room's agents. Output: name, zone, now, teammates.
+ * Team/groups are account-level so a private chat sees them without extra
+ * list_team/list_groups calls. Generic: roster with copy-pasteable UUIDs.
+ * Input: account id and the speaking agent. Output: name, zone, now, team, groups.
  */
-async function loadPerson(
-  db: Db,
-  accountId: string,
-  agentId: string,
-  memberRows: { id: string; name: string; label?: string; role?: string }[],
-): Promise<PersonContext> {
+async function loadPerson(db: Db, accountId: string, agentId: string): Promise<PersonContext> {
   const [account] = await db
     .select({ name: accounts.name, timezone: accounts.timezone })
     .from(accounts)
     .where(eq(accounts.id, accountId));
+  const { listTeam } = await import("../rooms/subagents.js");
+  const { listGroupRoomsForAgent } = await import("../rooms/rooms.js");
+  const [team, groups] = await Promise.all([
+    listTeam(db, accountId, agentId).catch(() => []),
+    listGroupRoomsForAgent(db, accountId, agentId).catch(() => []),
+  ]);
   return {
     name: account?.name ?? "the person",
     timezone: account?.timezone ?? "",
     now: new Date(),
-    teammates: memberRows
-      .filter((member) => member.id !== agentId)
-      .map((member) => ({
-        label: member.label?.trim() || member.name,
-        role: member.role?.trim() || "teammate",
-        mention: member.name,
-      })),
+    teammates: team.map((member) => ({
+      id: member.id,
+      label: member.label?.trim() || member.name,
+      role: member.role?.trim() || "teammate",
+      mention: member.name,
+    })),
+    groups: groups.map((group) => ({ id: group.conversationId, title: group.title, owned: group.owned })),
   };
 }
 

@@ -62,7 +62,7 @@ describe("buildContext", () => {
 
   it("grounds the room situation as the first tail line", () => {
     expect(roomLine({ title: "Group 1", kind: "group", members: ["Grok", "Jimmy", "Mossy"], selfName: "Jimmy" })).toBe(
-      'Room "Group 1" (group of 3). Members: Grok, Jimmy, Mossy. You are Jimmy — reply only when mentioned; members wake each other with @Name, a leading @Name is a direct handoff to that member.',
+      '"Group 1" (group of 3). Members: Grok, Jimmy, Mossy. You are Jimmy.',
     );
     const withRoom = buildContext({
       ...agent,
@@ -70,7 +70,7 @@ describe("buildContext", () => {
       messages: [{ body: "hi" }],
       room: { title: "Group 1", kind: "group", members: ["Jimmy", "Mossy"], selfName: "Jimmy" },
     });
-    expect(withRoom.tail.startsWith('Room "Group 1"')).toBe(true);
+    expect(withRoom.tail.startsWith('## Room\n"Group 1"')).toBe(true);
     expect(withRoom.prefix.includes("Group 1")).toBe(false);
   });
 
@@ -92,7 +92,7 @@ describe("buildContext", () => {
     expect(context.prefix.endsWith(TOOL_CONTRACT)).toBe(true);
     expect(context.prefix.indexOf("docx")).toBeLessThan(context.prefix.lastIndexOf(TOOL_CONTRACT));
     expect(context.prefix.includes("Recent trends")).toBe(false);
-    expect(context.tail.startsWith('Room "Launch crew"')).toBe(true);
+    expect(context.tail.startsWith('## Room\n"Launch crew"')).toBe(true);
     expect(context.tail).toContain(personLine({
       name: "Mohammad Reza",
       timezone: "Asia/Riyadh",
@@ -105,15 +105,30 @@ describe("buildContext", () => {
     expect(context.prefix.includes("Mohammad Reza")).toBe(false);
   });
 
+  it("renders copy-pasteable team ids and generic groups", () => {
+    const now = new Date("2026-10-06T10:52:00.000Z");
+    const line = personLine({
+      name: "A",
+      timezone: "Asia/Riyadh",
+      now,
+      teammates: [{ id: "11111111-1111-1111-1111-111111111111", label: "Maya", role: "researcher", mention: "Maya-ruuc" }],
+      groups: [{ id: "22222222-2222-2222-2222-222222222222", title: "Crew", memberCount: 4 }],
+    });
+    expect(line).toContain("- Maya (researcher, @Maya-ruuc, id:11111111-1111-1111-1111-111111111111)");
+    expect(line).toContain('- "Crew" (id:22222222-2222-2222-2222-222222222222, 4 members)');
+  });
+
   it("says the timezone is unknown when none is stored", () => {
     const line = personLine({
       name: "Mohammad Reza",
       timezone: "",
       now: new Date("2026-10-06T10:52:00.000Z"),
       teammates: [],
+      groups: [],
     });
     expect(line).toContain("Timezone: unknown. Do not invent one.");
-    expect(line).toContain("Teammates: none.");
+    expect(line).toContain("Team: none.");
+    expect(line).toContain("Groups: none.");
     expect(line.includes("Local time now")).toBe(false);
   });
 
@@ -127,10 +142,10 @@ describe("buildContext", () => {
       ],
     });
     expect(withWorkers.prefix.includes("worker-1")).toBe(false);
-    expect(withWorkers.tail.includes("Active background workers:")).toBe(true);
-    expect(withWorkers.tail.includes("Worker worker-1")).toBe(true);
+    expect(withWorkers.tail.includes("## Active workers")).toBe(true);
+    expect(withWorkers.tail.includes("worker-1")).toBe(true);
     expect(withWorkers.tail.includes("Install htop on the system")).toBe(true);
-    expect(withWorkers.tail.includes("redirect_worker")).toBe(true);
+    expect(withWorkers.tail.includes("redirect_worker")).toBe(false);
   });
 
   it("renders bounded employee work history without raw logs", () => {
@@ -148,7 +163,7 @@ describe("buildContext", () => {
         },
       ],
     });
-    expect(withHistory.tail).toContain("Recent work memory");
+    expect(withHistory.tail).toContain("## Recent work");
     expect(withHistory.tail).toContain("Weekly campaign report");
     expect(withHistory.tail).toContain("declining conversion");
   });

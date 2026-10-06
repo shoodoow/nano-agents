@@ -19,7 +19,8 @@ export type PersonContext = {
   name: string;
   timezone: string;
   now: Date;
-  teammates: { label: string; role: string; mention: string }[];
+  teammates: { id?: string; label: string; role: string; mention: string }[];
+  groups?: { id: string; title: string; memberCount?: number; owned?: boolean }[];
 };
 
 export type BuiltContext = {
@@ -75,15 +76,16 @@ export function buildContext(input: {
   const recallBlock = recallSection(input.recall ?? []);
   const workersBlock = activeWorkersSection(input.activeWorkers ?? []);
   const workBlock = workHistorySection(input.workHistory ?? []);
+  const summaryBlock = summarySection(summaryLines);
   const tail = [
-    ...(input.room ? [roomLine(input.room)] : []),
-    ...(input.person ? [personLine(input.person)] : []),
-    ...(memoryBlock ? [memoryBlock] : []),
-    ...(recallBlock ? [recallBlock] : []),
-    ...(workersBlock ? [workersBlock] : []),
-    ...(workBlock ? [workBlock] : []),
-    ...summaryLines.map((item) => `${item.key}: ${item.body}${item.messageId ? ` [msg:${item.messageId}]` : ""}`),
-  ].join("\n");
+    ...(input.room ? [`## Room\n${roomLine(input.room)}`] : []),
+    ...(input.person ? [`## Person\n${personBlock(input.person)}`] : []),
+    ...(memoryBlock ? [`## Memory\n${memoryBlock}`] : []),
+    ...(recallBlock ? [`## Recall\n${recallBlock}`] : []),
+    ...(workersBlock ? [`## Active workers\n${workersBlock}`] : []),
+    ...(workBlock ? [`## Recent work\n${workBlock}`] : []),
+    ...(summaryBlock ? [`## Summary\n${summaryBlock}`] : []),
+  ].join("\n\n");
   return {
     prefix,
     tail,
@@ -128,17 +130,28 @@ export function identityBlock(agent: {
  * Input: room title/kind, member names, own name. Output: one header line.
  */
 export function roomLine(room: { title: string; kind: string; members: string[]; selfName: string }): string {
-  const members = room.members.length > 0 ? room.members.join(", ") : "—";
+  const title = room.title.replace(/\s+/g, " ").trim().slice(0, 80) || "untitled";
+  const members = room.members.length > 0 ? room.members.slice(0, 20).join(", ") : "—";
   const shape = room.kind === "group" ? `group of ${room.members.length}` : "direct chat";
-  return `Room "${room.title}" (${shape}). Members: ${members}. You are ${room.selfName} — reply only when mentioned; members wake each other with @Name, a leading @Name is a direct handoff to that member.`;
+  return `"${title}" (${shape}). Members: ${members}. You are ${room.selfName}.`;
 }
 
 /**
- * Names the human, their clock, and the teammates separately.
- * Why: a group otherwise treats other agents as the audience.
- * Input: account name, zone, instant, teammate labels. Output: one tail block.
+ * Names the human, their clock, and the account roster separately.
+ * Why: a group otherwise treats other agents as the audience, and a private
+ * chat otherwise sees no team at all (members of the 1:1 only). Teammates and
+ * groups are account-level here so the model can reuse them without extra
+ * list_team/list_groups calls. Generic: no example names, just the roster with
+ * copy-pasteable UUIDs. Lives in the dynamic tail, never the cached prefix.
+ * Input: account name, zone, instant, teammate labels+ids, group ids+titles.
+ * Output: one tail block.
  */
 export function personLine(person: PersonContext): string {
+  return personBlock(person);
+}
+
+/** Person + account roster as one block; buildContext splits it under ## headers. */
+function personBlock(person: PersonContext): string {
   const name = person.name.trim() || "the person";
   const local = formatLocalTime(person.now, person.timezone);
   const clock = local
@@ -146,11 +159,25 @@ export function personLine(person: PersonContext): string {
     : "Timezone: unknown. Do not invent one.";
   const teammates =
     person.teammates.length === 0
-      ? "Teammates: none."
-      : `Teammates: ${person.teammates
-          .map((mate) => `${mate.label} (${mate.role}, mention @${mate.mention})`)
-          .join("; ")}.`;
-  return `Person: ${name}. You speak to them. A greeting is a greeting. They are not a teammate.\n${clock}\n${teammates}`;
+      ? "Team: none."
+      : `Team:\n${person.teammates.slice(0, 10).map((mate) => `- ${formatTeammate(mate)}`).join("\n")}${person.teammates.length > 10 ? `\n+${person.teammates.length - 10} more` : ""}`;
+  const groups =
+    person.groups === undefined
+      ? ""
+      : person.groups.length === 0
+        ? "\nGroups: none."
+        : `\nGroups:\n${person.groups
+            .slice(0, 10)
+            .map((group) => `- "${group.title.replace(/\s+/g, " ").trim().slice(0, 60)}" (id:${group.id}${typeof group.memberCount === "number" ? `, ${group.memberCount} members` : ""})`)
+            .join("\n")}${person.groups.length > 10 ? `\n+${person.groups.length - 10} more` : ""}`;
+  return `Person: ${name}. You speak to them. They are not a teammate.\n${clock}\n${teammates}${groups}`;
+}
+
+function formatTeammate(mate: { id?: string; label: string; role: string; mention: string }): string {
+  const label = mate.label.replace(/\s+/g, " ").trim().slice(0, 40) || mate.mention;
+  const role = mate.role.replace(/\s+/g, " ").trim().slice(0, 40) || "teammate";
+  const mention = mate.mention.trim().slice(0, 80);
+  return mate.id ? `${label} (${role}, @${mention}, id:${mate.id})` : `${label} (${role}, mention @${mention})`;
 }
 
 function formatLocalTime(now: Date, timezone: string): string | null {
@@ -183,7 +210,10 @@ function memorySection(memories: { body: string }[]): string {
   if (memories.length === 0) {
     return "";
   }
-  return ["Memory (durable facts — trust these):", ...memories.map((memory) => `- ${memory.body}`)].join("\n");
+  return memories
+    .slice(0, 24)
+    .map((memory) => `- ${memory.body.replace(/\s+/g, " ").trim().slice(0, 300)}`)
+    .join("\n");
 }
 
 /**
@@ -196,17 +226,13 @@ function recallSection(recall: string[]): string {
   if (recall.length === 0) {
     return "";
   }
-  return ["Recalled from earlier in this thread:", ...recall.map((line) => `- ${line}`)].join("\n");
+  return recall
+    .slice(0, 8)
+    .map((line) => `- ${line.replace(/\s+/g, " ").trim().slice(0, 300)}`)
+    .join("\n");
 }
 
-/**
- * Renders currently running background workers in the tail.
- * Why: The dispatcher must know what background tasks are already executing so it:
- * 1) Remains available to converse with the user while tasks run.
- * 2) Knows what's in-flight to report status or acknowledge work in progress.
- * 3) Can redirect or stop active workers rather than spawning duplicates.
- * Lives in the dynamic tail so the prefix cache remains byte-stable.
- */
+/** One running worker per line: facts only, no coaching (rules live in prefix). */
 export function activeWorkersSection(
   workers: {
     childAgentId: string;
@@ -219,17 +245,14 @@ export function activeWorkersSection(
   if (workers.length === 0) {
     return "";
   }
-  const items = workers
+  return workers
+    .slice(0, 5)
     .map((w) => {
-      const elapsed = w.createdAt
-        ? `${Math.max(0, Math.round((Date.now() - w.createdAt.getTime()) / 1000))}s ago`
-        : "recently";
-      const name = w.label?.trim() || w.childAgentId;
-      const progress = w.progress?.trim() ? `, latest: "${w.progress.slice(0, 180)}"` : "";
-      return `Worker ${name} [${w.childAgentId}] (started ${elapsed}, task: "${w.task.slice(0, 80)}"${progress})`;
+      const name = (w.label?.trim() || w.childAgentId).slice(0, 40);
+      const progress = w.progress?.trim() ? ` — ${w.progress.replace(/\s+/g, " ").trim().slice(0, 120)}` : "";
+      return `- ${name} (id:${w.childAgentId}): ${w.task.replace(/\s+/g, " ").trim().slice(0, 120)}${progress}`;
     })
-    .join(" | ");
-  return `Active background workers: ${items}. You are available to chat with the user while workers run. If the user asks for status, report what is in flight. If the user clarifies or changes task, use redirect_worker. If the user cancels, use stop_worker. Never spawn duplicate workers for jobs already running.`;
+    .join("\n");
 }
 
 /**
@@ -243,13 +266,28 @@ export function workHistorySection(
   history: { kind: "worker" | "routine"; title: string; outcome: string; status: string; createdAt: Date }[],
 ): string {
   if (history.length === 0) return "";
-  const lines = history.slice(0, 8).map((item) => {
-    const date = item.createdAt.toISOString();
-    const title = item.title.replace(/\s+/g, " ").trim().slice(0, 120);
-    const outcome = item.outcome.replace(/\s+/g, " ").trim().slice(0, 300);
-    return `- ${date} ${item.kind} ${item.status}: ${title}${outcome ? ` — ${outcome}` : ""}`;
+  const lines = history.slice(0, 3).map((item) => {
+    const title = item.title.replace(/\s+/g, " ").trim().slice(0, 100);
+    const outcome = cleanOutcome(item.outcome).slice(0, 160);
+    return `- ${item.kind} ${item.status}: ${title}${outcome ? ` — ${outcome}` : ""}`;
   });
-  return ["Recent work memory (your own jobs across chats):", ...lines].join("\n");
+  return lines.join("\n");
+}
+
+/** Tool-digest soup (bash:/HTML/JSON blobs) carries no signal — keep the head only. */
+function cleanOutcome(outcome: string): string {
+  const text = outcome.replace(/\s+/g, " ").trim();
+  if (/^(bash:|<!DOCTYPE|<html|[{"\[])/i.test(text)) return text.slice(0, 80);
+  return text.slice(0, 200);
+}
+
+/** Folded summary items: capped bodies, message ids kept for read_history. */
+function summarySection(summary: { key: string; body: string; messageId?: string }[]): string {
+  if (summary.length === 0) return "";
+  return summary
+    .slice(0, 24)
+    .map((item) => `- ${item.key}: ${item.body.replace(/\s+/g, " ").trim().slice(0, 300)}${item.messageId ? ` [msg:${item.messageId}]` : ""}`)
+    .join("\n");
 }
 
 

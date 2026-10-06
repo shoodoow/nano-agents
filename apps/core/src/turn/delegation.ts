@@ -107,6 +107,12 @@ export async function runDelegatedTurn(
     .select({ name: accounts.name, timezone: accounts.timezone })
     .from(accounts)
     .where(eq(accounts.id, input.accountId));
+  const { listTeam } = await import("../rooms/subagents.js");
+  const { listGroupRoomsForAgent } = await import("../rooms/rooms.js");
+  const [team, groups] = await Promise.all([
+    listTeam(db, input.accountId, child.id).catch(() => []),
+    listGroupRoomsForAgent(db, input.accountId, child.id).catch(() => []),
+  ]);
   const context = buildContext({
     accountId: input.accountId,
     agentId: child.id,
@@ -129,13 +135,13 @@ export async function runDelegatedTurn(
       name: account?.name ?? "the person",
       timezone: account?.timezone ?? "",
       now: new Date(),
-      teammates: memberRows
-        .filter((member) => member.id !== child.id)
-        .map((member) => ({
-          label: member.label?.trim() || member.name,
-          role: member.role?.trim() || "teammate",
-          mention: member.name,
-        })),
+      teammates: team.map((member) => ({
+        id: member.id,
+        label: member.label?.trim() || member.name,
+        role: member.role?.trim() || "teammate",
+        mention: member.name,
+      })),
+      groups: groups.map((group) => ({ id: group.conversationId, title: group.title, owned: group.owned })),
     },
   });
   const local: (typeof messages.$inferSelect)[] = [];

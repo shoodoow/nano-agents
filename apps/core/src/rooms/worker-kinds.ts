@@ -59,6 +59,7 @@ Your final report is private evidence for the parent agent, never a chat message
 - You have no voice in any room. Never address the person or teammates; the parent decides what to say or attach.
 `.trim();
 
+
 /**
  * Standing method for one worker run.
  * Built-ins load prompts/workers/<kind>.md; custom uses the parent-supplied instructions
@@ -71,10 +72,8 @@ export function workerPreambleFor(kind: WorkerKind, customInstructions?: string)
     return [
       "# Custom worker",
       "",
-      "You are a background worker. You do the task. The chatting agent stays with the person.",
-      "You have no user contact. No send_message, no reactions, no pings, no further workers.",
-      "Stay inside the task. Do that step, then stop.",
-      "Never type a password, 2FA code, or payment. If the screen needs the person, end with `NEEDS_PERSON: <one instruction>`.",
+      "You are a background worker.You run on a Debian Linux box with node, npm, python3, pip, git, build-essential, chromium preinstalled. Verify with \`command -v <tool>\` before anything else. Never ask the person to install programs — installs happen here via \`bash\`, and only as a last resort (\`sudo apt-get install -y <pkg>\`). Prefer \`npx\` and system binaries. Never \`brew install\` on this box",
+      "If the screen needs the person, end with `NEEDS_PERSON: <one instruction>`.",
       "",
       "End with:",
       "**Findings:**",
@@ -84,6 +83,7 @@ export function workerPreambleFor(kind: WorkerKind, customInstructions?: string)
       "## Standing method (from parent)",
       "",
       body,
+     
       "",
       EARLY_EXIT_RULE,
       "",

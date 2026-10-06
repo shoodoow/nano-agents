@@ -64,13 +64,19 @@ export async function resumeParentAfterWorker(
 }
 
 /** Hidden completion cue: evidence goes to the parent, never straight to chat. */
+function cleanReport(result: string): string {
+  const text = result.replace(/\s+/g, " ").trim();
+  if (/^(bash:|<!DOCTYPE|<html|[{"\[])/i.test(text)) return text.slice(0, 200);
+  return text;
+}
+
 function workerCompletionCue(
   settled: Array<{ task: string; result: string; status: "done" | "failed" }>,
 ): string {
   const reports = settled
     .map(
       (item, index) =>
-        `Result ${index + 1} (${item.status}) for "${item.task.slice(0, 300)}":\n${item.result.slice(0, 6_000)}`,
+        `Result ${index + 1} (${item.status}) for "${item.task.slice(0, 200)}":\n${cleanReport(item.result).slice(0, 2_000)}`,
     )
     .join("\n\n");
   return (

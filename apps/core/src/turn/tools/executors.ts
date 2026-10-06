@@ -385,11 +385,11 @@ export async function executeDelegate(
     agentId: input.agentId,
     task: input.task,
     conversationId: input.conversationId,
-  });
+  }) as { agentId: string; task: string; conversationId?: string };
   if ((ctx.delegationDepth ?? 0) >= MAX_DELEGATION_DEPTH) {
     throw new Error("Delegation is already two levels deep — do this part yourself.");
   }
-  const target = await resolveGroupTarget(ctx, parsed.conversationId, "delegate");
+  const target = await resolveGroupTarget(ctx, parsed.conversationId, "delegate", parsed.agentId);
   if ("error" in target) return target;
   const [inGroup] = await ctx.store
     .select({ agentId: members.agentId })
@@ -403,8 +403,7 @@ export async function executeDelegate(
     );
   if (!inGroup) {
     return {
-      error:
-        "That teammate is not in this group. hire_subagent with this conversationId already adds a new teammate — do not call add_to_group after hire. add_to_group is only for someone already on the team who is missing from the group, and from a private chat it also needs conversationId.",
+      error: `That teammate is not in group id:${target.conversationId}. hire_subagent with that conversationId adds them — do not call add_to_group after hire. add_to_group is only for an existing teammate missing from the group.`,
     };
   }
   const row = await recordDelegation(ctx.store, {
@@ -448,52 +447,112 @@ export async function executeDelegate(
 
 /**
  * Picks the group a team tool should touch.
- * Why: a private-chat turn has no crew in the room. hire_subagent already
- * joined the group; delegate and add_to_group must be told that same id
- * or they keep failing against the 1:1.
+ * Why: a private-chat turn has no crew in the room. Explicit conversationId
+ * wins; otherwise infer the sticky group (single owned group, or the one
+ * containing the child) so the model is not forced to copy UUIDs. Generic:
+ * works for any team purpose, not one example crew. No new tool, no new step.
  */
 async function resolveGroupTarget(
   ctx: ToolContext,
   conversationId: string | undefined,
   tool: "delegate" | "add_to_group",
+  childAgentId?: string,
 ): Promise<{ conversationId: string } | { error: string }> {
-  const targetId = conversationId ?? ctx.conversationId;
-  const [room] = await ctx.store
+  if (conversationId) {
+    const [room] = await ctx.store
+      .select({ kind: conversations.kind })
+      .from(conversations)
+      .where(and(eq(conversations.id, conversationId), eq(conversations.accountId, ctx.accountId)));
+    if (!room || room.kind !== "group") {
+      return { error: "conversationId must be a group id from Groups: in your prompt on this account." };
+    }
+    const [membership] = await ctx.store
+      .select({ agentId: members.agentId })
+      .from(members)
+      .where(
+        and(eq(members.conversationId, conversationId), eq(members.accountId, ctx.accountId), eq(members.agentId, ctx.agentId)),
+      );
+    if (!membership) return { error: "You must be a member of that group." };
+    return { conversationId };
+  }
+  const [current] = await ctx.store
     .select({ kind: conversations.kind })
     .from(conversations)
-    .where(and(eq(conversations.id, targetId), eq(conversations.accountId, ctx.accountId)));
-  if (!conversationId && room?.kind === "direct") {
+    .where(and(eq(conversations.id, ctx.conversationId), eq(conversations.accountId, ctx.accountId)));
+  if (current?.kind !== "direct") {
+    const targetId = ctx.conversationId;
+    const [room] = await ctx.store
+      .select({ kind: conversations.kind })
+      .from(conversations)
+      .where(and(eq(conversations.id, targetId), eq(conversations.accountId, ctx.accountId)));
+    if (!room || room.kind !== "group") {
+      return { error: "conversationId must be a group id from Groups: in your prompt on this account." };
+    }
+    const [membership] = await ctx.store
+      .select({ agentId: members.agentId })
+      .from(members)
+      .where(
+        and(eq(members.conversationId, targetId), eq(members.accountId, ctx.accountId), eq(members.agentId, ctx.agentId)),
+      );
+    if (!membership) return { error: "You must be a member of that group." };
+    return { conversationId: targetId };
+  }
+  const { listGroupRoomsForAgent } = await import("../../rooms/rooms.js");
+  const groups = await listGroupRoomsForAgent(ctx.store, ctx.accountId, ctx.agentId).catch(() => []);
+  if (groups.length === 0) {
     return {
       error:
         tool === "delegate"
-          ? "You are in a private chat. Pass conversationId — the group id from create_group that you passed to hire_subagent. The teammate speaks in that group, and their messages also show up in this private chat. Do not call add_to_group after hire; hire already added them."
-          : "You are in a private chat, so this call has no group. hire_subagent with conversationId already puts a new teammate in the group — do not add them again. To add someone who already exists, pass conversationId from create_group.",
+          ? "No group yet. Call create_group once with a title, then hire_subagent there, then delegate. Copy the group id from Groups: in your prompt."
+          : "No group yet. Call create_group once, then hire_subagent there. Copy the group id from Groups: in your prompt.",
     };
   }
-  if (!room || room.kind !== "group") {
-    return { error: "conversationId must be a group id from create_group on this account." };
+  if (groups.length === 1 && groups[0]) {
+    return { conversationId: groups[0].conversationId };
   }
-  const [membership] = await ctx.store
-    .select({ agentId: members.agentId })
-    .from(members)
-    .where(
-      and(eq(members.conversationId, targetId), eq(members.accountId, ctx.accountId), eq(members.agentId, ctx.agentId)),
-    );
-  if (!membership) return { error: "You must be a member of that group." };
-  return { conversationId: targetId };
+  if (childAgentId) {
+    const containing: { conversationId: string; title: string; owned: boolean }[] = [];
+    for (const group of groups) {
+      const [hit] = await ctx.store
+        .select({ agentId: members.agentId })
+        .from(members)
+        .where(
+          and(
+            eq(members.conversationId, group.conversationId),
+            eq(members.accountId, ctx.accountId),
+            eq(members.agentId, childAgentId),
+          ),
+        );
+      if (hit) containing.push(group);
+    }
+    if (containing.length === 1 && containing[0]) {
+      return { conversationId: containing[0].conversationId };
+    }
+    if (containing.length > 1) {
+      const list = containing.map((group) => `"${group.title}" (id:${group.conversationId})`).join("; ");
+      return { error: `That teammate is in several groups. Pass conversationId copied from Groups: — candidates: ${list}.` };
+    }
+  }
+  const list = groups
+    .slice(0, 5)
+    .map((group) => `"${group.title}" (id:${group.conversationId})`)
+    .join("; ");
+  return {
+    error: `You are in a private chat with several groups. Pass conversationId copied verbatim from Groups: in your prompt — candidates: ${list}. Do not create another group when one title already matches.`,
+  };
 }
 
 export async function executeAddToGroup(ctx: ToolContext, input: Record<string, unknown>) {
-  let parsed: ReturnType<typeof memberAddInputSchema.parse>;
+  let parsed: { agentId: string; conversationId?: string };
   try {
-    parsed = memberAddInputSchema.parse(input);
+    parsed = memberAddInputSchema.parse(input) as { agentId: string; conversationId?: string };
   } catch (error) {
     if (error instanceof ZodError) {
       return { error: "Invalid add_to_group input. Required: agentId (UUID). From a private chat also pass conversationId." };
     }
     throw error;
   }
-  const target = await resolveGroupTarget(ctx, parsed.conversationId, "add_to_group");
+  const target = await resolveGroupTarget(ctx, parsed.conversationId, "add_to_group", parsed.agentId);
   if ("error" in target) return target;
   try {
     const row = await addGroupMember(ctx.store, {

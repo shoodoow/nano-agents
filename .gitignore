@@ -11,3 +11,4 @@ text.txt
 .tool-trace.log
 apps/mobile/design/*.PNG
 apps/mobile/.expo/dev/logs/start.log
+skills/accounts/*/
