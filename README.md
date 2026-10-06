@@ -18,7 +18,9 @@ Chat from your phone. Agents team up, run workers, remember, schedule routines, 
 
 > **Work in progress** — This repo is the public open-source home for nano-agents. The project is under active development (pre-1.0): setup steps, APIs, and mobile UX can change between commits. Treat it as experimental self-hosting software, not a frozen production release; pin a commit or tag if you need stability. Issues and PRs are welcome.
 
-> Drop a demo GIF here: `docs/demo.gif` — chat → worker → desktop takeover. PRs with screenshots welcome.
+<p align="center">
+  <img src="docs/demo.gif" alt="nano-agents mobile demo — search, start a chat, send messages" width="280" />
+</p>
 
 > **Bring your own API keys** — This project does not include model API keys. After you sign in, open **Account → Providers** in the app and add keys for OpenAI, Anthropic, xAI, or an OpenAI-compatible base URL (per account, stored encrypted in Postgres). **Google OAuth** is only for login. Optional `EXA_API_KEY` / `BRAVE_API_KEY` in `apps/core/.env` are for shared web search, not chat models.
 
@@ -230,12 +232,7 @@ Deep dives: [turn engine](apps/core/src/turn/GUIDE.md) · [DB trace](apps/core/s
 
 ---
 
-## 🗺️ Roadmap
 
-- [ ] `docs/demo.gif` + store screenshots
-- [ ] Green CI on `main` (verify Docker-dependent core tests in GitHub Actions)
-- [ ] EAS dev-build docs + FCM/APNs one-click check
-- [ ] More MCP OAuth presets + skill marketplace
 
 Vote with issues — [feature request](.github/ISSUE_TEMPLATE/feature_request.md).
 
