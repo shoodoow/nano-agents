@@ -42,7 +42,7 @@ export async function runTurn(
   if (!room) throw new Error("Room not found");
 
   const memberRows = await db
-    .select({ id: agents.id, name: agents.name })
+    .select({ id: agents.id, name: agents.name, label: agents.label, role: agents.role })
     .from(members)
     .innerJoin(agents, eq(members.agentId, agents.id))
     .where(and(eq(members.conversationId, conversationId), eq(members.accountId, accountId)));

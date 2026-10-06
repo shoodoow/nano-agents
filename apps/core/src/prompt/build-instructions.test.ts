@@ -6,6 +6,12 @@ const promptUrl = new URL("../../../../prompts/system.md", import.meta.url);
 const systemPrompt = readFileSync(promptUrl, "utf8").trim();
 
 describe("buildInstructions", () => {
+  it("does not tell the model that plain text is a private monologue", () => {
+    expect(systemPrompt).not.toContain("inner monologue the person never sees");
+    expect(systemPrompt).toContain("Plain text is not a message.");
+    expect(systemPrompt).toContain("use that timezone and local time");
+  });
+
   it("places the system prompt and the composed identity after it", () => {
     const result = buildInstructions({ name: "Ada", role: "Ledger keeper", personality: "warm, terse", job: "Keep the ledger." });
     expect(result.indexOf(systemPrompt)).toBe(0);

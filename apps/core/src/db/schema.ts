@@ -7,6 +7,8 @@ export const EMBEDDING_DIMS = 1536;
 export const accounts = pgTable("accounts", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
+  // Person's zone (Asia/Riyadh). Empty until the phone reports one.
+  timezone: text("timezone").notNull().default(""),
   // Auto-review: risky tools wait for a person when true.
   autoReview: boolean("auto_review").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

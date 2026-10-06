@@ -9,7 +9,7 @@ import { keyFor } from "../../keys/keys.js";
 import type { getDb } from "../../db/client.js";
 import { toModelPrompt } from "../prompt-model.js";
 import type { TurnInput } from "../types.js";
-import { MAX_MODEL_STEPS_DISPATCHER } from "../constants.js";
+import { DISPATCHER_MAX_OUTPUT_TOKENS, MAX_MODEL_STEPS_DISPATCHER } from "../constants.js";
 import { createTraceSession, type TraceSession } from "./plugins.js";
 import { tracePreview } from "./sinks/jsonl.js";
 import type { AgentMode } from "../types.js";
@@ -83,6 +83,7 @@ export async function runModelHarness(
       instructions: prompt.instructions,
       messages: prompt.messages,
       tools: input.tools,
+      ...(input.mode === "dispatcher" ? { maxOutputTokens: DISPATCHER_MAX_OUTPUT_TOKENS } : {}),
       stopWhen: [
         isStepCount(input.maxSteps ?? MAX_MODEL_STEPS_DISPATCHER),
         () => Boolean(input.shouldStop?.()),

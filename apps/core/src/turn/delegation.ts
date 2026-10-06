@@ -4,7 +4,7 @@
  */
 import { and, desc, eq } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
-import { agents, conversations, members, messages } from "../db/schema.js";
+import { accounts, agents, conversations, members, messages } from "../db/schema.js";
 import { buildContext, identityBlock } from "../memory/context.js";
 import { createProfile } from "../linux/linux.js";
 import { mirrorGroupSpeechToOwnerDm, type TurnEvent } from "../rooms/send-message.js";
@@ -99,10 +99,14 @@ export async function runDelegatedTurn(
     .where(and(eq(conversations.id, input.conversationId), eq(conversations.accountId, input.accountId)));
   if (!room) throw new Error("Room not found");
   const memberRows = await db
-    .select({ id: agents.id, name: agents.name })
+    .select({ id: agents.id, name: agents.name, label: agents.label, role: agents.role })
     .from(members)
     .innerJoin(agents, eq(members.agentId, agents.id))
     .where(and(eq(members.conversationId, input.conversationId), eq(members.accountId, input.accountId)));
+  const [account] = await db
+    .select({ name: accounts.name, timezone: accounts.timezone })
+    .from(accounts)
+    .where(eq(accounts.id, input.accountId));
   const context = buildContext({
     accountId: input.accountId,
     agentId: child.id,
@@ -120,6 +124,18 @@ export async function runDelegatedTurn(
       kind: room.kind,
       members: memberRows.map((member) => member.name),
       selfName: child.name,
+    },
+    person: {
+      name: account?.name ?? "the person",
+      timezone: account?.timezone ?? "",
+      now: new Date(),
+      teammates: memberRows
+        .filter((member) => member.id !== child.id)
+        .map((member) => ({
+          label: member.label?.trim() || member.name,
+          role: member.role?.trim() || "teammate",
+          mention: member.name,
+        })),
     },
   });
   const local: (typeof messages.$inferSelect)[] = [];

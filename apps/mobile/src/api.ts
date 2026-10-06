@@ -78,6 +78,7 @@ export type ToolApproval = {
 
 export type AccountSettings = {
   autoReview: boolean;
+  timezone: string;
 };
 
 export type PluginCard = {
@@ -276,6 +277,7 @@ export type CoreClient = {
   reject: (accountId: string, proposalId: string) => Promise<Proposal[]>;
   getSettings: (accountId: string) => Promise<AccountSettings>;
   setAutoReview: (accountId: string, autoReview: boolean) => Promise<AccountSettings>;
+  rememberTimezone: (accountId: string, timezone: string) => Promise<AccountSettings>;
   listToolApprovals: (accountId: string) => Promise<ToolApproval[]>;
   approveTool: (accountId: string, approvalId: string) => Promise<ToolApproval[]>;
   denyTool: (accountId: string, approvalId: string) => Promise<ToolApproval[]>;
@@ -353,6 +355,7 @@ export function createCore(baseUrl = coreBaseUrl(), fetchImpl: typeof fetch = fe
     reject: (accountId, proposalId) => decide(baseUrl, accountId, proposalId, "reject", fetchImpl),
     getSettings: (accountId) => getSettings(baseUrl, accountId, fetchImpl),
     setAutoReview: (accountId, autoReview) => setAutoReview(baseUrl, accountId, autoReview, fetchImpl),
+    rememberTimezone: (accountId, timezone) => rememberTimezone(baseUrl, accountId, timezone, fetchImpl),
     listToolApprovals: (accountId) => listToolApprovals(baseUrl, accountId, fetchImpl),
     approveTool: (accountId, approvalId) => decideTool(baseUrl, accountId, approvalId, "approve", fetchImpl),
     denyTool: (accountId, approvalId) => decideTool(baseUrl, accountId, approvalId, "deny", fetchImpl),
@@ -890,6 +893,18 @@ async function setAutoReview(
   return readJson<AccountSettings>(fetchImpl, `${baseUrl}/accounts/${accountId}/settings`, {
     method: "PATCH",
     body: JSON.stringify({ autoReview }),
+  });
+}
+
+async function rememberTimezone(
+  baseUrl: string,
+  accountId: string,
+  timezone: string,
+  fetchImpl: typeof fetch,
+): Promise<AccountSettings> {
+  return readJson<AccountSettings>(fetchImpl, `${baseUrl}/accounts/${accountId}/settings`, {
+    method: "PATCH",
+    body: JSON.stringify({ timezone }),
   });
 }
 

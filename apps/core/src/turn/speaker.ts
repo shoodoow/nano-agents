@@ -4,8 +4,9 @@
  */
 import { and, desc, eq, inArray } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
-import { agents, delegations, jobs, messages, routines, summaryItems } from "../db/schema.js";
-import { buildContext } from "../memory/context.js";
+import { accounts, agents, delegations, jobs, messages, routines, summaryItems } from "../db/schema.js";
+import { buildContext, type PersonContext } from "../memory/context.js";
+import { isNarrationStall, STALL_MESSAGE } from "./narration-stall.js";
 import { memoriesFor } from "../memory/memory.js";
 import { recallRelevant } from "../memory/recall.js";
 import { createProfile } from "../linux/linux.js";
@@ -29,7 +30,7 @@ export async function speakOnce(
     accountId: string;
     conversationId: string;
     agentId: string;
-    memberRows: { id: string; name: string }[];
+    memberRows: { id: string; name: string; label?: string; role?: string }[];
     room: { title: string; kind: string };
     skillsRoot?: string;
     generate?: (input: TurnInput) => Promise<GenerateResult>;
@@ -94,7 +95,7 @@ export async function speakOnce(
   }).catch(() => [] as string[]);
   const catalog = skillsRoot
     ? skillCatalogForAccount(skillsRoot, accountId)
-        .map((skill) => `${skill.name}: ${skill.description}`)
+        .map((skill) => skill.name)
         .join("\n")
     : "";
   // Query active background workers running for this parent agent in this room.
@@ -185,6 +186,7 @@ export async function speakOnce(
       members: memberRows.map((member) => member.name),
       selfName: agent.name,
     },
+    person: await loadPerson(db, accountId, agentId, memberRows),
     activeWorkers,
     workHistory,
   });
@@ -281,7 +283,9 @@ export async function speakOnce(
     return;
   }
   const text = result.text.trim();
-  const bodyText = text || "The tools finished, but the model sent no message.";
+  const bodyText = isNarrationStall(text)
+    ? STALL_MESSAGE
+    : text || "The tools finished, but the model sent no message.";
   const [wrapped] = await db
     .insert(messages)
     .values({
@@ -306,9 +310,38 @@ export async function speakOnce(
       messageIds: result.proposal.messageIds,
     });
   }
-  for (const next of mentionedAgents(result.text, memberRows, true)) {
+  for (const next of mentionedAgents(bodyText, memberRows, true)) {
     if (!spoken.has(next)) queue.push(next);
   }
+}
+
+/**
+ * Loads who the person is for this turn's tail.
+ * Why: the room roster is agents; the human has to be named separately.
+ * Input: account id and the room's agents. Output: name, zone, now, teammates.
+ */
+async function loadPerson(
+  db: Db,
+  accountId: string,
+  agentId: string,
+  memberRows: { id: string; name: string; label?: string; role?: string }[],
+): Promise<PersonContext> {
+  const [account] = await db
+    .select({ name: accounts.name, timezone: accounts.timezone })
+    .from(accounts)
+    .where(eq(accounts.id, accountId));
+  return {
+    name: account?.name ?? "the person",
+    timezone: account?.timezone ?? "",
+    now: new Date(),
+    teammates: memberRows
+      .filter((member) => member.id !== agentId)
+      .map((member) => ({
+        label: member.label?.trim() || member.name,
+        role: member.role?.trim() || "teammate",
+        mention: member.name,
+      })),
+  };
 }
 
 /**

@@ -236,6 +236,40 @@ export async function getAutoReview(db: Db, accountId: string): Promise<boolean>
   return row?.autoReview ?? true;
 }
 
+export async function getAccountSettings(db: Db, accountId: string) {
+  const [row] = await db
+    .select({ autoReview: accounts.autoReview, timezone: accounts.timezone })
+    .from(accounts)
+    .where(eq(accounts.id, accountId));
+  return row ?? null;
+}
+
+/**
+ * Stores the phone's zone the first time it arrives.
+ * Why: later opens must not overwrite a zone the person already set.
+ * Input: account id and a zone name. Output: the saved settings, or null.
+ */
+export async function rememberTimezone(db: Db, accountId: string, timezone: string) {
+  const current = await getAccountSettings(db, accountId);
+  if (!current) return null;
+  if (current.timezone.trim()) return current;
+  const [row] = await db
+    .update(accounts)
+    .set({ timezone })
+    .where(eq(accounts.id, accountId))
+    .returning({ autoReview: accounts.autoReview, timezone: accounts.timezone });
+  return row ?? null;
+}
+
+export function isTimeZone(zone: string): boolean {
+  try {
+    Intl.DateTimeFormat("en-US", { timeZone: zone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function setAutoReview(db: Db, accountId: string, autoReview: boolean) {
   const [row] = await db
     .update(accounts)

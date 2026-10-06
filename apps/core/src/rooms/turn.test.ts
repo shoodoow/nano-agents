@@ -167,6 +167,25 @@ describe("runTurn", () => {
     );
   });
 
+  it("saves a short line when the model only narrates a plan", async () => {
+    const account = await createAccount(db, { name: "Stall" });
+    const owner = await createAgent(db, account.id, agent("Stall"));
+    const [room] = await db
+      .insert(conversations)
+      .values({ accountId: account.id, kind: "direct", ownerAgentId: owner.id, title: "stall" })
+      .returning();
+    await db.insert(members).values({ conversationId: room!.id, accountId: account.id, agentId: owner.id });
+
+    await runTurn(db, account.id, room!.id, "Ok do it", async () => ({
+      text: "Let me list the groups, routines, and team in parallel.",
+    }));
+
+    const stored = await db.select().from(messages).where(eq(messages.conversationId, room!.id));
+    expect(stored.find((message) => message.agentId === owner.id)?.body).toBe(
+      "I didn’t finish that. Tell me to try again.",
+    );
+  });
+
   it("runs overlapping turns one after another", async () => {
     const account = await createAccount(db, { name: "Lock" });
     const owner = await createAgent(db, account.id, agent("Owner"));

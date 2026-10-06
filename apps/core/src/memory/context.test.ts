@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { buildInstructions } from "../prompt/build-instructions.js";
-import { buildContext, roomLine } from "./context.js";
+import { buildContext, personLine, roomLine, TOOL_CONTRACT } from "./context.js";
 import { getDb } from "../db/client.js";
 import { conversations, messages } from "../db/schema.js";
 import { createAccount, createAgent } from "../roster/roster.js";
@@ -29,7 +29,8 @@ describe("buildContext", () => {
       messages: [{ body: "second note" }],
     });
 
-    expect(first.prefix).toBe(buildInstructions(identity));
+    expect(first.prefix).toBe(`${buildInstructions(identity)}\n\n${TOOL_CONTRACT}`);
+    expect(first.prefix.endsWith(TOOL_CONTRACT)).toBe(true);
     expect(first.prefix).toBe(second.prefix);
     expect(first.prefix.includes("Ship on Friday.")).toBe(false);
     expect(first.prefix.includes("first note")).toBe(false);
@@ -71,6 +72,49 @@ describe("buildContext", () => {
     });
     expect(withRoom.tail.startsWith('Room "Group 1"')).toBe(true);
     expect(withRoom.prefix.includes("Group 1")).toBe(false);
+  });
+
+  it("puts the tool contract after skill names and names the person in the tail", () => {
+    const now = new Date("2026-10-06T10:52:00.000Z");
+    const context = buildContext({
+      ...agent,
+      summary: [],
+      messages: [],
+      catalog: "docx\npptx",
+      room: { title: "Launch crew", kind: "group", members: ["Sara", "Maya-ruuc"], selfName: "Sara" },
+      person: {
+        name: "Mohammad Reza",
+        timezone: "Asia/Riyadh",
+        now,
+        teammates: [{ label: "Maya", role: "researcher", mention: "Maya-ruuc" }],
+      },
+    });
+    expect(context.prefix.endsWith(TOOL_CONTRACT)).toBe(true);
+    expect(context.prefix.indexOf("docx")).toBeLessThan(context.prefix.lastIndexOf(TOOL_CONTRACT));
+    expect(context.prefix.includes("Recent trends")).toBe(false);
+    expect(context.tail.startsWith('Room "Launch crew"')).toBe(true);
+    expect(context.tail).toContain(personLine({
+      name: "Mohammad Reza",
+      timezone: "Asia/Riyadh",
+      now,
+      teammates: [{ label: "Maya", role: "researcher", mention: "Maya-ruuc" }],
+    }));
+    expect(context.tail).toContain("You speak to them");
+    expect(context.tail).toContain("They are not a teammate");
+    expect(context.tail).toContain("Maya (researcher, mention @Maya-ruuc)");
+    expect(context.prefix.includes("Mohammad Reza")).toBe(false);
+  });
+
+  it("says the timezone is unknown when none is stored", () => {
+    const line = personLine({
+      name: "Mohammad Reza",
+      timezone: "",
+      now: new Date("2026-10-06T10:52:00.000Z"),
+      teammates: [],
+    });
+    expect(line).toContain("Timezone: unknown. Do not invent one.");
+    expect(line).toContain("Teammates: none.");
+    expect(line.includes("Local time now")).toBe(false);
   });
 
   it("renders active background workers in the tail without polluting the prefix", () => {

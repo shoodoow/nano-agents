@@ -56,9 +56,11 @@ import { approve, listProposals, reject } from "../skills/proposals.js";
 import {
   approvalDecisionCue,
   decideToolApproval,
-  getAutoReview,
+  getAccountSettings,
+  isTimeZone,
   listToolApprovals,
   markApprovalWidget,
+  rememberTimezone,
   setAutoReview,
 } from "../turn/auto-review.js";
 
@@ -259,20 +261,41 @@ function mountRoutes(app: Express, ctx: AppContext): void {
     res.json(await listProposals(ctx.db, pathParam(req, "accountId")));
   });
   accounts.get("/:accountId/settings", guard, async (req, res) => {
-    res.json({ autoReview: await getAutoReview(ctx.db, pathParam(req, "accountId")) });
-  });
-  accounts.patch("/:accountId/settings", guard, async (req, res) => {
-    const autoReview = (req.body ?? {}).autoReview;
-    if (typeof autoReview !== "boolean") {
-      res.status(400).json({ error: "autoReview must be a boolean." });
-      return;
-    }
-    const updated = await setAutoReview(ctx.db, pathParam(req, "accountId"), autoReview);
-    if (!updated) {
+    const settings = await getAccountSettings(ctx.db, pathParam(req, "accountId"));
+    if (!settings) {
       res.status(404).json({ error: "Account not found." });
       return;
     }
-    res.json({ autoReview: updated.autoReview });
+    res.json(settings);
+  });
+  accounts.patch("/:accountId/settings", guard, async (req, res) => {
+    const body = (req.body ?? {}) as { autoReview?: unknown; timezone?: unknown };
+    const hasReview = typeof body.autoReview === "boolean";
+    const hasZone = typeof body.timezone === "string" && body.timezone.trim().length > 0;
+    if (!hasReview && !hasZone) {
+      res.status(400).json({ error: "autoReview must be a boolean." });
+      return;
+    }
+    if (hasZone && !isTimeZone(body.timezone as string)) {
+      res.status(400).json({ error: "timezone must be a zone name such as Asia/Riyadh." });
+      return;
+    }
+    const accountId = pathParam(req, "accountId");
+    if (hasReview) {
+      const updated = await setAutoReview(ctx.db, accountId, body.autoReview as boolean);
+      if (!updated) {
+        res.status(404).json({ error: "Account not found." });
+        return;
+      }
+    }
+    const settings = hasZone
+      ? await rememberTimezone(ctx.db, accountId, (body.timezone as string).trim())
+      : await getAccountSettings(ctx.db, accountId);
+    if (!settings) {
+      res.status(404).json({ error: "Account not found." });
+      return;
+    }
+    res.json(settings);
   });
   accounts.get("/:accountId/tool-approvals", guard, async (req, res) => {
     res.json(await listToolApprovals(ctx.db, pathParam(req, "accountId")));

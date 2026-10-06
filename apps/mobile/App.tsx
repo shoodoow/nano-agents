@@ -228,11 +228,15 @@ export default function App() {
     const [roster, configured, settings] = await Promise.all([
       core.listAgents(accountIdFromSession),
       core.listProviders(accountIdFromSession),
-      core.getSettings(accountIdFromSession).catch(() => ({ autoReview: true })),
+      core.getSettings(accountIdFromSession).catch(() => ({ autoReview: true, timezone: "" })),
     ]);
     setAgents(roster);
     setProviders(configured);
     setAutoReview(settings.autoReview);
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (zone) {
+      await core.rememberTimezone(accountIdFromSession, zone).catch(() => {});
+    }
     setScreen({ name: "inbox" });
     setMenu(null);
     setNote("");

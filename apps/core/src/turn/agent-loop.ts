@@ -8,7 +8,8 @@ import { messages } from "../db/schema.js";
 import type { AgentMode, GenerateResult, TurnInput } from "./types.js";
 import { ensureTracePlugins } from "./trace/bootstrap.js";
 import { createTraceSession } from "./trace/plugins.js";
-import { runModelHarness } from "./trace/harness.js";
+import { runModelHarness, type HarnessUsage } from "./trace/harness.js";
+import { shouldRetryStall, STALL_NUDGE } from "./narration-stall.js";
 import { randomUUID } from "node:crypto";
 import { buildFullToolSet } from "./tools/registry.js";
 import type { ToolContext } from "./tools/context.js";
@@ -62,15 +63,49 @@ export async function runAgentLoop(
     voiceAgentId: input.agentId,
   };
   const tools = await buildFullToolSet(mode, toolCtx);
-  const { text, cacheReadTokens, usage } = await runModelHarness({
+  const harnessInput = {
     ...input,
     db,
     mode,
     tools,
     traceSession,
     shouldStop: () => Boolean(toolCtx.endTurn),
-  });
+  };
+  let { text, cacheReadTokens, usage } = await runModelHarness(harnessInput);
+  if (
+    mode === "dispatcher" &&
+    shouldRetryStall({
+      attempt: 0,
+      text,
+      sentMessage: input.emittedMessages.length > 0,
+      ended: Boolean(toolCtx.endTurn),
+    })
+  ) {
+    const retry = await runModelHarness({
+      ...harnessInput,
+      messages: [...input.messages, { role: "user", content: STALL_NUDGE }],
+    });
+    text = retry.text;
+    cacheReadTokens = retry.cacheReadTokens;
+    usage = addUsage(usage, retry.usage);
+  }
   return { text, cacheReadTokens, usage };
+}
+
+function addUsage(left: HarnessUsage, right: HarnessUsage): HarnessUsage {
+  return {
+    inputTokens: left.inputTokens + right.inputTokens,
+    outputTokens: left.outputTokens + right.outputTokens,
+    cacheReadTokens: addNullable(left.cacheReadTokens, right.cacheReadTokens),
+    cacheWriteTokens: addNullable(left.cacheWriteTokens, right.cacheWriteTokens),
+    reasoningTokens: addNullable(left.reasoningTokens, right.reasoningTokens),
+    steps: left.steps + right.steps,
+  };
+}
+
+function addNullable(left: number | null, right: number | null): number | null {
+  if (left === null && right === null) return null;
+  return (left ?? 0) + (right ?? 0);
 }
 
 /** Legacy single-shot path for tests that bypass tools. */

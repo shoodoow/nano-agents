@@ -3,6 +3,25 @@ import { buildAgentIdentity, buildInstructions, type AgentIdentity } from "../pr
 
 const keyOrder = ["decisions", "actions", "open", "entities", "corrections", "topics"];
 
+/**
+ * The only turn rule, placed last in the prefix so a small model still sees it.
+ * Why: skill names and the long system prompt sit in the middle, which cheap models drop.
+ */
+export const TOOL_CONTRACT = [
+  "Tool contract:",
+  "On a person-opened turn, the first action is a send_message tool call. Plain text is not a reply.",
+  "Then one next tool. Do not write the plan.",
+  'Example: send_message with { "blocks": [{ "kind": "text", "markdown": "On it." }] }.',
+  "Stop.",
+].join("\n");
+
+export type PersonContext = {
+  name: string;
+  timezone: string;
+  now: Date;
+  teammates: { label: string; role: string; mention: string }[];
+};
+
 export type BuiltContext = {
   prefix: string;
   tail: string;
@@ -37,6 +56,7 @@ export function buildContext(input: {
   recall?: string[];
   catalog?: string;
   room?: { title: string; kind: string; members: string[]; selfName: string };
+  person?: PersonContext;
   activeWorkers?: {
     childAgentId: string;
     label?: string | null;
@@ -46,7 +66,7 @@ export function buildContext(input: {
   }[];
   workHistory?: { kind: "worker" | "routine"; title: string; outcome: string; status: string; createdAt: Date }[];
 }): BuiltContext {
-  const extras = [...(input.catalog ? [input.catalog] : [])];
+  const extras = [...(input.catalog ? [input.catalog] : []), TOOL_CONTRACT];
   const prefix = [buildInstructions(input.identity), ...extras].join("\n\n");
   const summaryLines = [...input.summary].sort(
     (left, right) => keyOrder.indexOf(left.key) - keyOrder.indexOf(right.key) || left.body.localeCompare(right.body),
@@ -57,6 +77,7 @@ export function buildContext(input: {
   const workBlock = workHistorySection(input.workHistory ?? []);
   const tail = [
     ...(input.room ? [roomLine(input.room)] : []),
+    ...(input.person ? [personLine(input.person)] : []),
     ...(memoryBlock ? [memoryBlock] : []),
     ...(recallBlock ? [recallBlock] : []),
     ...(workersBlock ? [workersBlock] : []),
@@ -110,6 +131,44 @@ export function roomLine(room: { title: string; kind: string; members: string[];
   const members = room.members.length > 0 ? room.members.join(", ") : "—";
   const shape = room.kind === "group" ? `group of ${room.members.length}` : "direct chat";
   return `Room "${room.title}" (${shape}). Members: ${members}. You are ${room.selfName} — reply only when mentioned; members wake each other with @Name, a leading @Name is a direct handoff to that member.`;
+}
+
+/**
+ * Names the human, their clock, and the teammates separately.
+ * Why: a group otherwise treats other agents as the audience.
+ * Input: account name, zone, instant, teammate labels. Output: one tail block.
+ */
+export function personLine(person: PersonContext): string {
+  const name = person.name.trim() || "the person";
+  const local = formatLocalTime(person.now, person.timezone);
+  const clock = local
+    ? `Timezone: ${person.timezone.trim()}. Local time now: ${local}.`
+    : "Timezone: unknown. Do not invent one.";
+  const teammates =
+    person.teammates.length === 0
+      ? "Teammates: none."
+      : `Teammates: ${person.teammates
+          .map((mate) => `${mate.label} (${mate.role}, mention @${mate.mention})`)
+          .join("; ")}.`;
+  return `Person: ${name}. You speak to them. A greeting is a greeting. They are not a teammate.\n${clock}\n${teammates}`;
+}
+
+function formatLocalTime(now: Date, timezone: string): string | null {
+  const zone = timezone.trim();
+  if (!zone) return null;
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: zone,
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(now);
+  } catch {
+    return null;
+  }
 }
 
 /**

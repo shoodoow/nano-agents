@@ -17,6 +17,9 @@ export const DISPATCHER_TOOL_BUDGET_DEFAULT_MS = 15_000;
 
 export const MAX_MODEL_STEPS_DISPATCHER = 12;
 
+/** Dispatcher output cap. A narration loop otherwise runs to the provider limit. */
+export const DISPATCHER_MAX_OUTPUT_TOKENS = 2_048;
+
 export const MAX_VISION_IMAGES = 3;
 export const MAX_VISION_CHARS = 1_000_000;
 
