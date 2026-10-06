@@ -32,7 +32,6 @@ import {
   xyInputSchema,
   pathInputSchema,
   readWriteInputSchema,
-  installSkillInputSchema,
   browserNavigateInputSchema,
   browserUidInputSchema,
   browserFillInputSchema,
@@ -45,7 +44,7 @@ const WORKER_KIND_HINT =
   "Pick kind by the work: executor (general), computer (desktop GUI — Method must include read_skill computer-use-linux), browser (public web — prefer read_skill chrome-devtools for live pages), explore (files/code search), shell (commands), debug (evidence-based bugs), watch_video / video_review (media), vm_setup (project setup), docs (public documentation). If none fit, kind=custom and pass instructions with the standing method for this new specialist. Default kind is computer.";
 
 const WORKER_TASK_HINT =
-  `Act like the task owner, not a messenger: the worker starts blank, so the task must fully assign the job. ${WORKER_KIND_HINT} Task must include Goal (one sentence, with done-criteria), Inputs (exact URLs/paths/quotes), Method, Success check (how you will verify the result answers the Goal), and Return format with proof. Never pass provider or modelId — the worker uses your model. Proof is mandatory: demand exact numbers, URLs, and quotes observed — never estimates, never invented content. Return format is always three labeled sections: Findings: (evidence), What I did: (steps), Blockers: (what stopped you, or none). Skill installs are install_skill on the dispatcher, or kind shell with that tool — never a new teammate. Live pages use browser_snapshot, browser_click, browser_fill, browser_press_key, and browser_handle_dialog (read_skill chrome-devtools). Desktop GUI uses read_skill computer-use-linux. Never mention screenshots unless the person asked for visual proof. Reuse the existing Chromium window (do not pkill chromium). If the screen needs a password, 2FA, or payment, end with NEEDS_PERSON: plus one instruction. A popup ad is not a captcha — dismiss it. If a skill applies, name read_skill <name> in Method. Do not claim a file exists unless you wrote it and checked it.`;
+  `Act like the task owner, not a messenger: the worker starts blank, so the task must fully assign the job. ${WORKER_KIND_HINT} Task must include Goal (one sentence, with done-criteria), Inputs (exact URLs/paths/quotes), Method, Success check (how you will verify the result answers the Goal), and Return format with proof. Never pass provider or modelId — the worker uses your model. Proof is mandatory: demand exact numbers, URLs, and quotes observed — never estimates, never invented content. Return format is always three labeled sections: Findings: (evidence), What I did: (steps), Blockers: (what stopped you, or none). Skill installs are kind shell with \`npx skills add <owner/repo@skill> -g -y\` into this agent's home — never a new teammate. Live pages use browser_snapshot, browser_click, browser_fill, browser_press_key, and browser_handle_dialog (read_skill chrome-devtools). Desktop GUI uses read_skill computer-use-linux. Never mention screenshots unless the person asked for visual proof. Reuse the existing Chromium window (do not pkill chromium). If the screen needs a password, 2FA, or payment, end with NEEDS_PERSON: plus one instruction. A popup ad is not a captcha — dismiss it. If a skill applies, name read_skill <name> in Method. Do not claim a file exists unless you wrote it and checked it.`;
 
 export type ToolSurface = "dispatcher" | "worker";
 
@@ -188,21 +187,14 @@ export const allToolDefinitions: ToolDefinition[] = [
   {
     name: "list_skills",
     description:
-      "List skills this account can load (name and description). Call this after install_skill or refresh_skills before you tell the person a skill is available.",
+      "List skills this agent can load (name and description): shared host skills plus this agent's container installs under ~/.agents/skills. Call after a shell install or refresh_skills before telling the person a skill is available.",
     surfaces: ["dispatcher", "worker"],
     inputSchema: emptyToolInputSchema,
   },
   {
-    name: "install_skill",
-    description:
-      "Install one skill into this account's skill folder (not a global home directory). Pass source as owner/repo or owner/repo@skill, or markdown as a full SKILL.md. Then the catalog refreshes for the next turn. Prove it with list_skills or read_skill before saying it is installed.",
-    surfaces: ["dispatcher", "worker"],
-    inputSchema: installSkillInputSchema,
-  },
-  {
     name: "refresh_skills",
     description:
-      "Rescan the account skill folder and bump prompt versions so the next turn sees newly installed skills without a process restart.",
+      "Rescan shared and this agent's local container skills, then bump prompt versions so the next turn sees newly installed skills without a process restart.",
     surfaces: ["dispatcher", "worker"],
     inputSchema: emptyToolInputSchema,
   },

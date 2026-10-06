@@ -18,7 +18,6 @@ describe("dispatcher SDK tools", () => {
       "glob",
       "grep",
       "hire_subagent",
-      "install_skill",
       "list_groups",
       "list_routines",
       "list_skills",
@@ -48,11 +47,9 @@ describe("dispatcher SDK tools", () => {
       else expect(names).not.toContain(name);
     }
     expect(workerToolNames(true)).toEqual(
-      expect.arrayContaining([...profileToolNames(), "read_history", "read_skill", "browser_snapshot", "install_skill"]),
+      expect.arrayContaining([...profileToolNames(), "read_history", "read_skill", "browser_snapshot", "list_skills"]),
     );
     expect(workerToolNames(true)).toContain("web_search");
-    expect(workerToolNames(false)).toEqual(
-      ["install_skill", "list_skills", "read_history", "read_skill", "refresh_skills"].sort(),
-    );
+    expect(workerToolNames(false)).toEqual(["list_skills", "read_history", "read_skill", "refresh_skills"].sort());
   });
 });

@@ -62,9 +62,9 @@ Body = instructions the agent follows after `read_skill`.
 
 | Step | What happens |
 |------|----------------|
-| Turn start | `skillCatalogForAccount(SKILLS_DIR, accountId)` → lines in prompt prefix |
-| Agent calls `read_skill({ name: "my-skill" })` | `readSkillForAccount` returns body (account override wins) |
-| Worker | Same `read_skill` in worker toolset when `SKILLS_DIR` is set |
+| Turn start | `skillCatalogForAgent({ skillsRoot, accountId, linuxProfile })` → names in prompt prefix (shared + `~/.agents/skills`) |
+| Agent calls `read_skill({ name: "my-skill" })` | `readSkillForAgent` returns body (container-local wins, then host) |
+| Worker | Same `read_skill` / `list_skills` with the worker's Linux profile |
 
 Core passes `process.env.SKILLS_DIR` from [`server.ts`](../../http/server.ts) into `runTurn`.
 

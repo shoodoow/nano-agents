@@ -12,7 +12,7 @@ import { recallRelevant } from "../memory/recall.js";
 import { createProfile } from "../linux/linux.js";
 import { RECENT_WINDOW, SUMMARY_WINDOW } from "./constants.js";
 import { propose } from "../skills/proposals.js";
-import { skillCatalogForAccount } from "../skills/skills.js";
+import { skillCatalogForAgent } from "../skills/agent-skills.js";
 import type { TurnEvent } from "../rooms/send-message.js";
 import { runAgentLoop } from "./agent-loop.js";
 import { mentionedAgents } from "./mentions.js";
@@ -93,11 +93,15 @@ export async function speakOnce(
     conversationId,
     query: lastUserMessage,
   }).catch(() => [] as string[]);
-  const catalog = skillsRoot
-    ? skillCatalogForAccount(skillsRoot, accountId)
-        .map((skill) => skill.name)
-        .join("\n")
-    : "";
+  const catalog = (
+    await skillCatalogForAgent({
+      skillsRoot,
+      accountId,
+      linuxProfile: agent.linuxProfile,
+    })
+  )
+    .map((skill) => skill.name)
+    .join("\n");
   // Query active background workers running for this parent agent in this room.
   // This gives the dispatcher full visibility over background tasks so it:
   // 1) Remains available to converse with the user while tasks run.

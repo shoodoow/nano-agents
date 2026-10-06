@@ -44,13 +44,8 @@ import {
   WorkerCapacityError,
 } from "../../rooms/subagents.js";
 import { updateAgentFlags } from "../../roster/roster.js";
-import {
-  bumpAccountPromptVersions,
-  catalogText,
-  installSkillFromSource,
-  writeAccountSkill,
-} from "../../skills/install.js";
-import { readSkillForAccount } from "../../skills/skills.js";
+import { catalogTextForAgent, readSkillForAgent } from "../../skills/agent-skills.js";
+import { bumpAccountPromptVersions } from "../../skills/install.js";
 import {
   createOwnRoutine,
   deleteOwnRoutine,
@@ -196,48 +191,31 @@ export async function executeReadHistory(ctx: ToolContext, input: Record<string,
   return rows.map((r) => ({ id: r.id, body: r.body }));
 }
 
+function skillCtx(ctx: Pick<ToolContext, "skillsRoot" | "accountId" | "linuxProfile">) {
+  return { skillsRoot: ctx.skillsRoot, accountId: ctx.accountId, linuxProfile: ctx.linuxProfile };
+}
+
 export async function executeReadSkill(ctx: ToolContext, input: Record<string, unknown>) {
-  if (!ctx.skillsRoot) return "No skills directory configured.";
+  if (!ctx.skillsRoot && !ctx.linuxProfile) return "No skills directory configured.";
   try {
-    return readSkillForAccount(ctx.skillsRoot, ctx.accountId, String(input.name));
+    return await readSkillForAgent(skillCtx(ctx), String(input.name));
   } catch {
     return "Skill not found.";
   }
 }
 
-export async function executeListSkills(ctx: Pick<ToolContext, "skillsRoot" | "accountId">) {
-  if (!ctx.skillsRoot) return "No skills directory configured.";
-  const catalog = catalogText(ctx.skillsRoot, ctx.accountId);
-  return catalog || "No skills installed for this account yet.";
+export async function executeListSkills(ctx: Pick<ToolContext, "skillsRoot" | "accountId" | "linuxProfile">) {
+  if (!ctx.skillsRoot && !ctx.linuxProfile) return "No skills directory configured.";
+  const catalog = await catalogTextForAgent(skillCtx(ctx));
+  return catalog || "No skills available yet.";
 }
 
-export async function executeRefreshSkills(ctx: Pick<ToolContext, "db" | "skillsRoot" | "accountId">) {
-  if (!ctx.skillsRoot) return "No skills directory configured.";
-  const bumped = await bumpAccountPromptVersions(ctx.db, ctx.accountId);
-  return { refreshed: true, agents: bumped, catalog: catalogText(ctx.skillsRoot, ctx.accountId) };
-}
-
-export async function executeInstallSkill(
-  ctx: Pick<ToolContext, "db" | "skillsRoot" | "accountId">,
-  input: Record<string, unknown>,
+export async function executeRefreshSkills(
+  ctx: Pick<ToolContext, "db" | "skillsRoot" | "accountId" | "linuxProfile">,
 ) {
-  if (!ctx.skillsRoot) return { error: "No skills directory configured." };
-  try {
-    const markdown = typeof input.markdown === "string" ? input.markdown : "";
-    const source = typeof input.source === "string" ? input.source : "";
-    const written = markdown
-      ? writeAccountSkill(ctx.skillsRoot, ctx.accountId, markdown)
-      : await installSkillFromSource(ctx.skillsRoot, ctx.accountId, source);
-    const agentsBumped = await bumpAccountPromptVersions(ctx.db, ctx.accountId);
-    return {
-      installed: written.name,
-      agentsBumped,
-      catalog: catalogText(ctx.skillsRoot, ctx.accountId),
-      note: "The skill list updates on the next turn. Confirm with list_skills or read_skill before telling the person it is ready.",
-    };
-  } catch (error) {
-    return { error: error instanceof Error ? error.message : "install_skill failed." };
-  }
+  if (!ctx.skillsRoot && !ctx.linuxProfile) return "No skills directory configured.";
+  const bumped = await bumpAccountPromptVersions(ctx.db, ctx.accountId);
+  return { refreshed: true, agents: bumped, catalog: await catalogTextForAgent(skillCtx(ctx)) };
 }
 
 export async function executeUpdateTeammate(ctx: ToolContext, input: Record<string, unknown>) {
@@ -770,7 +748,6 @@ export const dispatcherExecutors: Record<string, ToolExecutor> = {
   correct_memory: executeCorrectMemory,
   read_skill: executeReadSkill,
   list_skills: (ctx) => executeListSkills(ctx),
-  install_skill: (ctx, input) => executeInstallSkill(ctx, input),
   refresh_skills: (ctx) => executeRefreshSkills(ctx),
   hire_subagent: executeHireSubagent,
   update_teammate: executeUpdateTeammate,

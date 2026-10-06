@@ -16,7 +16,6 @@ describe("agent-tools catalog", () => {
       "glob",
       "grep",
       "hire_subagent",
-      "install_skill",
       "list_groups",
       "list_routines",
       "list_skills",
@@ -42,9 +41,7 @@ describe("agent-tools catalog", () => {
   });
 
   it("worker names align with profile tools when Linux exists", () => {
-    expect(workerToolNames(false)).toEqual(
-      ["install_skill", "list_skills", "read_history", "read_skill", "refresh_skills"].sort(),
-    );
+    expect(workerToolNames(false)).toEqual(["list_skills", "read_history", "read_skill", "refresh_skills"].sort());
     expect(workerToolNames(true)).toContain("browser_snapshot");
     expect(workerToolNames(true)).toContain("browser_click");
     for (const name of profileToolNames()) {

@@ -324,20 +324,6 @@ export const grepInputSchema = z.object({
   include: z.string().optional(),
 });
 
-/** Install into this account's skill folder. Pass markdown or owner/repo@skill, not both required. */
-export const installSkillInputSchema = z
-  .object({
-    source: z
-      .string()
-      .trim()
-      .min(3)
-      .max(200)
-      .optional()
-      .describe("GitHub spec owner/repo or owner/repo@skill. Never use a global install."),
-    markdown: z.string().trim().min(1).max(80_000).optional().describe("Full SKILL.md when you already have the file body."),
-  })
-  .refine((value) => Boolean(value.source || value.markdown), { message: "Pass source or markdown." });
-
 export const browserNavigateInputSchema = z.object({
   url: z.string().min(1),
 });

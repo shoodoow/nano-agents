@@ -94,7 +94,7 @@ Learn more: https://skills.sh/vercel-labs/agent-skills/react-best-practices
 
 ### Step 6: Offer to Install
 
-If the user wants to proceed, call `install_skill` with `source` set to `owner/repo` or `owner/repo@skill`. Do not run `npx skills add -g`. That writes into a home directory this account does not load.
+If the user wants to proceed, spawn a `shell` worker to run `npx skills add owner/repo@skill -g -y`. That installs into this agent's home at `~/.agents/skills`, which `list_skills` and `read_skill` load.
 
 After install, call `list_skills` or `read_skill`. If the name is missing, call `refresh_skills` and check again. Do not tell the person it is installed until one of those succeeds.
 

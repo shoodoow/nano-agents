@@ -7,6 +7,87 @@ const ACCOUNT_SKILLS = "accounts";
 
 export type SkillSummary = { name: string; description: string };
 
+export type ParsedSkill = { name: string; description: string; body: string };
+
+/**
+ * Parses Agent Skills frontmatter from a SKILL.md body.
+ * Input: full file text. Output: name, description, and markdown after the fence.
+ * Supports plain, quoted, and YAML block scalars (`>` / `|`) for description.
+ */
+export function parseSkillFrontmatter(text: string): ParsedSkill {
+  const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  if (!match) {
+    throw new Error("SKILL.md is missing frontmatter.");
+  }
+  const fields = parseFrontmatterFields(match[1] ?? "");
+  const name = fields.get("name");
+  const description = fields.get("description");
+  if (!name || !description) {
+    throw new Error("SKILL.md needs a name and a description.");
+  }
+  return { name, description, body: (match[2] ?? "").trim() };
+}
+
+/** YAML block indicators: folded `>`, literal `|`, with optional chomping (`-` / `+`). */
+const BLOCK_SCALAR = /^(>|\|)([+-])?$/;
+
+/**
+ * Reads top-level frontmatter keys. Nested maps (e.g. `metadata:`) are skipped;
+ * only scalar keys we care about (`name`, `description`) need to resolve.
+ */
+function parseFrontmatterFields(frontmatter: string): Map<string, string> {
+  const fields = new Map<string, string>();
+  const lines = frontmatter.split("\n");
+  for (let index = 0; index < lines.length; ) {
+    const line = lines[index] ?? "";
+    index += 1;
+    if (!line.trim() || line.trimStart().startsWith("#")) continue;
+    // Nested / continuation lines without a top-level key.
+    if (/^\s/.test(line)) continue;
+    const separator = line.indexOf(":");
+    if (separator === -1) continue;
+    const key = line.slice(0, separator).trim();
+    if (!key) continue;
+    let value = line.slice(separator + 1).trim();
+    const block = BLOCK_SCALAR.exec(value);
+    if (block) {
+      const folded = block[1] === ">";
+      const collected: string[] = [];
+      while (index < lines.length) {
+        const next = lines[index] ?? "";
+        if (next.trim() === "") {
+          collected.push("");
+          index += 1;
+          continue;
+        }
+        if (!/^\s/.test(next)) break;
+        collected.push(next.trim());
+        index += 1;
+      }
+      value = folded
+        ? collected.filter((part) => part.length > 0).join(" ").replace(/\s+/g, " ").trim()
+        : collected.join("\n").trim();
+    } else if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    if (value) fields.set(key, value);
+  }
+  return fields;
+}
+
+/**
+ * Merges skill layers left-to-right; later layers override the same name.
+ * Why: shared host skills, legacy account folders, and container-local installs
+ * stack cleanly without callers reimplementing Map logic.
+ */
+export function mergeSkillCatalogs(...layers: SkillSummary[][]): SkillSummary[] {
+  const byName = new Map<string, SkillSummary>();
+  for (const layer of layers) {
+    for (const skill of layer) byName.set(skill.name, skill);
+  }
+  return [...byName.values()].sort((left, right) => left.name.localeCompare(right.name));
+}
+
 /**
  * Lists the skills in one directory.
  * Input: a directory whose children are Agent Skills folders.
@@ -18,7 +99,7 @@ export function skillCatalog(directory: string): SkillSummary[] {
     .map((entry) => join(directory, entry.name, "SKILL.md"))
     .filter((path) => existsSync(path));
   return names
-    .map((path) => readFrontmatter(readFileSync(path, "utf8")))
+    .map((path) => parseSkillFrontmatter(readFileSync(path, "utf8")))
     .map((skill) => ({ name: skill.name, description: skill.description }))
     .sort((left, right) => left.name.localeCompare(right.name));
 }
@@ -33,7 +114,7 @@ export function readSkill(directory: string, name: string): string {
     .filter((entry) => entry.isDirectory() && entry.name !== ACCOUNT_SKILLS)
     .map((entry) => join(directory, entry.name, "SKILL.md"))
     .filter((path) => existsSync(path))
-    .map((path) => readFrontmatter(readFileSync(path, "utf8")))
+    .map((path) => parseSkillFrontmatter(readFileSync(path, "utf8")))
     .find((skill) => skill.name === name);
   if (!match) {
     throw new Error(`Skill ${name} is missing.`);
@@ -55,24 +136,18 @@ export function accountSkillRoot(root: string, accountId: string): string {
 }
 
 /**
- * Lists skills visible to one account.
- * Why: shared folders ship with the install. An account folder overrides a
- * shared skill of the same name and can add its own. The body stays out.
- * Input: skills root and account id. Output: name and description, sorted.
+ * Lists host skills visible to one account (shared + optional account folder).
+ * Container-local skills are merged separately via skillCatalogForAgent.
  */
 export function skillCatalogForAccount(root: string, accountId: string): SkillSummary[] {
   const ownRoot = accountSkillRoot(root, accountId);
   const own = existsSync(ownRoot) ? skillCatalog(ownRoot) : [];
-  const byName = new Map(skillCatalog(root).map((skill) => [skill.name, skill]));
-  for (const skill of own) byName.set(skill.name, skill);
-  return [...byName.values()].sort((left, right) => left.name.localeCompare(right.name));
+  return mergeSkillCatalogs(skillCatalog(root), own);
 }
 
 /**
- * Loads one skill body for one account.
- * Why: the catalog shows the override, so the body must be the override too.
+ * Loads one skill body for one account from the host skills tree.
  * A missing account copy falls through to the shared skill.
- * Input: skills root, account id, skill name. Output: markdown body.
  */
 export function readSkillForAccount(root: string, accountId: string, name: string): string {
   const ownRoot = accountSkillRoot(root, accountId);
@@ -84,30 +159,4 @@ export function readSkillForAccount(root: string, accountId: string, name: strin
     }
   }
   return readSkill(root, name);
-}
-
-function readFrontmatter(text: string): { name: string; description: string; body: string } {
-  const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
-  if (!match) {
-    throw new Error("SKILL.md is missing frontmatter.");
-  }
-  const fields = new Map<string, string>();
-  for (const line of (match[1] ?? "").split("\n")) {
-    const separator = line.indexOf(":");
-    if (separator === -1) {
-      continue;
-    }
-    const key = line.slice(0, separator).trim();
-    let value = line.slice(separator + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    }
-    fields.set(key, value);
-  }
-  const name = fields.get("name");
-  const description = fields.get("description");
-  if (!name || !description) {
-    throw new Error("SKILL.md needs a name and a description.");
-  }
-  return { name, description, body: (match[2] ?? "").trim() };
 }

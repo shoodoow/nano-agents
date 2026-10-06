@@ -2,11 +2,11 @@ import { jsonSchema, tool, type Schema, type ToolSet } from "ai";
 import { toolsForSurface, type ToolDefinition } from "@nano-agents/agent-tools";
 import type { getDb } from "../../db/client.js";
 import { readHistory } from "../../memory/memory.js";
-import { readSkillForAccount } from "../../skills/skills.js";
+import { readSkillForAgent } from "../../skills/agent-skills.js";
 import { linuxToolExecutes, DISPATCHER_FETCH_CHARS } from "../../computer/linux-tool-executes.js";
 import type { AgentMode } from "../types.js";
 import type { ToolContext } from "./context.js";
-import { dispatcherExecutors, executeDelegate, executeInstallSkill, executeListSkills, executeRefreshSkills } from "./executors.js";
+import { dispatcherExecutors, executeDelegate, executeListSkills, executeRefreshSkills } from "./executors.js";
 import { wrapToolExecute } from "./wrap-tool-execute.js";
 
 /** OpenAI-compatible empty tool input (avoids Zod→JSON Schema propertyNames warnings). */
@@ -66,19 +66,30 @@ function workerExecute(
   }
   if (def.name === "read_skill") {
     return async (input) => {
-      if (!workerCtx.skillsRoot) return "No skills directory configured.";
+      if (!workerCtx.skillsRoot && !workerCtx.profile) return "No skills directory configured.";
       try {
-        return readSkillForAccount(workerCtx.skillsRoot, workerCtx.accountId, String(input.name));
+        return await readSkillForAgent(
+          {
+            skillsRoot: workerCtx.skillsRoot,
+            accountId: workerCtx.accountId,
+            linuxProfile: workerCtx.profile,
+          },
+          String(input.name),
+        );
       } catch {
         return "Skill not found.";
       }
     };
   }
-  if (def.name === "list_skills" || def.name === "install_skill" || def.name === "refresh_skills") {
-    const skillCtx = { db: workerCtx.db, skillsRoot: workerCtx.skillsRoot, accountId: workerCtx.accountId };
+  if (def.name === "list_skills" || def.name === "refresh_skills") {
+    const skillCtx = {
+      db: workerCtx.db,
+      skillsRoot: workerCtx.skillsRoot,
+      accountId: workerCtx.accountId,
+      linuxProfile: workerCtx.profile,
+    };
     if (def.name === "list_skills") return async () => executeListSkills(skillCtx);
-    if (def.name === "refresh_skills") return async () => executeRefreshSkills(skillCtx);
-    return async (input) => executeInstallSkill(skillCtx, input);
+    return async () => executeRefreshSkills(skillCtx);
   }
   const linuxFn = linux[def.name];
   if (!linuxFn) throw new Error(`Missing Linux execute for ${def.name}`);

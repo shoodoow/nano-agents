@@ -12,7 +12,7 @@ export const DISPATCHER_TOOL_BUDGET_WEB_MS = 20_000;
 /** Parent read/glob/grep on known paths. */
 export const DISPATCHER_TOOL_BUDGET_LOCAL_MS = 8_000;
 
-/** Other dispatcher tools (DB, MCP, install_skill, …). */
+/** Other dispatcher tools (DB, MCP, list_skills, …). */
 export const DISPATCHER_TOOL_BUDGET_DEFAULT_MS = 15_000;
 
 export const MAX_MODEL_STEPS_DISPATCHER = 12;

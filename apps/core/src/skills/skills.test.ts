@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { readSkill, readSkillForAccount, skillCatalog, skillCatalogForAccount } from "./skills.js";
+import { mergeSkillCatalogs, parseSkillFrontmatter, readSkill, readSkillForAccount, skillCatalog, skillCatalogForAccount } from "./skills.js";
 
 const bodySentence = "Alpha body stays out of the catalog.";
 let root = "";
@@ -44,6 +44,40 @@ describe("skills", () => {
     expect(readSkillForAccount(root, accountA, "alpha")).toBe("Account body.");
     expect(skillCatalogForAccount(root, accountB).find((skill) => skill.name === "alpha")?.description).toBe("Alpha work.");
     expect(readSkillForAccount(root, accountB, "alpha")).toBe(bodySentence);
+  });
+
+  it("reads folded YAML descriptions instead of stopping at >", () => {
+    const parsed = parseSkillFrontmatter(`---
+name: hyperframes-studio
+description: >
+  Use when audio already placed needs mixing:
+  fade-in, crossfade, or ducking.
+  Don't use for sourcing audio.
+---
+
+Body stays here.
+`);
+    expect(parsed.name).toBe("hyperframes-studio");
+    expect(parsed.description).toBe(
+      "Use when audio already placed needs mixing: fade-in, crossfade, or ducking. Don't use for sourcing audio.",
+    );
+    expect(parsed.description).not.toBe(">");
+    expect(parsed.body).toBe("Body stays here.");
+  });
+
+  it("lets later catalog layers override the same skill name", () => {
+    expect(
+      mergeSkillCatalogs(
+        [
+          { name: "alpha", description: "Shared." },
+          { name: "zeta", description: "Shared zeta." },
+        ],
+        [{ name: "alpha", description: "Local." }],
+      ),
+    ).toEqual([
+      { name: "alpha", description: "Local." },
+      { name: "zeta", description: "Shared zeta." },
+    ]);
   });
 });
 
