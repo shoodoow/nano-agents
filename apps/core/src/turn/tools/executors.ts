@@ -151,7 +151,6 @@ export async function executeSendMessage(ctx: ToolContext, input: Record<string,
   });
   ctx.emittedMessages.push(saved);
   await ctx.emit({ type: "message", message: saved });
-  ctx.userReplySent = true;
   if (asksSecret || asksDesktopHandover) ctx.endTurn = true;
   return { messageId: saved.id, ...(asksSecret || asksDesktopHandover ? { endedTurn: true } : {}) };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { htmlToMarkdown, safeUrl } from "./web.js";
+import { botWallMessage, htmlToMarkdown, safeUrl } from "./web.js";
 
 /**
  * Locks web fetch guards and LLM-ready extraction: only public targets pass,
@@ -37,6 +37,12 @@ describe("web guards and extraction", () => {
     expect(parsed.markdown).toContain("[seo-audit](https://www.skills.sh/s/seo)");
     expect(parsed.markdown).not.toContain("evil()");
     expect(parsed.markdown).not.toContain("javascript:void");
+  });
+
+  it("detects CDN challenge pages", () => {
+    expect(botWallMessage("Just a moment...\nVerification successful.")).toMatch(/challenge/i);
+    expect(botWallMessage("# Attention Required! | Cloudflare\nWhy have I been blocked?")).toMatch(/spawn_worker/i);
+    expect(botWallMessage("# Claude pricing\n$3 per million input tokens")).toBeNull();
   });
 
   it("falls back to full-body Markdown when nothing scores as an article", () => {

@@ -29,7 +29,6 @@ export async function runAgentLoop(
     delegationDepth?: number;
     mode?: AgentMode;
     generate?: (input: TurnInput) => Promise<GenerateResult>;
-    personTurn?: boolean;
   },
 ): Promise<GenerateResult> {
   ensureTracePlugins();
@@ -61,7 +60,6 @@ export async function runAgentLoop(
     traceSession,
     linuxProfile: input.linuxProfile,
     voiceAgentId: input.agentId,
-    personTurn: input.personTurn ?? false,
   };
   const tools = await buildFullToolSet(mode, toolCtx);
   const { text, cacheReadTokens, usage } = await runModelHarness({

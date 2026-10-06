@@ -54,7 +54,8 @@ export function linuxToolExecutes(
     computer_type: async (input) => typeText(accountId, profile, String(input.text)),
     computer_key: async (input) => pressKeys(accountId, profile, String(input.key)),
     web_fetch: async (input) => {
-      const page = await webFetch(accountId, profile, String(input.url));
+      const parentPeek = opts?.fetchChars != null;
+      const page = await webFetch(accountId, profile, String(input.url), parentPeek ? { dispatcherPeek: true } : undefined);
       const byline = [page.siteName, page.byline].filter((part) => part.length > 0).join(" · ");
       const body = [
         `# ${page.title || "(no title)"}${byline ? `\n${byline}` : ""}`,
@@ -76,9 +77,17 @@ export function linuxToolExecutes(
         toolKeyFor(db, accountId, "exa").catch(() => null),
       ]);
       const searched = await webSearch(accountId, profile, query, { numResults, braveKey, exaKey });
-      if (searched.results.length === 0) return `No results (${searched.provider}). Try different words.`;
+      if (searched.results.length === 0) {
+        const via = searched.fallbackFrom ? `${searched.fallbackFrom} then ${searched.provider}` : searched.provider;
+        if (searched.error) return `Search failed (${via}): ${searched.error}`;
+        return `No results (${via}). Try different words or spawn_worker for deep research.`;
+      }
+      const via =
+        searched.fallbackFrom != null
+          ? `${searched.provider} (fallback after ${searched.fallbackFrom})`
+          : searched.provider;
       return [
-        `Search via ${searched.provider}:`,
+        `Search via ${via}:`,
         ...searched.results.map((row, index) => `${index + 1}. ${row.title}\n   ${row.url}\n   ${row.snippet}`),
       ].join("\n");
     },

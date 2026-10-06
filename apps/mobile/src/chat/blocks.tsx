@@ -205,6 +205,25 @@ function LazyBlobImage({
   );
 }
 
+/** Wide tables scroll horizontally inside bubbles (swipe-to-reply uses dx>0 only). */
+function HorizontalTableScroll({ children }: { children: ReactNode }) {
+  return (
+    <ScrollView
+      horizontal
+      nestedScrollEnabled
+      directionalLockEnabled
+      showsHorizontalScrollIndicator
+      keyboardShouldPersistTaps="handled"
+      style={styles.horizontalTableScroll}
+      contentContainerStyle={styles.horizontalTableContent}
+    >
+      {children}
+    </ScrollView>
+  );
+}
+
+const MD_TABLE_COL = { minWidth: 128, maxWidth: 240, flexShrink: 0 as const };
+
 /**
  * Renders markdown-lite: bold, inline code, and linkified URLs.
  * Why: agents write **bold** / `code` but the phone only did URLs, so markup showed raw.
@@ -219,11 +238,11 @@ function RichText({ text }: { text: string }) {
     <View style={styles.richStack}>
       {blocks.map((block, index) =>
         block.kind === "table" ? (
-          <ScrollView key={index} horizontal showsHorizontalScrollIndicator={false}>
+          <HorizontalTableScroll key={index}>
             <View>
               <View style={styles.mdTableHead}>
                 {block.columns.map((column, columnIndex) => (
-                  <Text key={columnIndex} style={styles.mdTableHeader}>
+                  <Text key={columnIndex} style={[styles.mdTableHeader, MD_TABLE_COL]}>
                     {renderInlineMarkdown(column, `h-${index}-${columnIndex}`)}
                   </Text>
                 ))}
@@ -231,14 +250,14 @@ function RichText({ text }: { text: string }) {
               {block.rows.map((row, rowIndex) => (
                 <View key={rowIndex} style={styles.mdTableRow}>
                   {block.columns.map((_, columnIndex) => (
-                    <Text key={columnIndex} style={styles.mdTableCell}>
+                    <Text key={columnIndex} style={[styles.mdTableCell, MD_TABLE_COL]}>
                       {renderInlineMarkdown(row[columnIndex] ?? "", `c-${index}-${rowIndex}-${columnIndex}`)}
                     </Text>
                   ))}
                 </View>
               ))}
             </View>
-          </ScrollView>
+          </HorizontalTableScroll>
         ) : (
           <Text key={index} style={styles.body}>
             {renderInlineMarkdown(block.text, `p-${index}`)}
@@ -751,26 +770,33 @@ function TableWidget({
     }
     return index === columns.length - 1 && columns.length > 1 ? "right" : "left";
   };
-  const flexFor = (index: number): number => (index === 0 ? 1.4 : 1);
+  const colStyle = (index: number) => [
+    styles.tableCol,
+    { textAlign: alignFor(index) as "left" | "center" | "right" },
+  ];
   return (
     <View style={styles.pollCard}>
       {title ? <Text style={styles.pollTitle}>{title}</Text> : null}
-      <View style={styles.tableHead}>
-        {columns.map((column, index) => (
-          <Text key={index} style={[styles.tableHeader, { flex: flexFor(index), textAlign: alignFor(index) }]} numberOfLines={1}>
-            {column}
-          </Text>
-        ))}
-      </View>
-      {rows.map((row, rowIndex) => (
-        <View key={rowIndex} style={styles.tableRow}>
-          {columns.map((column, colIndex) => (
-            <Text key={colIndex} style={[styles.tableCell, { flex: flexFor(colIndex), textAlign: alignFor(colIndex) }]} numberOfLines={1}>
-              {row[colIndex] ?? ""}
-            </Text>
+      <HorizontalTableScroll>
+        <View>
+          <View style={styles.tableHead}>
+            {columns.map((column, index) => (
+              <Text key={index} style={[styles.tableHeader, ...colStyle(index)]}>
+                {column}
+              </Text>
+            ))}
+          </View>
+          {rows.map((row, rowIndex) => (
+            <View key={rowIndex} style={styles.tableRow}>
+              {columns.map((_, colIndex) => (
+                <Text key={colIndex} style={[styles.tableCell, ...colStyle(colIndex)]}>
+                  {row[colIndex] ?? ""}
+                </Text>
+              ))}
+            </View>
           ))}
         </View>
-      ))}
+      </HorizontalTableScroll>
       {note ? <Text style={styles.tableNote}>{note}</Text> : null}
     </View>
   );
@@ -868,10 +894,12 @@ const styles = StyleSheet.create({
   body: { color: colors.text, fontSize: 16, lineHeight: 24 },
   mdBold: { fontWeight: "700", color: colors.text },
   richStack: { gap: 8 },
+  horizontalTableScroll: { marginHorizontal: -14, flexGrow: 0 },
+  horizontalTableContent: { paddingHorizontal: 14, flexGrow: 1 },
   mdTableHead: { flexDirection: "row", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
-  mdTableHeader: { width: 148, color: colors.text, fontSize: 13, fontWeight: "700", paddingVertical: 6, paddingRight: 10 },
+  mdTableHeader: { color: colors.text, fontSize: 13, fontWeight: "700", paddingVertical: 6, paddingRight: 12 },
   mdTableRow: { flexDirection: "row", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#2C2C2E" },
-  mdTableCell: { width: 148, color: colors.text, fontSize: 13, lineHeight: 18, paddingVertical: 6, paddingRight: 10 },
+  mdTableCell: { color: colors.text, fontSize: 13, lineHeight: 18, paddingVertical: 6, paddingRight: 12 },
   mdCode: {
     fontFamily: "monospace",
     fontSize: 14,
@@ -965,6 +993,7 @@ const styles = StyleSheet.create({
   tableHeader: { color: colors.text, fontSize: 14, fontWeight: "700" },
   tableRow: { flexDirection: "row", paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
   tableCell: { color: colors.text, fontSize: 14 },
+  tableCol: { minWidth: 128, maxWidth: 240, flexShrink: 0, paddingRight: 12 },
   tableNote: { color: colors.text, fontSize: 16, lineHeight: 24, marginTop: 8 },
   secretRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   secretStack: { gap: 8 },

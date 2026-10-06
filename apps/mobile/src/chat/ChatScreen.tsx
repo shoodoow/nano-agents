@@ -63,7 +63,7 @@ function SwipeableBubble({ onSwipe, children }: { onSwipe: () => void; children:
   const responder = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponder: (_event, gesture) =>
-        Math.abs(gesture.dx) > 18 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.6,
+        gesture.dx > 18 && gesture.dx > Math.abs(gesture.dy) * 1.6,
       onPanResponderMove: (_event, gesture) => {
         const value = Math.max(0, Math.min(72, gesture.dx));
         x.setValue(value);

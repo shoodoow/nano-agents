@@ -6,11 +6,14 @@ export const MAX_DELEGATION_DEPTH = 2;
 
 export const DELEGATION_HISTORY_SLICE = 10;
 
-/** Dispatcher sync delegate wall clock before forcing spawn_worker. */
-export const DELEGATE_SYNC_TIMEOUT_MS = 2_000;
+/** Parent quick peek at one public URL or search (output also capped by fetch chars). */
+export const DISPATCHER_TOOL_BUDGET_WEB_MS = 20_000;
 
-/** Dispatcher tool execute budget (registry middleware). */
-export const DISPATCHER_TOOL_BUDGET_MS = 2_000;
+/** Parent read/glob/grep on known paths. */
+export const DISPATCHER_TOOL_BUDGET_LOCAL_MS = 8_000;
+
+/** Other dispatcher tools (DB, MCP, install_skill, …). */
+export const DISPATCHER_TOOL_BUDGET_DEFAULT_MS = 15_000;
 
 export const MAX_MODEL_STEPS_DISPATCHER = 12;
 

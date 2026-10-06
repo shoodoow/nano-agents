@@ -203,15 +203,54 @@ function absolutizeLinks(document: Document, pageUrl: string): void {
  * Input: account id, profile (for user-scoped exec), raw url.
  * Output: title, capped text, truncation flag, outlinks, rendered flag.
  */
-export async function webFetch(accountId: string, profile: string, rawUrl: string): Promise<FetchedPage> {
+export type WebFetchOptions = {
+  /** Parent turn: static wget first, then one short headless pass if thin (~20s total budget). */
+  dispatcherPeek?: boolean;
+};
+
+const BOT_WALL_PATTERNS = [
+  /just a moment/i,
+  /attention required!\s*\|\s*cloudflare/i,
+  /why have i been blocked/i,
+  /checking your browser before accessing/i,
+  /performing security verification/i,
+  /cf-browser-verification/i,
+  /waiting for .+ to respond/i,
+];
+
+/** CDN / bot interstitials look like success but carry no page content. */
+export function botWallMessage(text: string): string | null {
+  const probe = text.slice(0, 12_000);
+  if (!BOT_WALL_PATTERNS.some((re) => re.test(probe))) return null;
+  return (
+    "Fetched a bot or CDN challenge page, not real content. " +
+    "Use spawn_worker with web_fetch (full render) or browser tools; try docs/API URLs instead of marketing homepages."
+  );
+}
+
+function headlessDumpDomCommand(quoted: string, wallSec: number, navTimeoutMs: number): string {
+  return (
+    `timeout ${wallSec} chromium --headless=new --no-sandbox --disable-dev-shm-usage --disable-gpu ` +
+    `--timeout=${navTimeoutMs} --dump-dom ${quoted} 2>/dev/null | head -c ${STATIC_MAX_BYTES}`
+  );
+}
+
+export async function webFetch(
+  accountId: string,
+  profile: string,
+  rawUrl: string,
+  opts?: WebFetchOptions,
+): Promise<FetchedPage> {
   const url = safeUrl(rawUrl);
   const quoted = `'${url.replaceAll("'", `'\\''`)}'`;
+  const peek = opts?.dispatcherPeek === true;
+  const wgetTimeoutSec = peek ? 8 : 20;
   const staticResult = await exec(
     accountId,
     [
       "sh",
       "-c",
-      `wget -qO- --timeout=20 --tries=1 --max-redirect=5 -U 'nano-agents/1' --header='Accept: text/html' ${quoted} 2>/dev/null | head -c ${STATIC_MAX_BYTES}`,
+      `wget -qO- --timeout=${wgetTimeoutSec} --tries=1 --max-redirect=5 -U 'nano-agents/1' --header='Accept: text/html' ${quoted} 2>/dev/null | head -c ${STATIC_MAX_BYTES}`,
     ],
     profile,
   );
@@ -223,11 +262,7 @@ export async function webFetch(accountId: string, profile: string, rawUrl: strin
     // Proven against skills.sh: rows appear only with a genuine wait.
     const dom = await exec(
       accountId,
-      [
-        "sh",
-        "-c",
-        `timeout 60 chromium --headless=new --no-sandbox --disable-dev-shm-usage --disable-gpu --timeout=30000 --dump-dom ${quoted} 2>/dev/null | head -c ${STATIC_MAX_BYTES}`,
-      ],
+      ["sh", "-c", headlessDumpDomCommand(quoted, peek ? 12 : 60, peek ? 10_000 : 30_000)],
       profile,
     );
     if (dom.stdout.trim().length > html.trim().length) {
@@ -236,9 +271,15 @@ export async function webFetch(accountId: string, profile: string, rawUrl: strin
     }
   }
   if (html.trim().length === 0) {
-    throw new Error("The page came back empty. It may block bots, need a login, or be unreachable from the computer.");
+    throw new Error(
+      peek
+        ? "No readable text from a quick parent fetch (JS-heavy site, bot block, or login). spawn_worker with web_fetch for a full render."
+        : "The page came back empty. It may block bots, need a login, or be unreachable from the computer.",
+    );
   }
   const parsed = htmlToMarkdown(html, url);
+  const wall = botWallMessage(`${parsed.title}\n${parsed.markdown}`);
+  if (wall) throw new Error(wall);
   const truncated = parsed.markdown.length > TEXT_MAX_CHARS;
   return {
     url,

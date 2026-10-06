@@ -48,6 +48,49 @@ function getJson(path, cdpPort) {
   });
 }
 
+function putJson(path, cdpPort) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ hostname: CDP_HOST, port: cdpPort, path, method: "PUT" }, (res) => {
+      const chunks = [];
+      res.on("data", (chunk) => chunks.push(chunk));
+      res.on("end", () => {
+        try {
+          const text = Buffer.concat(chunks).toString("utf8");
+          resolve(text ? JSON.parse(text) : {});
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+async function activateTarget(cdpPort, targetId) {
+  if (!targetId) return;
+  try {
+    await getJson(`/json/activate/${targetId}`, cdpPort);
+  } catch {
+    // Best-effort: navigation still succeeded on the CDP browser.
+  }
+}
+
+/** Prefer the newest real tab; optional URL hint after navigate. */
+function pickPage(pages, preferUrl) {
+  const candidates = pages.filter((row) => row.type === "page" && row.webSocketDebuggerUrl);
+  if (candidates.length === 0) return null;
+  if (preferUrl) {
+    const hint = String(preferUrl);
+    const exact = candidates.find((row) => row.url === hint);
+    if (exact) return exact;
+    const prefix = candidates.find((row) => row.url.startsWith(hint.split("?")[0]));
+    if (prefix) return prefix;
+  }
+  const real = candidates.filter((row) => !row.url.startsWith("about:") && !row.url.startsWith("chrome://"));
+  return (real.length > 0 ? real[real.length - 1] : candidates[candidates.length - 1]) ?? candidates[0];
+}
+
 function connectCdp(wsUrl) {
   const url = new URL(wsUrl);
   return new Promise((resolve, reject) => {
@@ -148,16 +191,38 @@ function connectCdp(wsUrl) {
   });
 }
 
-async function pageSocket(cdpPort) {
+async function pageSocket(cdpPort, preferUrl) {
   const pages = await getJson("/json/list", cdpPort);
-  const page = pages.find((row) => row.type === "page" && row.webSocketDebuggerUrl) ?? pages[0];
+  const page = pickPage(pages, preferUrl);
   if (!page?.webSocketDebuggerUrl) {
     throw new Error(
       `No Chrome page. Start Chromium on your DISPLAY with --remote-debugging-address=127.0.0.1 --remote-debugging-port=${cdpPort}.`,
     );
   }
+  await activateTarget(cdpPort, page.id);
   const local = page.webSocketDebuggerUrl.replace(/^ws:\/\/[^/]+/, `ws://${CDP_HOST}:${cdpPort}`);
   return connectCdp(local);
+}
+
+async function navigateVisible(cdpPort, url) {
+  const target = String(url);
+  let opened = null;
+  try {
+    opened = await putJson(`/json/new?${encodeURIComponent(target)}`, cdpPort);
+  } catch {
+    opened = null;
+  }
+  if (opened?.id) {
+    await activateTarget(cdpPort, opened.id);
+    return { frameId: opened.id, url: opened.url ?? target, openedNewTab: true };
+  }
+  const cdp = await pageSocket(cdpPort);
+  await cdp.send("Runtime.enable");
+  await cdp.send("Page.enable");
+  const result = await cdp.send("Page.navigate", { url: target });
+  await cdp.send("Page.bringToFront").catch(() => {});
+  cdp.close();
+  return { ...result, openedNewTab: false };
 }
 
 const SNAPSHOT = `(() => {
@@ -186,13 +251,16 @@ async function main() {
     process.stdout.write(JSON.stringify(pages.map((page) => ({ id: page.id, title: page.title, url: page.url, type: page.type }))));
     return;
   }
-  const cdp = await pageSocket(cdpPort);
+  if (tool === "browser_navigate") {
+    const result = await navigateVisible(cdpPort, String(args.url));
+    process.stdout.write(JSON.stringify(result));
+    return;
+  }
+  const preferUrl = typeof args.url === "string" ? args.url : undefined;
+  const cdp = await pageSocket(cdpPort, preferUrl);
   await cdp.send("Runtime.enable");
   await cdp.send("Page.enable");
-  if (tool === "browser_navigate") {
-    const result = await cdp.send("Page.navigate", { url: String(args.url) });
-    process.stdout.write(JSON.stringify(result));
-  } else if (tool === "browser_snapshot") {
+  if (tool === "browser_snapshot") {
     const result = await cdp.send("Runtime.evaluate", { expression: SNAPSHOT, returnByValue: true });
     process.stdout.write(String(result.result?.value ?? ""));
   } else if (tool === "browser_click" || tool === "browser_fill") {
