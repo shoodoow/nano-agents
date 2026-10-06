@@ -8,6 +8,7 @@ import {
   delegateSchema,
   groupConversationInputSchema,
   groupCreateInputSchema,
+  memberAddInputSchema,
   notifyInputSchema,
   reactionSchema,
   rememberFactToolInputSchema,
@@ -380,20 +381,42 @@ export async function executeDelegate(
     generate?: ToolContext["generate"];
   }) => Promise<Array<{ body: string }>>,
 ): Promise<unknown> {
-  const parsed = delegateSchema.parse({ agentId: input.agentId, task: input.task });
+  const parsed = delegateSchema.parse({
+    agentId: input.agentId,
+    task: input.task,
+    conversationId: input.conversationId,
+  });
   if ((ctx.delegationDepth ?? 0) >= MAX_DELEGATION_DEPTH) {
     throw new Error("Delegation is already two levels deep — do this part yourself.");
   }
+  const target = await resolveGroupTarget(ctx, parsed.conversationId, "delegate");
+  if ("error" in target) return target;
+  const [inGroup] = await ctx.store
+    .select({ agentId: members.agentId })
+    .from(members)
+    .where(
+      and(
+        eq(members.conversationId, target.conversationId),
+        eq(members.accountId, ctx.accountId),
+        eq(members.agentId, parsed.agentId),
+      ),
+    );
+  if (!inGroup) {
+    return {
+      error:
+        "That teammate is not in this group. hire_subagent with this conversationId already adds a new teammate — do not call add_to_group after hire. add_to_group is only for someone already on the team who is missing from the group, and from a private chat it also needs conversationId.",
+    };
+  }
   const row = await recordDelegation(ctx.store, {
     accountId: ctx.accountId,
-    conversationId: ctx.conversationId,
+    conversationId: target.conversationId,
     parentAgentId: ctx.agentId,
     agentId: parsed.agentId,
     task: parsed.task,
   });
   void runDelegatedTurn({
     accountId: ctx.accountId,
-    conversationId: ctx.conversationId,
+    conversationId: target.conversationId,
     runId: ctx.runId,
     parentAgentId: ctx.agentId,
     childAgentId: parsed.agentId,
@@ -420,7 +443,69 @@ export async function executeDelegate(
         .where(eq(delegations.id, row.id))
         .catch(() => {});
     });
-  return { delegationId: row.id, status: "started" };
+  return { delegationId: row.id, status: "started", conversationId: target.conversationId };
+}
+
+/**
+ * Picks the group a team tool should touch.
+ * Why: a private-chat turn has no crew in the room. hire_subagent already
+ * joined the group; delegate and add_to_group must be told that same id
+ * or they keep failing against the 1:1.
+ */
+async function resolveGroupTarget(
+  ctx: ToolContext,
+  conversationId: string | undefined,
+  tool: "delegate" | "add_to_group",
+): Promise<{ conversationId: string } | { error: string }> {
+  const targetId = conversationId ?? ctx.conversationId;
+  const [room] = await ctx.store
+    .select({ kind: conversations.kind })
+    .from(conversations)
+    .where(and(eq(conversations.id, targetId), eq(conversations.accountId, ctx.accountId)));
+  if (!conversationId && room?.kind === "direct") {
+    return {
+      error:
+        tool === "delegate"
+          ? "You are in a private chat. Pass conversationId — the group id from create_group that you passed to hire_subagent. The teammate speaks in that group, and their messages also show up in this private chat. Do not call add_to_group after hire; hire already added them."
+          : "You are in a private chat, so this call has no group. hire_subagent with conversationId already puts a new teammate in the group — do not add them again. To add someone who already exists, pass conversationId from create_group.",
+    };
+  }
+  if (!room || room.kind !== "group") {
+    return { error: "conversationId must be a group id from create_group on this account." };
+  }
+  const [membership] = await ctx.store
+    .select({ agentId: members.agentId })
+    .from(members)
+    .where(
+      and(eq(members.conversationId, targetId), eq(members.accountId, ctx.accountId), eq(members.agentId, ctx.agentId)),
+    );
+  if (!membership) return { error: "You must be a member of that group." };
+  return { conversationId: targetId };
+}
+
+export async function executeAddToGroup(ctx: ToolContext, input: Record<string, unknown>) {
+  let parsed: ReturnType<typeof memberAddInputSchema.parse>;
+  try {
+    parsed = memberAddInputSchema.parse(input);
+  } catch (error) {
+    if (error instanceof ZodError) {
+      return { error: "Invalid add_to_group input. Required: agentId (UUID). From a private chat also pass conversationId." };
+    }
+    throw error;
+  }
+  const target = await resolveGroupTarget(ctx, parsed.conversationId, "add_to_group");
+  if ("error" in target) return target;
+  try {
+    const row = await addGroupMember(ctx.store, {
+      accountId: ctx.accountId,
+      conversationId: target.conversationId,
+      agentId: parsed.agentId,
+    });
+    return { agentId: row.agentId, conversationId: target.conversationId };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "add_to_group failed.";
+    return { error: message };
+  }
 }
 
 /** Max spawns per turn: validation failures count, so the model can't retry-burn. */
@@ -631,8 +716,7 @@ export const dispatcherExecutors: Record<string, ToolExecutor> = {
   hire_subagent: executeHireSubagent,
   update_teammate: executeUpdateTeammate,
   list_team: (ctx) => listTeam(ctx.store, ctx.accountId, ctx.agentId),
-  add_to_group: (ctx, input) =>
-    addGroupMember(ctx.store, { accountId: ctx.accountId, conversationId: ctx.conversationId, agentId: String(input.agentId) }),
+  add_to_group: executeAddToGroup,
   todo_write: (ctx, input) =>
     todoWrite(
       ctx.store,

@@ -11,7 +11,13 @@ export { sendMessageInputSchema };
 export const emptyToolInputSchema = z.object({});
 
 export const memberAddInputSchema = z.object({
-  agentId: z.string().uuid(),
+  agentId: z.string().uuid().describe("Existing teammate UUID from list_team. Not someone you just hired — hire_subagent already adds them."),
+  /** Required from a private 1:1. Group id from create_group. */
+  conversationId: z
+    .string()
+    .uuid()
+    .optional()
+    .describe("Group to add them to. Required when you are in a private 1:1. Omit when you are already in that group."),
 });
 
 /** @deprecated import name — same as memberAddInputSchema */
@@ -90,8 +96,16 @@ export const teammateUpdateSchema = z.object({
 export type TeammateUpdate = z.infer<typeof teammateUpdateSchema>;
 
 export const delegateSchema = z.object({
-  agentId: z.string().uuid(),
+  agentId: z.string().uuid().describe("Teammate UUID from hire_subagent or list_team."),
   task: z.string().trim().min(1).max(20_000),
+  /** Required when delegating from a private 1:1 — same id passed to hire_subagent. */
+  conversationId: z
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      "Group the teammate should speak in. Required from a private 1:1 — use the conversationId from create_group / hire_subagent. Omit when you are already in that group.",
+    ),
 });
 
 export type DelegateInput = z.infer<typeof delegateSchema>;

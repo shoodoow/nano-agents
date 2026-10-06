@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { getDb } from "../db/client.js";
-import { conversations, members } from "../db/schema.js";
+import { and, eq } from "drizzle-orm";
+import { conversations, members, messages } from "../db/schema.js";
 import { createAccount, createAgent } from "../roster/roster.js";
 import { blocksToText, saveReaction, saveSendMessage, isSafeImageUrl } from "./send-message.js";
 
@@ -96,5 +97,63 @@ describe("send_message protocol", () => {
         }),
       ),
     ).rejects.toThrow();
+  });
+
+  it("copies a teammate's group message into the owner's private chat", async () => {
+    const account = await createAccount(db, { name: "Mirror" });
+    const owner = await createAgent(db, account.id, {
+      name: "Sara",
+      label: "Sara",
+      role: "Assistant",
+      jobDescription: "Leads the crew.",
+      provider: "openai",
+      modelId: "gpt-5",
+    });
+    const maya = await createAgent(db, account.id, {
+      name: "Maya",
+      label: "Maya",
+      role: "Researcher",
+      jobDescription: "Finds a comparable project.",
+      provider: "openai",
+      modelId: "gpt-5",
+    });
+    const [dm] = await db
+      .insert(conversations)
+      .values({ accountId: account.id, kind: "direct", ownerAgentId: owner.id, title: "Sara" })
+      .returning();
+    const [group] = await db
+      .insert(conversations)
+      .values({ accountId: account.id, kind: "group", ownerAgentId: owner.id, title: "Launch crew" })
+      .returning();
+    await db.insert(members).values([
+      { conversationId: dm!.id, accountId: account.id, agentId: owner.id },
+      { conversationId: group!.id, accountId: account.id, agentId: owner.id },
+      { conversationId: group!.id, accountId: account.id, agentId: maya.id },
+    ]);
+
+    await saveSendMessage(db, {
+      accountId: account.id,
+      conversationId: group!.id,
+      agentId: maya.id,
+      viaAgentId: owner.id,
+      blocks: [{ kind: "text", markdown: "Closest fit is OpenHands." }],
+      createdAt: new Date(),
+    });
+    await saveSendMessage(db, {
+      accountId: account.id,
+      conversationId: group!.id,
+      agentId: owner.id,
+      blocks: [{ kind: "text", markdown: "Thanks, I'll take it from here." }],
+      createdAt: new Date(),
+    });
+
+    const copies = await db
+      .select()
+      .from(messages)
+      .where(and(eq(messages.conversationId, dm!.id), eq(messages.accountId, account.id)));
+    expect(copies).toHaveLength(1);
+    expect(copies[0]?.agentId).toBe(maya.id);
+    expect(copies[0]?.viaAgentId).toBeNull();
+    expect(copies[0]?.body).toContain("OpenHands");
   });
 });

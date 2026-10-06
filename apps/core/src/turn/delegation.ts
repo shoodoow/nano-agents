@@ -7,7 +7,7 @@ import type { getDb } from "../db/client.js";
 import { agents, conversations, members, messages } from "../db/schema.js";
 import { buildContext, identityBlock } from "../memory/context.js";
 import { createProfile } from "../linux/linux.js";
-import type { TurnEvent } from "../rooms/send-message.js";
+import { mirrorGroupSpeechToOwnerDm, type TurnEvent } from "../rooms/send-message.js";
 import { DELEGATION_HISTORY_SLICE } from "./constants.js";
 import { runAgentLoop } from "./agent-loop.js";
 import type { GenerateResult, TurnInput } from "./types.js";
@@ -79,6 +79,7 @@ export async function runDelegatedTurn(
       })
       .returning();
     if (!wrapped) throw new Error("Delegated reply insert returned no row.");
+    await mirrorGroupSpeechToOwnerDm(db, wrapped);
     input.emittedMessages.push(wrapped);
     await input.emit({ type: "message", message: wrapped });
     return [wrapped];

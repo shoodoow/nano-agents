@@ -62,7 +62,7 @@ export const allToolDefinitions: ToolDefinition[] = [
   {
     name: "add_to_group",
     description:
-      "Add an existing account agent to this group room. Use when the team grows after creation. Never works on a private 1:1.",
+      "Add an existing teammate to a group. Do not call this after hire_subagent — hire already adds them. From a private 1:1, pass conversationId from create_group. Never adds anyone to a private chat.",
     surfaces: ["dispatcher"],
     inputSchema: memberAddInputSchema,
   },
@@ -83,7 +83,7 @@ export const allToolDefinitions: ToolDefinition[] = [
   {
     name: "delegate",
     description:
-      "Ask a lasting teammate already in this group to act or reply. Their turn starts in the background and their own messages appear visibly in this room. Use agent UUIDs from list_team; text @mentions alone do not wake teammates. For hidden parent-only execution use spawn_worker.",
+      "Ask a lasting teammate to speak in a group. From a private 1:1, pass conversationId (the group id from create_group that you also passed to hire_subagent). Their turn runs in that group under their own name, and those messages are copied into this private chat. Do not call add_to_group first — hire already put them in the group. Text @mentions do not wake anyone. For hidden parent-only execution use spawn_worker.",
     surfaces: ["dispatcher"],
     inputSchema: delegateSchema,
   },
@@ -111,7 +111,7 @@ export const allToolDefinitions: ToolDefinition[] = [
   {
     name: "hire_subagent",
     description:
-      "Create a lasting teammate (max 10 visible teammates; hidden workers do not count). label is a human first name you invent, never the job. role is the job title. Also pass personality and jobDescription. For one task, use spawn_worker. In a private 1:1 chat: call create_group first, then hire_subagent again with conversationId set to the group id create_group returned. In a group room, omit conversationId.",
+      "Create a lasting teammate and add them to a group (max 10 visible teammates; hidden workers do not count). label is a human first name you invent, never the job. role is the job title. Also pass personality and jobDescription. For one task, use spawn_worker. In a private 1:1: create_group first, then hire_subagent with conversationId set to that group id. That hire is the add — do not call add_to_group afterward. Next, delegate with the same conversationId. In a group room, omit conversationId.",
     surfaces: ["dispatcher"],
     inputSchema: subagentCreateSchema,
   },
@@ -138,7 +138,8 @@ export const allToolDefinitions: ToolDefinition[] = [
   },
   {
     name: "list_team",
-    description: "List your team agents (id, name, label, role). Use before delegate so you pick someone already in the room.",
+    description:
+      "List your team agents (id, name, label, role). Ids are for delegate and add_to_group. Being on this list does not mean they are in the private chat — they speak in the group you hired them into.",
     surfaces: ["dispatcher"],
     inputSchema: emptyToolInputSchema,
   },

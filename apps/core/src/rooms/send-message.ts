@@ -1,8 +1,10 @@
 import { type MessageBlock } from "@nano-agents/shared";
 import { reactionSchema, sendMessageInputSchema } from "@nano-agents/agent-tools";
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import type { Store } from "../db/client.js";
-import { messages, notifications, reactions, runs } from "../db/schema.js";
+import { conversations, messages, notifications, reactions, runs } from "../db/schema.js";
+import { appendEvent } from "./events.js";
+import { publish } from "./stream.js";
 
 // Single voice/event vocabulary for turns (Phase 11-14). Why: one union used
 // by tool executes, the run loop, SSE fanout, and the durable event log —
@@ -114,7 +116,74 @@ export async function saveSendMessage(
     })
     .returning();
   if (!saved) throw new Error("send_message insert returned no row.");
+  await mirrorGroupSpeechToOwnerDm(store, saved);
   return saved;
+}
+
+/**
+ * Copies a teammate's group bubble into the group owner's private chat.
+ * Why: the person talks to the lead in a 1:1, while the crew speaks in the
+ * group. The copy shows there under the teammate's own name (no "via").
+ * The owner's own group bubbles are not copied — those already live in the 1:1
+ * when the lead is the one chatting with the person.
+ * Input: store and the group message row. Output: nothing. Failures are swallowed
+ * so a missing private chat never drops the group message.
+ */
+export async function mirrorGroupSpeechToOwnerDm(
+  store: Store,
+  message: typeof messages.$inferSelect,
+): Promise<void> {
+  try {
+    if (!message.agentId) return;
+    const [room] = await store
+      .select({ kind: conversations.kind, ownerAgentId: conversations.ownerAgentId })
+      .from(conversations)
+      .where(and(eq(conversations.id, message.conversationId), eq(conversations.accountId, message.accountId)));
+    if (!room || room.kind !== "group" || message.agentId === room.ownerAgentId) return;
+    const [dm] = await store
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(
+        and(
+          eq(conversations.accountId, message.accountId),
+          eq(conversations.kind, "direct"),
+          eq(conversations.ownerAgentId, room.ownerAgentId),
+        ),
+      )
+      .orderBy(asc(conversations.createdAt))
+      .limit(1);
+    if (!dm) return;
+    const [copy] = await store
+      .insert(messages)
+      .values({
+        accountId: message.accountId,
+        conversationId: dm.id,
+        agentId: message.agentId,
+        runId: message.runId,
+        viaAgentId: null,
+        body: message.body,
+        kind: message.kind,
+        payload: message.payload,
+        replyTo: null,
+        createdAt: message.createdAt,
+      })
+      .returning();
+    if (!copy) return;
+    const event = { type: "message" as const, message: copy };
+    try {
+      const row = await appendEvent(store, {
+        accountId: message.accountId,
+        conversationId: dm.id,
+        runId: message.runId,
+        event,
+      });
+      publish(message.accountId, dm.id, { ...event, cursor: row.id });
+    } catch {
+      publish(message.accountId, dm.id, event);
+    }
+  } catch {
+    // The group bubble already committed; a mirror miss must not fail the send.
+  }
 }
 
 /**
