@@ -19,6 +19,7 @@ import { CircleButton } from "../ui/CircleButton";
 import { Feather } from "@expo/vector-icons";
 import { IconBack, IconCheck, IconChevron, IconClock, IconDoc, IconMore, IconShare } from "../ui/icons";
 import type { MarkMaterial, MarkShape } from "@nano-agents/shared";
+import { warmMarkThumbs } from "../ui/DotStage";
 import {
   LivingMark,
   MARK_COLORS,
@@ -247,6 +248,16 @@ function InfoPage({
   onFetchBlob?: (conversationId: string, messageId: string, index: number) => Promise<{ url?: string; previewUrl?: string }>;
 }) {
   const [characterTab, setCharacterTab] = useState<CharacterTab>("shape");
+  useEffect(() => {
+    warmMarkThumbs([mark], { prioritize: true });
+  }, [mark.shape, mark.color, mark.material, mark.style, mark.gender]);
+  useEffect(() => {
+    if (characterTab !== "shape" || profile.avatarUrl) return;
+    warmMarkThumbs(
+      MARK_SHAPES.map((entry) => ({ ...mark, shape: entry.id })),
+      { prioritize: false },
+    );
+  }, [characterTab, mark.color, mark.material, mark.style, mark.gender, profile.avatarUrl]);
   const configured = providers.filter((row) => row.configured);
   const providerChoices: ProviderSetting["provider"][] = [
     ...new Set([...configured.map((row) => row.provider), ...(profile.provider ? [profile.provider] : [])]),

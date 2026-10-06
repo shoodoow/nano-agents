@@ -89,7 +89,6 @@ export function GroupInfoScreen({
                     style={member.markStyle}
                     gender={member.markGender}
                     photo={member.avatarUrl}
-                    alive={false}
                   />
                   <Text style={styles.memberName} numberOfLines={1}>{member.label || member.name}</Text>
                   <IconChevron />

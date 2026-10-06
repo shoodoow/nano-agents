@@ -39,9 +39,11 @@ import { ApprovalsScreen } from "./src/approvals/ApprovalsScreen";
 import { BotInfoScreen } from "./src/chat/BotInfoScreen";
 import { GroupInfoScreen } from "./src/chat/GroupInfoScreen";
 import { ChatScreen, type Bubble } from "./src/chat/ChatScreen";
+import type { RoomActivityPhase } from "./src/chat/room-activity";
 import { DesktopScreen } from "./src/desktop/DesktopScreen";
 import { InboxScreen } from "./src/inbox/InboxScreen";
-import { DotBakery } from "./src/ui/DotStage";
+import { DotBakery, hydrateMarkThumbCache, warmMarkThumbs } from "./src/ui/DotStage";
+import { resolveMarkLook } from "./src/ui/Mark";
 import { NewRoomSheet } from "./src/inbox/NewRoomSheet";
 import { documentPickerOptions } from "./src/media/documentPickerOptions";
 import { cameraPickerOptions, imageLibraryPickerOptions } from "./src/media/imagePickerOptions";
@@ -160,7 +162,7 @@ export default function App() {
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<Bubble[]>([]);
   const [sending, setSending] = useState(false);
-  const [typing, setTyping] = useState(false);
+  const [roomActivity, setRoomActivity] = useState<RoomActivityPhase | null>(null);
   // Why: the open chat must keep merging server rows after send() returns.
   // A one-shot watcher stopped before a late reply, so it only appeared on reopen.
   const messagesRef = useRef(messages);
@@ -168,6 +170,9 @@ export default function App() {
   const agentsRef = useRef(agents);
   agentsRef.current = agents;
   const expectReply = useRef(false);
+  const turnActiveRef = useRef(false);
+  const turnIsGroupRef = useRef(false);
+  const turnAgentNameRef = useRef("");
   const [replyTo, setReplyTo] = useState<Bubble | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [note, setNote] = useState("");
@@ -295,8 +300,16 @@ export default function App() {
   }
 
   useEffect(() => {
+    hydrateMarkThumbCache();
     void refreshSession().catch(show);
   }, [show]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      warmMarkThumbs(agents.map((row) => resolveMarkLook(row)), { prioritize: true });
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [agents]);
 
   useEffect(() => {
     return installOAuthReturnHandler(() => {
@@ -422,6 +435,35 @@ export default function App() {
    * Server rows win on id conflicts; local-only rows (pending, fresh agent
    * bubbles) are kept. Input: fresh server bubbles. Output: nothing.
    */
+  function beginTurn(isGroup: boolean, agentName: string): void {
+    turnActiveRef.current = true;
+    turnIsGroupRef.current = isGroup;
+    turnAgentNameRef.current = agentName;
+    setRoomActivity("thinking");
+  }
+
+  function endTurn(conversationId?: string, opts?: { refreshContext?: boolean }): void {
+    if (!turnActiveRef.current) return;
+    turnActiveRef.current = false;
+    setRoomActivity(null);
+    if (opts?.refreshContext && expectReply.current && conversationId) {
+      expectReply.current = false;
+      void loadContextLine(conversationId);
+    }
+  }
+
+  function noteAgentReply(): void {
+    if (!turnActiveRef.current) return;
+    setRoomActivity(turnIsGroupRef.current ? "teammates" : "working");
+  }
+
+  function turnMetaFromScreen(): { isGroup: boolean; agentName: string } {
+    if (screen.name !== "chat") {
+      return { isGroup: false, agentName: "Agent" };
+    }
+    return { isGroup: screen.kind === "group", agentName: screen.agent.name };
+  }
+
   function mergeThread(fresh: Bubble[]): void {
     setMessages((current) => {
       const byId = new Map(fresh.map((bubble) => [bubble.id, bubble]));
@@ -465,42 +507,55 @@ export default function App() {
         ]);
         if (stopped) return;
         const fresh = toBubbles(history, taps, agentsRef.current);
-        if (expectReply.current && fresh.some((bubble) => !bubble.mine && !known.has(bubble.id))) {
-          expectReply.current = false;
-          setTyping(false);
-          // Turn landed: usage changed, refresh the header line once.
-          void loadContextLine(liveRoomId);
+        for (const bubble of fresh) {
+          if (turnActiveRef.current && !bubble.mine && !known.has(bubble.id)) {
+            noteAgentReply();
+          }
+          known.add(bubble.id);
         }
-        for (const bubble of fresh) known.add(bubble.id);
         mergeThread(fresh);
+        if (turnActiveRef.current) {
+          try {
+            const info = await core.chatContext(account, liveRoomId);
+            const latest = info.usage.lastRuns[0];
+            if (!latest || latest.status !== "running") {
+              endTurn(liveRoomId, { refreshContext: true });
+            }
+          } catch {
+            // Best-effort when the stream is unavailable.
+          }
+        }
       } catch {
         // A missed tick retries. The thread on screen stays as it is.
       }
     };
     void pull();
     const timer = setInterval(() => void pull(), 2000);
-    // Web can also hear the live stream. Native fetch has no streaming body,
-    // so the interval above is what paints a reply there. Do not close this
-    // on the first bubble — a second message must still land in order.
-    const unsubscribe =
-      Platform.OS === "web"
-        ? core.subscribeMessages(account, liveRoomId, (event) => {
-            if (event.message || event.reaction || event.type === "done" || event.type === "run" || event.type === "error") {
-              void pull();
-            }
-            if (event.type === "error") {
-              expectReply.current = false;
-              setTyping(false);
-              show(new Error(event.error ?? "The turn failed."));
-            } else if (event.type === "notify" && event.notification) {
-              void core
-                .listNotifications(account)
-                .then((pending) => setPendingCount(pending.length))
-                .catch(() => {});
-              setNote(`${event.notification.title}: ${event.notification.body}`.slice(0, 160));
-            }
-          })
-        : () => {};
+    const unsubscribe = core.subscribeMessages(account, liveRoomId, (event) => {
+      if (event.message || event.reaction || event.type === "done" || event.type === "run" || event.type === "error") {
+        void pull();
+      }
+      if (event.type === "message" && event.message?.agentId && turnActiveRef.current) {
+        noteAgentReply();
+      }
+      if (event.type === "run" && event.run?.status && event.run.status !== "running") {
+        endTurn(liveRoomId, { refreshContext: true });
+      }
+      if (event.type === "done") {
+        endTurn(liveRoomId, { refreshContext: true });
+      }
+      if (event.type === "error") {
+        expectReply.current = false;
+        endTurn();
+        show(new Error(event.error ?? "The turn failed."));
+      } else if (event.type === "notify" && event.notification) {
+        void core
+          .listNotifications(account)
+          .then((pending) => setPendingCount(pending.length))
+          .catch(() => {});
+        setNote(`${event.notification.title}: ${event.notification.body}`.slice(0, 160));
+      }
+    });
     return () => {
       stopped = true;
       clearInterval(timer);
@@ -639,7 +694,7 @@ export default function App() {
    * Why: POST now returns the saved user row synchronously, so the optimistic
    * bubble is swapped for the confirmed id instead of being wiped by the
    * safety refresh — a sent message can never vanish. Agent bubbles stream in
-   * live via SSE; done/error ends typing with a final reconciling refresh.
+   * live via SSE; done/run/error ends the activity bar with a reconciling refresh.
    * Input: the open chat. Reads draft, attachments, reply target. Output: nothing.
    */
   async function send(conversationId: string): Promise<void> {
@@ -675,7 +730,7 @@ export default function App() {
       reactions: [],
     };
     setSending(true);
-    setTyping(true);
+    beginTurn(turnMetaFromScreen().isGroup, turnMetaFromScreen().agentName);
     setDraft("");
     setAttachments([]);
     const target = replyTo;
@@ -698,7 +753,7 @@ export default function App() {
     } catch (error) {
       setMessages((current) => current.filter((bubble) => bubble.id !== pendingId));
       setDraft(body);
-      setTyping(false);
+      endTurn(conversationId);
       setSending(false);
       throw error;
     }
@@ -733,7 +788,7 @@ export default function App() {
       reactions: [],
     };
     setSending(true);
-    setTyping(true);
+    beginTurn(turnMetaFromScreen().isGroup, turnMetaFromScreen().agentName);
     setNote("");
     setMessages((current) => [...current, pending]);
     let confirmedId = pendingId;
@@ -748,7 +803,7 @@ export default function App() {
       }
     } catch (error) {
       setMessages((current) => current.filter((bubble) => bubble.id !== pendingId));
-      setTyping(false);
+      endTurn(conversationId);
       setSending(false);
       throw error;
     }
@@ -767,7 +822,7 @@ export default function App() {
       await core.saveSecret(accountId.trim(), { name, secret });
       setNote("Secret saved.");
       if (conversationId) {
-        setTyping(true);
+        beginTurn(turnMetaFromScreen().isGroup, turnMetaFromScreen().agentName);
         expectReply.current = true;
         await core.wakeCue(accountId.trim(), conversationId, {
           cue: `Person saved secret ${name} to the vault. Continue using that env name — never ask them to paste it again.`,
@@ -789,7 +844,7 @@ export default function App() {
     messageId: string,
     pick: { value: string; label: string },
   ): Promise<void> {
-    setTyping(true);
+    beginTurn(turnMetaFromScreen().isGroup, turnMetaFromScreen().agentName);
     expectReply.current = true;
     setNote("");
     setMessages((current) =>
@@ -1250,7 +1305,8 @@ export default function App() {
           messages={messages}
           draft={draft}
           sending={sending}
-          typing={typing}
+          roomActivity={roomActivity}
+          isGroup={screen.kind === "group"}
           error={note}
           replyTo={replyTo}
           attachments={attachments}

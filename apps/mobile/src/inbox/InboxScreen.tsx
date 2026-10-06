@@ -4,7 +4,6 @@ import { FlatList, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, Tex
 import type { RosterAgent } from "../api";
 import { colors } from "../theme/tokens";
 import { Avatar } from "../ui/Avatar";
-import { Mark, resolveMarkLook } from "../ui/Mark";
 import { GroupCluster, type GroupFace } from "../ui/GroupCluster";
 import { CircleButton } from "../ui/CircleButton";
 import { pressableStyle } from "../ui/pressableStyles";
@@ -215,7 +214,6 @@ export function InboxScreen({
                   style={held.markStyle}
                   gender={held.markGender}
                   photo={held.avatarUrl}
-                  alive={false}
                 />
                 <Text style={styles.holdName} numberOfLines={1}>{held.name}</Text>
               </View>
@@ -255,41 +253,19 @@ export function InboxScreen({
 }
 
 const PIN_BOX = 76;
-const PIN_SPAN: Record<string, number> = {
-  round: 1,
-  triangle: 0.96,
-  pill: 1.3,
-  ears: 1.1,
-  cloud: 1.2,
-  heart: 1,
-  butterfly: 1.2,
-  sprout: 1,
-  scallop: 1.15,
-  hexagon: 1,
-  diamond: 1,
-  cat: 1.1,
-  robot: 1,
-};
-
 /** Draws one pinned face inside the same square, whatever the mark shape is. */
 function PinnedFace({ agent }: { agent: RosterAgent }) {
-  if (agent.avatarUrl) {
-    return (
-      <View style={styles.pinnedFace}>
-        <Avatar id={agent.id} size={PIN_BOX} photo={agent.avatarUrl} alive={false} />
-      </View>
-    );
-  }
-  const look = resolveMarkLook(agent);
   return (
     <View style={styles.pinnedFace}>
-      <Mark
-        shape={look.shape}
-        color={look.color}
-        material={look.material}
-        style={look.style}
-        gender={look.gender}
-        size={PIN_BOX / (PIN_SPAN[look.shape] ?? 1)}
+      <Avatar
+        id={agent.id}
+        size={PIN_BOX}
+        shape={agent.markShape}
+        color={agent.markColor}
+        material={agent.markMaterial}
+        style={agent.markStyle}
+        gender={agent.markGender}
+        photo={agent.avatarUrl}
       />
     </View>
   );

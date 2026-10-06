@@ -4,13 +4,14 @@ import { Image } from "expo-image";
 import { Asset } from "expo-asset";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { markStyleGender, type MarkGender, type MarkMaterial, type MarkShape, type MarkStyle } from "@nano-agents/shared";
+import { hydrateMarkThumbsFromDisk, persistMarkThumb } from "./mark-thumb-disk";
 import { ShapeGlyph } from "./ShapeGlyph";
-import { colors } from "../theme/tokens";
 
 const studioModule = require("../../assets/dot-avatar-maker.html") as number;
 
-/** Big marks are a live WebGL view. Smaller ones share one baker and show its PNG. */
-const LIVE_AT = 64;
+/** Below this width (px), avatars use one shared bakery PNG; at/above, a live WebGL view. */
+export const MARK_LIVE_MIN_PX = 96;
+const LIVE_AT = MARK_LIVE_MIN_PX;
 
 type Job = {
   shape: string;
@@ -83,15 +84,89 @@ function applyLive(job: Job): string {
 }
 
 const cache = new Map<string, string>();
+const cacheListeners = new Set<() => void>();
 const waiters = new Map<string, Array<(url: string | null) => void>>();
 const jobs = new Map<string, Job>();
 const order: string[] = [];
 let web: WebView | null = null;
 let studioReady = false;
 let inflight: string | null = null;
+let bakeryMounts = 0;
+let lastBakedKey: string | null = null;
+
+export function markThumbKey(job: Job): string {
+  return `${job.shape}|${job.color.toUpperCase()}|${job.material}|${job.style}|${job.gender}`;
+}
 
 function keyOf(job: Job): string {
-  return `${job.shape}|${job.color.toUpperCase()}|${job.material}|${job.style}|${job.gender}`;
+  return markThumbKey(job);
+}
+
+let notifyScheduled = false;
+
+function notifyThumbCache(): void {
+  if (notifyScheduled) return;
+  notifyScheduled = true;
+  requestAnimationFrame(() => {
+    notifyScheduled = false;
+    for (const listen of cacheListeners) listen();
+  });
+}
+
+let diskHydrated = false;
+
+/**
+ * Restores baked PNG URIs from disk into the in-memory cache (call once at app boot).
+ */
+export function hydrateMarkThumbCache(): void {
+  if (diskHydrated) return;
+  diskHydrated = true;
+  void hydrateMarkThumbsFromDisk((key, fileUri) => {
+    if (!cache.has(key)) cache.set(key, fileUri);
+  }).then(() => notifyThumbCache());
+}
+
+/** Re-renders thumb views when a new PNG lands (memory or disk). */
+export function subscribeMarkThumbCache(listener: () => void): () => void {
+  cacheListeners.add(listener);
+  return () => cacheListeners.delete(listener);
+}
+
+export function peekMarkThumb(
+  look: { shape: MarkShape; color: string; material: MarkMaterial; style: MarkStyle; gender: MarkGender },
+): string | null {
+  return cache.get(keyOf(look)) ?? null;
+}
+
+/**
+ * Queues bakery PNGs for roster marks so list/chat avatars hit cache before paint.
+ * Input: resolved mark looks. Output: nothing.
+ */
+export function warmMarkThumbs(
+  looks: { shape: MarkShape; color: string; material: MarkMaterial; style: MarkStyle; gender: MarkGender }[],
+  opts?: { prioritize?: boolean },
+): void {
+  const seen = new Set<string>();
+  for (const look of looks) {
+    const job = {
+      shape: look.shape,
+      color: look.color,
+      material: look.material,
+      style: look.style,
+      gender: look.gender,
+    };
+    const key = keyOf(job);
+    if (seen.has(key) || cache.has(key)) continue;
+    seen.add(key);
+    enqueue(job, () => {});
+    if (opts?.prioritize) {
+      const at = order.indexOf(key);
+      if (at > 0) {
+        order.splice(at, 1);
+        order.unshift(key);
+      }
+    }
+  }
 }
 
 function pump(): void {
@@ -101,12 +176,19 @@ function pump(): void {
   const job = jobs.get(key);
   if (!job) return;
   inflight = key;
-  web.injectJavaScript(`${apply(job)};
+  const script =
+    lastBakedKey === key
+      ? `setTimeout(function(){
+      var url=null; try{ url=window.__dot&&window.__dot.snapshot(320); }catch(e){}
+      window.ReactNativeWebView.postMessage(JSON.stringify({type:'shot',key:${JSON.stringify(key)},url:url}));
+    }, 120); true;`
+      : `${apply(job)};
     setTimeout(function(){
       var url=null; try{ url=window.__dot&&window.__dot.snapshot(320); }catch(e){}
       window.ReactNativeWebView.postMessage(JSON.stringify({type:'shot',key:${JSON.stringify(key)},url:url}));
-    }, 280);
-    true;`);
+    }, 200);
+    true;`;
+  web.injectJavaScript(script);
 }
 
 function enqueue(job: Job, done: (url: string | null) => void): () => void {
@@ -145,14 +227,20 @@ function onBakeryMessage(event: WebViewMessageEvent): void {
   }
   if (msg.type !== "shot" || !msg.key || msg.key !== inflight) return;
   if (msg.url) {
-    cache.set(msg.key, msg.url);
-    if (cache.size > 64) {
+    const stored = persistMarkThumb(msg.key, msg.url) ?? msg.url;
+    cache.set(msg.key, stored);
+    lastBakedKey = msg.key;
+    if (cache.size > 200) {
       const oldest = cache.keys().next().value;
       if (oldest) cache.delete(oldest);
     }
+    notifyThumbCache();
   }
   const pending = waiters.get(msg.key) ?? [];
   waiters.delete(msg.key);
+  jobs.delete(msg.key);
+  const at = order.indexOf(msg.key);
+  if (at >= 0) order.splice(at, 1);
   inflight = null;
   for (const fn of pending) fn(msg.url ?? null);
   pump();
@@ -163,6 +251,7 @@ export function DotBakery() {
   const [html, setHtml] = useState<string | null>(null);
 
   useEffect(() => {
+    bakeryMounts += 1;
     let alive = true;
     studioHtml()
       .then((text) => {
@@ -171,9 +260,13 @@ export function DotBakery() {
       .catch(() => {});
     return () => {
       alive = false;
-      studioReady = false;
-      web = null;
-      inflight = null;
+      bakeryMounts -= 1;
+      if (bakeryMounts <= 0) {
+        bakeryMounts = 0;
+        studioReady = false;
+        web = null;
+        inflight = null;
+      }
     };
   }, []);
 
@@ -212,6 +305,7 @@ export function DotThumb({
   style = "minimal",
   gender = "male",
   size,
+  flatFallback = false,
 }: {
   shape: MarkShape;
   color: string;
@@ -219,19 +313,25 @@ export function DotThumb({
   style?: MarkStyle;
   gender?: MarkGender;
   size: number;
+  /** When false, wait for the baked PNG instead of showing a flat silhouette. */
+  flatFallback?: boolean;
 }) {
-  const [url, setUrl] = useState<string | null>(() => cache.get(keyOf({ shape, color, material, style, gender })) ?? null);
+  const job = { shape, color, material, style, gender };
+  const [url, setUrl] = useState<string | null>(() => cache.get(keyOf(job)) ?? null);
   const shapeRef = useRef(shape);
 
+  useEffect(() => subscribeMarkThumbCache(() => {
+    const hit = cache.get(keyOf(job));
+    if (hit) setUrl(hit);
+  }), [shape, color, material, style, gender]);
+
   useEffect(() => {
-    const job = { shape, color, material, style, gender };
     const hit = cache.get(keyOf(job));
     if (hit) {
       setUrl(hit);
       shapeRef.current = shape;
       return;
     }
-    // Only drop to the flat glyph when the form changes; keep the last 3D PNG while color/material rebake.
     if (shapeRef.current !== shape) {
       setUrl(null);
       shapeRef.current = shape;
@@ -246,13 +346,21 @@ export function DotThumb({
     };
   }, [shape, color, material, style, gender]);
 
+  const cacheKey = markThumbKey(job);
+
   return (
-    <View style={{ width: size, height: size, alignItems: "center", justifyContent: "center" }}>
+    <View style={{ width: size, height: size, alignItems: "center", justifyContent: "center", backgroundColor: "transparent" }}>
       {url ? (
-        <Image source={{ uri: url }} style={{ width: size, height: size }} contentFit="contain" />
-      ) : (
+        <Image
+          source={{ uri: url }}
+          cachePolicy="memory-disk"
+          recyclingKey={cacheKey}
+          style={{ width: size, height: size, backgroundColor: "transparent" }}
+          contentFit="contain"
+        />
+      ) : flatFallback ? (
         <ShapeGlyph shape={shape} color={color} size={size} />
-      )}
+      ) : null}
     </View>
   );
 }
@@ -278,7 +386,7 @@ export function DotLive({
   const jobRef = useRef({ shape, color, material, style, gender });
   jobRef.current = { shape, color, material, style, gender };
   const [html, setHtml] = useState<string | null>(null);
-  /** Flat glyph only covers the first boot — never again when shape/color/material change. */
+  /** Baked PNG covers live boot until the first GL frame (same mesh as lists). */
   const [bootCover, setBootCover] = useState(true);
   const [glVisible, setGlVisible] = useState(false);
 
@@ -312,10 +420,13 @@ export function DotLive({
   }
 
   return (
-    <View style={{ width: size, height: size, backgroundColor: colors.bg }}>
+    <View
+      pointerEvents={size < 56 ? "none" : "auto"}
+      style={{ width: size, height: size, backgroundColor: "transparent" }}
+    >
       {bootCover ? (
-        <View style={[StyleSheet.absoluteFill, styles.glyphCenter]}>
-          <ShapeGlyph shape={shape} color={color} size={size * 0.72} />
+        <View style={[StyleSheet.absoluteFill, styles.glyphCenter, { zIndex: 2 }]}>
+          <DotThumb shape={shape} color={color} material={material} style={style} gender={gender} size={size} />
         </View>
       ) : null}
       {html ? (
@@ -349,5 +460,5 @@ export function isLiveMark(size: number): boolean {
 }
 
 const styles = StyleSheet.create({
-  glyphCenter: { alignItems: "center", justifyContent: "center", backgroundColor: colors.bg },
+  glyphCenter: { alignItems: "center", justifyContent: "center", backgroundColor: "transparent" },
 });

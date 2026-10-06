@@ -1,18 +1,9 @@
+import { memo } from "react";
 import { Image } from "expo-image";
 import { View } from "react-native";
-import {
-  normalizeMarkGender,
-  normalizeMarkMaterial,
-  normalizeMarkShape,
-  normalizeMarkStyle,
-  type MarkGender,
-  type MarkMaterial,
-  type MarkShape,
-  type MarkStyle,
-} from "@nano-agents/shared";
-import { MARK_DEFAULT } from "./Mark";
+import { isLiveMark } from "./DotStage";
+import { LivingMark, Mark, resolveMarkLook, type MarkMood } from "./Mark";
 import { palette } from "../theme/tokens";
-import { LivingMark, Mark, type MarkMood } from "./Mark";
 
 /**
  * Picks a stable face color for one agent.
@@ -28,28 +19,7 @@ export function colorFor(id: string): string {
   return palette[hash] ?? palette[0];
 }
 
-/**
- * Draws the rounded face used on the roster and in chat.
- * Input: the agent id, the pixel size, circle vs squircle, the person flag,
- * the saved mark, and optional living mood (idle/working).
- * Output: photo, living/static character mark, or legacy hash face.
- * Photos never get fake eyes; shape marks animate when alive (default on).
- */
-export function Avatar({
-  id,
-  size,
-  round = false,
-  person = false,
-  shape = null,
-  color = null,
-  material = null,
-  style = null,
-  gender = null,
-  photo = null,
-  mood = "idle",
-  alive = true,
-  interactive = false,
-}: {
+type AvatarProps = {
   id: string;
   size: number;
   round?: boolean;
@@ -63,7 +33,21 @@ export function Avatar({
   mood?: MarkMood;
   alive?: boolean;
   interactive?: boolean;
-}) {
+};
+
+function AvatarInner({
+  size,
+  round = false,
+  person = false,
+  shape = null,
+  color = null,
+  material = null,
+  style = null,
+  gender = null,
+  photo = null,
+  mood = "idle",
+  alive = true,
+}: AvatarProps) {
   if (!person && photo) {
     return (
       <Image
@@ -73,63 +57,40 @@ export function Avatar({
       />
     );
   }
-  if (!person && (shape ?? color ?? material ?? style ?? gender)) {
-    const markShape: MarkShape = normalizeMarkShape(shape) ?? "cloud";
-    const markColor = color ?? colorFor(id);
-    const markMaterial: MarkMaterial = normalizeMarkMaterial(material) ?? "plush";
-    const markStyle: MarkStyle = normalizeMarkStyle(style) ?? MARK_DEFAULT.style;
-    const markGender: MarkGender = normalizeMarkGender(gender) ?? MARK_DEFAULT.gender;
+  if (!person) {
+    const look = resolveMarkLook({
+      markShape: shape,
+      markColor: color,
+      markMaterial: material,
+      markStyle: style,
+      markGender: gender,
+    });
     const markSize = size * 0.72;
-    if (alive) {
+    const frame = { width: size, height: size, alignItems: "center" as const, justifyContent: "center" as const };
+    if (alive && isLiveMark(size)) {
       return (
-        <LivingMark
-          shape={markShape}
-          color={markColor}
-          material={markMaterial}
-          style={markStyle}
-          gender={markGender}
-          size={markSize}
-          mood={mood}
-          interactive={interactive}
-        />
+        <View style={frame}>
+          <LivingMark
+            shape={look.shape}
+            color={look.color}
+            material={look.material}
+            style={look.style}
+            gender={look.gender}
+            size={markSize}
+            mood={mood}
+          />
+        </View>
       );
     }
     return (
-      <Mark
-        shape={markShape}
-        color={markColor}
-        material={markMaterial}
-        style={markStyle}
-        gender={markGender}
-        size={markSize}
-      />
-    );
-  }
-  const backgroundColor = person ? "#3A3A3C" : colorFor(id);
-  const ink = backgroundColor === "#F2F2F7" ? "#111111" : "#FFFFFF";
-  if (person) {
-    return (
-      <View
-        style={{
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          backgroundColor,
-          alignItems: "center",
-          justifyContent: "center",
-          overflow: "hidden",
-        }}
-      >
-        <View style={{ width: size * 0.34, height: size * 0.34, borderRadius: size, backgroundColor: ink, marginTop: size * 0.08 }} />
-        <View
-          style={{
-            width: size * 0.62,
-            height: size * 0.34,
-            borderTopLeftRadius: size,
-            borderTopRightRadius: size,
-            backgroundColor: ink,
-            marginTop: size * 0.06,
-          }}
+      <View style={frame}>
+        <Mark
+          shape={look.shape}
+          color={look.color}
+          material={look.material}
+          style={look.style}
+          gender={look.gender}
+          size={markSize}
         />
       </View>
     );
@@ -139,16 +100,47 @@ export function Avatar({
       style={{
         width: size,
         height: size,
-        borderRadius: round ? size / 2 : size * 0.32,
-        backgroundColor,
+        borderRadius: size / 2,
+        backgroundColor: "#3A3A3C",
         alignItems: "center",
         justifyContent: "center",
+        overflow: "hidden",
       }}
     >
-      <View style={{ flexDirection: "row", gap: size * 0.14 }}>
-        <View style={{ width: size * 0.075, height: size * 0.2, borderRadius: size, backgroundColor: ink }} />
-        <View style={{ width: size * 0.075, height: size * 0.2, borderRadius: size, backgroundColor: ink }} />
-      </View>
+      <View style={{ width: size * 0.34, height: size * 0.34, borderRadius: size, backgroundColor: "#FFFFFF", marginTop: size * 0.08 }} />
+      <View
+        style={{
+          width: size * 0.62,
+          height: size * 0.34,
+          borderTopLeftRadius: size,
+          borderTopRightRadius: size,
+          backgroundColor: "#FFFFFF",
+          marginTop: size * 0.06,
+        }}
+      />
     </View>
   );
 }
+
+function avatarPropsEqual(left: AvatarProps, right: AvatarProps): boolean {
+  return (
+    left.size === right.size &&
+    left.round === right.round &&
+    left.person === right.person &&
+    left.shape === right.shape &&
+    left.color === right.color &&
+    left.material === right.material &&
+    left.style === right.style &&
+    left.gender === right.gender &&
+    left.photo === right.photo &&
+    left.mood === right.mood &&
+    left.alive === right.alive
+  );
+}
+
+/**
+ * Draws the roster / chat / mention avatar.
+ * Why: one shared Dot bakery backs every small avatar (lists, bubbles, badges);
+ * live WebGL is only for large hero sizes so scrolling stays fast.
+ */
+export const Avatar = memo(AvatarInner, avatarPropsEqual);

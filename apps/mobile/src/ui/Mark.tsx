@@ -1,4 +1,5 @@
-import { View } from "react-native";
+import { useEffect, useState } from "react";
+import { InteractionManager, View } from "react-native";
 import {
   defaultGenderForStyle,
   defaultStyleForGender,
@@ -14,7 +15,7 @@ import {
   type MarkShape,
   type MarkStyle,
 } from "@nano-agents/shared";
-import { DotLive, DotThumb, isLiveMark } from "./DotStage";
+import { DotLive, DotThumb, isLiveMark, peekMarkThumb } from "./DotStage";
 
 export type { MarkGender, MarkMaterial, MarkShape, MarkStyle };
 
@@ -123,7 +124,9 @@ export function Mark({
   );
 }
 
-/** Large = live 3D; small = studio PNG. */
+/**
+ * Dot studio character: bakery PNG when small, live WebGL when large (same mesh/material).
+ */
 export function LivingMark({
   shape,
   color,
@@ -143,9 +146,26 @@ export function LivingMark({
   interactive?: boolean;
 }) {
   const label = `${shape} ${material} mark${mood === "working" ? ", working" : ""}`;
+  const look = { shape, color, material, style, gender };
+  const [live, setLive] = useState(() => !isLiveMark(size) || !peekMarkThumb(look));
+
+  useEffect(() => {
+    if (!isLiveMark(size)) {
+      setLive(false);
+      return;
+    }
+    if (!peekMarkThumb(look)) {
+      setLive(true);
+      return;
+    }
+    setLive(false);
+    const task = InteractionManager.runAfterInteractions(() => setLive(true));
+    return () => task.cancel();
+  }, [size, shape, color, material, style, gender]);
+
   return (
     <View accessibilityRole="image" accessibilityLabel={label}>
-      {isLiveMark(size) ? (
+      {isLiveMark(size) && live ? (
         <DotLive shape={shape} color={color} material={material} style={style} gender={gender} size={size} />
       ) : (
         <DotThumb shape={shape} color={color} material={material} style={style} gender={gender} size={size} />

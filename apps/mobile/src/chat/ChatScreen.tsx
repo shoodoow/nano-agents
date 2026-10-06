@@ -22,6 +22,8 @@ import { ContextUsageRing } from "../ui/ContextUsageRing";
 import { IconBack, IconMonitor, IconPlus } from "../ui/icons";
 import { BlockView } from "./blocks";
 import { Reactions } from "./Reactions";
+import { RoomActivityBar } from "./RoomActivityBar";
+import type { RoomActivityPhase } from "./room-activity";
 
 export type Bubble = {
   id: string;
@@ -111,7 +113,8 @@ export function ChatScreen({
   messages,
   draft,
   sending,
-  typing,
+  roomActivity,
+  isGroup,
   error,
   replyTo,
   attachments,
@@ -144,7 +147,8 @@ export function ChatScreen({
   messages: Bubble[];
   draft: string;
   sending: boolean;
-  typing: boolean;
+  roomActivity: RoomActivityPhase | null;
+  isGroup: boolean;
   error: string;
   replyTo: Bubble | null;
   attachments: ComposerAttachment[];
@@ -235,7 +239,7 @@ export function ChatScreen({
             style={agent.markStyle}
             gender={agent.markGender}
             photo={agent.avatarUrl}
-            mood={typing ? "working" : "idle"}
+            mood={roomActivity ? "working" : "idle"}
           />
           <View style={styles.titles}>
             <Text style={styles.pillName} numberOfLines={1}>
@@ -278,7 +282,7 @@ export function ChatScreen({
           }, 120);
         }}
         ListEmptyComponent={
-          typing ? null : (
+          roomActivity ? null : (
             // Inverted lists flip empty content; un-flip so copy reads upright.
             <View style={styles.emptyInvert}>
               <View style={styles.empty}>
@@ -375,7 +379,9 @@ export function ChatScreen({
           );
         }}
       />
-      {typing ? <Text style={styles.typing}>●●● typing</Text> : null}
+      {roomActivity ? (
+        <RoomActivityBar phase={roomActivity} agent={agent} isGroup={isGroup} />
+      ) : null}
       {error ? (
         <Text accessibilityRole="alert" style={styles.error}>
           {error}
@@ -543,7 +549,6 @@ const styles = StyleSheet.create({
   bubbleTheirs: { backgroundColor: colors.bubble, borderBottomLeftRadius: 6 },
   quote: { color: colors.muted, fontSize: 13, borderLeftWidth: 2, borderLeftColor: colors.link, paddingLeft: 8, marginBottom: 4 },
   bubbleHighlight: { borderWidth: 1, borderColor: colors.link },
-  typing: { color: colors.muted, paddingHorizontal: 20, paddingBottom: 4, fontSize: 13 },
   error: { color: colors.danger, paddingHorizontal: 20, paddingBottom: 6, fontSize: 14 },
   replyBar: { backgroundColor: colors.control, marginHorizontal: 12, borderRadius: 10, padding: 8 },
   replyText: { color: colors.text, fontSize: 13 },

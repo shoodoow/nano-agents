@@ -1,6 +1,5 @@
 import { View, Text } from "react-native";
 import { Avatar } from "./Avatar";
-import { Mark, resolveMarkLook } from "./Mark";
 
 export type GroupFace = {
   id: string;
@@ -58,18 +57,16 @@ export function GroupCluster({ members, size = 56 }: { members: GroupFace[]; siz
 }
 
 function Face({ member, size }: { member: GroupFace; size: number }) {
-  if (member.avatarUrl) {
-    return <Avatar id={member.id} size={size} photo={member.avatarUrl} alive={false} />;
-  }
-  const look = resolveMarkLook({ ...member, markColor: member.markColor || "#FFCC38" });
   return (
-    <Mark
-      shape={look.shape}
-      color={look.color}
-      material={look.material}
-      style={look.style}
-      gender={look.gender}
+    <Avatar
+      id={member.id}
       size={size}
+      shape={member.markShape}
+      color={member.markColor}
+      material={member.markMaterial}
+      style={member.markStyle}
+      gender={member.markGender}
+      photo={member.avatarUrl}
     />
   );
 }
