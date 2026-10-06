@@ -6,6 +6,7 @@ import {
   Modal,
   PanResponder,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -38,6 +39,11 @@ export type Bubble = {
   replyTo?: string | null;
   replyPreview?: string | null;
   via?: string | null;
+  /** Group→1:1 relay caption: "Message from X" or "Messaged N Bots". */
+  relay?: {
+    kind: "from" | "to";
+    peers: { id: string; label: string }[];
+  } | null;
   reactions?: Reaction[];
 };
 
@@ -95,6 +101,47 @@ function SwipeableBubble({ onSwipe, children }: { onSwipe: () => void; children:
 }
 
 /**
+ * Compact "Message from X" badge for a group ping mirrored into the 1:1.
+ * Why: full crew bubbles stay in the group; the private chat only gets a chip.
+ * Tap opens a sheet with the message body.
+ */
+function RelayBadge({
+  author,
+  authorId,
+  roster,
+  onPress,
+}: {
+  author: string;
+  authorId: string | null;
+  roster: Map<string, RosterAgent>;
+  onPress: () => void;
+}) {
+  const face = authorId ? roster.get(authorId) : undefined;
+  return (
+    <Pressable
+      style={styles.relayBadge}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Message from ${author}. Tap to read.`}
+    >
+      <Text style={styles.relayCaptionText}>Message from </Text>
+      <Avatar
+        id={authorId ?? author}
+        size={14}
+        round
+        shape={face?.markShape ?? null}
+        color={face?.markColor ?? null}
+        material={face?.markMaterial ?? null}
+        style={face?.markStyle ?? null}
+        gender={face?.markGender ?? null}
+        photo={face?.avatarUrl ?? null}
+      />
+      <Text style={styles.relayCaptionName}> {author}</Text>
+    </Pressable>
+  );
+}
+
+/**
  * Shows one rich thread with a stretching composer and attachments.
  * Why: long SEO-style briefs need a multiline box that grows with the text
  * (capped so it never eats the thread); images/files attach via the + sheet
@@ -110,6 +157,7 @@ export function ChatScreen({
   subtitle,
   contextRing,
   members,
+  roster,
   messages,
   draft,
   sending,
@@ -136,6 +184,7 @@ export function ChatScreen({
   onBack,
   onDesktop,
   onAgentMenu,
+  onOpenAgent,
 }: {
   agent: RosterAgent;
   conversationId: string;
@@ -144,12 +193,14 @@ export function ChatScreen({
   /** Shown inside the message field on the right when context stats loaded. */
   contextRing?: { share: number; hint: string } | null;
   members: RosterAgent[];
+  /** Full account roster — used for relay captions and agent-card taps. */
+  roster?: RosterAgent[];
   messages: Bubble[];
   draft: string;
   sending: boolean;
   roomActivity: RoomActivityPhase | null;
   isGroup: boolean;
-  error: string;
+  error: string | null;
   replyTo: Bubble | null;
   attachments: ComposerAttachment[];
   onDraft: (value: string) => void;
@@ -170,6 +221,8 @@ export function ChatScreen({
   onBack: () => void;
   onDesktop: () => void;
   onAgentMenu: () => void;
+  /** Opens a teammate's private chat (agent-card tap / relay avatar). */
+  onOpenAgent?: (agentId: string) => void;
 }) {
   const insets = useSafeAreaInsets();
   const [attachOpen, setAttachOpen] = useState(false);
@@ -178,13 +231,22 @@ export function ChatScreen({
   const canSend = (draft.trim().length > 0 || attachments.length > 0) && !sending;
   const [pickingFor, setPickingFor] = useState<string | null>(null);
   const [highlightId, setHighlightId] = useState<string | null>(null);
+  const [relaySheet, setRelaySheet] = useState<Bubble | null>(null);
   // Newest-first + inverted FlatList opens on the latest message with no
   // top→bottom scroll animation (scrollToEnd on layout was the jump).
   const thread = useMemo(() => [...messages].reverse(), [messages]);
+  const rosterFaces = useMemo(() => {
+    const map = new Map<string, RosterAgent>();
+    map.set(agent.id, agent);
+    for (const member of members) map.set(member.id, member);
+    for (const row of roster ?? []) map.set(row.id, row);
+    return map;
+  }, [agent, members, roster]);
   useEffect(() => {
     setPickingFor(null);
     setHighlightId(null);
     setAttachOpen(false);
+    setRelaySheet(null);
   }, [conversationId]);
 
   /** Scrolls the inverted thread to the parent of a swipe-reply. */
@@ -302,22 +364,34 @@ export function ChatScreen({
             item.blocks && item.blocks.length > 0 ? item.blocks : [{ kind: "text", markdown: item.body }];
           const nameColor = item.mine ? colors.text : colorFor(item.agentId ?? item.author);
           const author = item.agentId === agent.id ? agent : (members.find((member) => member.id === item.agentId) ?? null);
+          const face = author ?? (item.agentId ? rosterFaces.get(item.agentId) ?? null : null);
           const highlighted = highlightId === item.id;
+          const relay = item.relay;
           return (
             <View>
               {showTime ? <Text style={styles.time}>Today {item.time}</Text> : null}
+              {relay ? (
+                <View style={styles.relayWrap}>
+                  <RelayBadge
+                    author={item.author}
+                    authorId={item.agentId}
+                    roster={rosterFaces}
+                    onPress={() => setRelaySheet(item)}
+                  />
+                </View>
+              ) : (
               <View style={[styles.row, item.mine ? styles.rowMine : styles.rowTheirs]}>
                 {!item.mine ? (
                   <Avatar
                     id={item.agentId ?? item.author}
                     size={32}
                     round
-                    shape={author?.markShape ?? null}
-                    color={author?.markColor ?? null}
-                    material={author?.markMaterial ?? null}
-                    style={author?.markStyle ?? null}
-                    gender={author?.markGender ?? null}
-                    photo={author?.avatarUrl ?? null}
+                    shape={face?.markShape ?? null}
+                    color={face?.markColor ?? null}
+                    material={face?.markMaterial ?? null}
+                    style={face?.markStyle ?? null}
+                    gender={face?.markGender ?? null}
+                    photo={face?.avatarUrl ?? null}
                   />
                 ) : null}
                 <View style={styles.column}>
@@ -359,6 +433,7 @@ export function ChatScreen({
                           onQuestionPick={onQuestionPick}
                           onSubmitSecret={onSecretSubmit}
                           onOpenDesktop={onDesktop}
+                          onOpenAgent={onOpenAgent}
                           fetchBlob={onFetchBlob}
                         />
                       ))}
@@ -375,6 +450,7 @@ export function ChatScreen({
                   </SwipeableBubble>
                 </View>
               </View>
+              )}
             </View>
           );
         }}
@@ -431,6 +507,44 @@ export function ChatScreen({
           ))}
         </View>
       ) : null}
+      <Modal
+        visible={relaySheet !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setRelaySheet(null)}
+      >
+        <Pressable style={styles.relaySheetBackdrop} onPress={() => setRelaySheet(null)}>
+          <Pressable style={[styles.relaySheet, { paddingBottom: Math.max(16, insets.bottom) }]} onPress={(event) => event.stopPropagation()}>
+            <View style={styles.relaySheetHandle} />
+            {relaySheet ? (
+              <>
+                <Text style={styles.relaySheetTitle}>Message from {relaySheet.author}</Text>
+                <ScrollView style={styles.relaySheetBody} bounces={false}>
+                  {(relaySheet.blocks && relaySheet.blocks.length > 0
+                    ? relaySheet.blocks
+                    : [{ kind: "text" as const, markdown: relaySheet.body }]
+                  ).map((block, blockIndex) => (
+                    <BlockView
+                      key={blockIndex}
+                      block={block}
+                      messageId={relaySheet.id}
+                      onApprove={onApprove}
+                      onDeny={onDeny}
+                      onSubmitPoll={onPollSubmit}
+                      onQuestionPick={onQuestionPick}
+                      onSubmitSecret={onSecretSubmit}
+                      onOpenDesktop={onDesktop}
+                      onOpenAgent={onOpenAgent}
+                      fetchBlob={onFetchBlob}
+                    />
+                  ))}
+                </ScrollView>
+                <PillButton label="Close" onPress={() => setRelaySheet(null)} />
+              </>
+            ) : null}
+          </Pressable>
+        </Pressable>
+      </Modal>
       <Modal visible={attachOpen} transparent animationType="fade" onRequestClose={() => setAttachOpen(false)}>
         <Pressable style={styles.attachBackdrop} onPress={() => setAttachOpen(false)} accessibilityLabel="Close attach menu">
           <View style={[styles.attachAnchor, { bottom: composerBottom }]} pointerEvents="box-none">
@@ -547,6 +661,43 @@ const styles = StyleSheet.create({
   bubble: { borderRadius: 18, paddingHorizontal: 14, paddingVertical: 10, gap: 6 },
   bubbleMine: { backgroundColor: colors.online, borderBottomRightRadius: 6 },
   bubbleTheirs: { backgroundColor: colors.bubble, borderBottomLeftRadius: 6 },
+  relayWrap: { alignItems: "center", paddingHorizontal: 12, marginVertical: 4 },
+  relayBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 2,
+    backgroundColor: colors.control,
+    borderRadius: 14,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+  },
+  relayCaptionText: { color: colors.muted, fontSize: 12 },
+  relayCaptionName: { color: colors.muted, fontSize: 12, fontWeight: "600" },
+  relaySheetBackdrop: {
+    flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(0,0,0,0.45)",
+  },
+  relaySheet: {
+    backgroundColor: colors.bg,
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    maxHeight: "70%",
+    gap: 12,
+  },
+  relaySheetHandle: {
+    alignSelf: "center",
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.line,
+    marginBottom: 4,
+  },
+  relaySheetTitle: { color: colors.text, fontSize: 16, fontWeight: "600" },
+  relaySheetBody: { maxHeight: 360 },
   quote: { color: colors.muted, fontSize: 13, borderLeftWidth: 2, borderLeftColor: colors.link, paddingLeft: 8, marginBottom: 4 },
   bubbleHighlight: { borderWidth: 1, borderColor: colors.link },
   error: { color: colors.danger, paddingHorizontal: 20, paddingBottom: 6, fontSize: 14 },

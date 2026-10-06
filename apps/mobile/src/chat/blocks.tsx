@@ -30,6 +30,7 @@ export function BlockView({
   onQuestionPick,
   onSubmitSecret,
   onOpenDesktop,
+  onOpenAgent,
   fetchBlob,
 }: {
   block: MessageBlock;
@@ -40,6 +41,7 @@ export function BlockView({
   onQuestionPick?: (messageId: string, pick: { value: string; label: string }) => void;
   onSubmitSecret?: (name: string, secret: string) => Promise<void>;
   onOpenDesktop?: () => void;
+  onOpenAgent?: (agentId: string) => void;
   fetchBlob?: (messageId: string, index: number) => Promise<{ url?: string; previewUrl?: string }>;
 }) {
   if (block.kind === "text") {
@@ -59,6 +61,7 @@ export function BlockView({
                 onQuestionPick={onQuestionPick}
                 onSubmitSecret={onSubmitSecret}
                 onOpenDesktop={onOpenDesktop}
+                onOpenAgent={onOpenAgent}
                 fetchBlob={fetchBlob}
               />
             ))}
@@ -117,6 +120,7 @@ export function BlockView({
       onQuestionPick={onQuestionPick}
       onSubmitSecret={onSubmitSecret}
       onOpenDesktop={onOpenDesktop}
+      onOpenAgent={onOpenAgent}
     />
   );
 }
@@ -331,6 +335,7 @@ function WidgetView({
   onQuestionPick,
   onSubmitSecret,
   onOpenDesktop,
+  onOpenAgent,
 }: {
   widget: string;
   props: Record<string, unknown>;
@@ -341,6 +346,7 @@ function WidgetView({
   onQuestionPick?: (messageId: string, pick: { value: string; label: string }) => void;
   onSubmitSecret?: (name: string, secret: string) => Promise<void>;
   onOpenDesktop?: () => void;
+  onOpenAgent?: (agentId: string) => void;
 }) {
   if (widget === "checklist") {
     const items = Array.isArray(props.items) ? (props.items as { label: string; done?: boolean }[]) : [];
@@ -393,11 +399,21 @@ function WidgetView({
     );
   }
   if (widget === "agent-card") {
+    const agentId = typeof props.agentId === "string" ? props.agentId : "";
+    const label = String(props.label ?? props.name ?? "Subagent");
     return (
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>🤖 {String(props.label ?? props.name ?? "Subagent")}</Text>
-        <Text style={styles.cardLine}>Specialist joined the room. Mention @{String(props.name ?? "")} to task it.</Text>
-      </View>
+      <Pressable
+        style={styles.card}
+        disabled={!agentId || !onOpenAgent}
+        onPress={() => agentId && onOpenAgent?.(agentId)}
+        accessibilityRole="button"
+        accessibilityLabel={`Open ${label}`}
+      >
+        <Text style={styles.cardTitle}>🤖 {label}</Text>
+        <Text style={styles.cardLine}>
+          {agentId && onOpenAgent ? "Tap to open their chat." : "Specialist joined the room."}
+        </Text>
+      </Pressable>
     );
   }
   if (widget === "poll") {

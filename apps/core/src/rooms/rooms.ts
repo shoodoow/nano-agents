@@ -480,6 +480,9 @@ export async function listMessages(db: Database, accountId: string, conversation
       payload: messages.payload,
       replyTo: messages.replyTo,
       viaAgentId: messages.viaAgentId,
+      sourceConversationId: messages.sourceConversationId,
+      relayKind: messages.relayKind,
+      relayPeers: messages.relayPeers,
       createdAt: messages.createdAt,
     })
     .from(messages)

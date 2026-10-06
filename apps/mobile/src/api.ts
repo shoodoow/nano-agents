@@ -22,6 +22,9 @@ export type RichMessage = {
   payload?: MessageBlock[] | null;
   replyTo?: string | null;
   viaAgentId?: string | null;
+  sourceConversationId?: string | null;
+  relayKind?: "from" | "to" | null;
+  relayPeers?: { id: string; label: string }[] | null;
   createdAt: string;
 };
 

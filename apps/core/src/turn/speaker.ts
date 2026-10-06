@@ -295,9 +295,9 @@ export async function speakOnce(
     return;
   }
   const text = result.text.trim();
-  const bodyText = isNarrationStall(text)
-    ? STALL_MESSAGE
-    : text || "The tools finished, but the model sent no message.";
+  // Empty or narration after tools means the model never called send_message.
+  // Prefer a clean stall line over the old "tools finished…" apology.
+  const bodyText = !text || isNarrationStall(text) ? STALL_MESSAGE : text;
   const [wrapped] = await db
     .insert(messages)
     .values({

@@ -106,6 +106,12 @@ export const messages = pgTable(
     // backfill ordering; ownership is enforced in application code per account.
     replyTo: uuid("reply_to"),
     viaAgentId: uuid("via_agent_id").references(() => agents.id),
+    // Group→1:1 relay: copies of crew talk shown in the owner's private chat.
+    // kind "from" = teammate spoke in the group; "to" = lead spoke to the crew.
+    // peers lists the other bots for the "Messaged N Bots" caption.
+    sourceConversationId: uuid("source_conversation_id").references(() => conversations.id),
+    relayKind: text("relay_kind"),
+    relayPeers: jsonb("relay_peers"),
     // Run ledger (Phase 11): which turn produced this row. Null for rows
     // written before the ledger existed. Lets crash recovery, SSE resume,
     // and audits trace every bubble to its run.
@@ -119,6 +125,7 @@ export const messages = pgTable(
   },
   (table) => [
     check("messages_kind_check", sql`${table.kind} in ('text', 'rich')`),
+    check("messages_relay_kind_check", sql`${table.relayKind} is null or ${table.relayKind} in ('from', 'to')`),
     index("messages_queued_index").on(table.conversationId, table.createdAt).where(sql`${table.queued} = true`),
   ],
 );

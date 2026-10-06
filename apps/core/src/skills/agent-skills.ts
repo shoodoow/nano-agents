@@ -21,9 +21,6 @@ export type AgentSkillContext = {
 export async function skillCatalogForAgent(ctx: AgentSkillContext): Promise<SkillSummary[]> {
   const host = ctx.skillsRoot ? skillCatalogForAccount(ctx.skillsRoot, ctx.accountId) : [];
   const local = ctx.linuxProfile ? await localSkillCatalog(ctx.accountId, ctx.linuxProfile) : [];
-  console.log("\n\n--------------------------------");
-  console.log("local", local);
-  console.log("--------------------------------");
   return mergeSkillCatalogs(host, local);
 }
 

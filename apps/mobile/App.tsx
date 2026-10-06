@@ -85,6 +85,18 @@ function toBubble(
     replyTo: row.replyTo ?? null,
     replyPreview: parent?.body.slice(0, 80) ?? null,
     via: row.viaAgentId ? (roster.find((agent) => agent.id === row.viaAgentId)?.name ?? null) : null,
+    relay:
+      row.relayKind === "from" || row.relayKind === "to"
+        ? {
+            kind: row.relayKind,
+            peers: Array.isArray(row.relayPeers)
+              ? row.relayPeers.map((peer) => ({
+                  id: String(peer.id),
+                  label: String(peer.label ?? roster.find((agent) => agent.id === peer.id)?.label ?? "Bot"),
+                }))
+              : [],
+          }
+        : null,
     reactions: byMessage.get(row.id) ?? [],
   };
 }
@@ -1306,6 +1318,7 @@ export default function App() {
           members={
             screen.kind === "group" ? agents.filter((row) => screen.memberIds.includes(row.id)) : []
           }
+          roster={agents}
           messages={messages}
           draft={draft}
           sending={sending}
@@ -1344,6 +1357,10 @@ export default function App() {
           onAgentMenu={() => {
             if (screen.kind === "group") void openGroupInfo().catch(show);
             else openProfile(screen.agent);
+          }}
+          onOpenAgent={(agentId) => {
+            const target = agents.find((row) => row.id === agentId);
+            if (target) void openAgent(target).catch(show);
           }}
         />
       ) : null}

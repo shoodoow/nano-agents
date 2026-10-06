@@ -7,7 +7,8 @@ export const STALL_CHAR_CAP = 1_200;
 export const STALL_MESSAGE = "I didn’t finish that. Tell me to try again.";
 
 /** One user nudge. The loop text is not sent back with it. */
-export const STALL_NUDGE = "Call send_message now. Do not describe the plan.";
+export const STALL_NUDGE =
+  "Call send_message now with a short update for the person. Do not describe the plan. Do not end with empty text.";
 
 /**
  * True when assistant text is a plan instead of a reply.
@@ -23,7 +24,8 @@ export function isNarrationStall(text: string): boolean {
 
 /**
  * Decides whether the dispatcher may try the tool call once more.
- * Why: a nudge only helps if the loop text is dropped, and a second miss must stop.
+ * Why: empty replies (reasoning burned the budget) and narration stalls both
+ * leave the person silent — one nudge recovers most of them.
  * Input: how many retries already ran, the text, whether send_message landed, and whether the turn ended.
  * Output: true only for the first stall.
  */
@@ -34,5 +36,6 @@ export function shouldRetryStall(input: {
   ended: boolean;
 }): boolean {
   if (input.ended || input.sentMessage || input.attempt >= 1) return false;
+  if (!input.text.trim()) return true;
   return isNarrationStall(input.text);
 }

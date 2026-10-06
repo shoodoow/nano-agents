@@ -2,9 +2,21 @@ import { type MessageBlock } from "@nano-agents/shared";
 import { reactionSchema, sendMessageInputSchema } from "@nano-agents/agent-tools";
 import { and, asc, eq } from "drizzle-orm";
 import type { Store } from "../db/client.js";
-import { conversations, messages, notifications, reactions, runs } from "../db/schema.js";
+import { agents, conversations, messages, notifications, reactions, runs } from "../db/schema.js";
 import { appendEvent } from "./events.js";
 import { publish } from "./stream.js";
+
+export type RelayPeer = { id: string; label: string };
+
+/** True when body @mentions one of the given agent names (exact token match). */
+export function bodyMentionsName(body: string, names: string[]): boolean {
+  const wanted = new Set(names.map((name) => name.trim()).filter(Boolean));
+  if (wanted.size === 0) return false;
+  for (const match of body.matchAll(/@([A-Za-z0-9_-]+)/g)) {
+    if (wanted.has(match[1] ?? "")) return true;
+  }
+  return false;
+}
 
 // Single voice/event vocabulary for turns (Phase 11-14). Why: one union used
 // by tool executes, the run loop, SSE fanout, and the durable event log —
@@ -121,11 +133,11 @@ export async function saveSendMessage(
 }
 
 /**
- * Copies a teammate's group bubble into the group owner's private chat.
- * Why: the person talks to the lead in a 1:1, while the crew speaks in the
- * group. The copy shows there under the teammate's own name (no "via").
- * The owner's own group bubbles are not copied — those already live in the 1:1
- * when the lead is the one chatting with the person.
+ * When a teammate @mentions the group owner in a group, drops a relay badge
+ * into the owner's private chat (full bubble stays in the group).
+ * Why: mirroring every crew message spamms the 1:1; only @pings of the lead
+ * need a "Message from X" chip the person can open. Owner speech is never
+ * copied — that already lives in the private chat when they talk to the person.
  * Input: store and the group message row. Output: nothing. Failures are swallowed
  * so a missing private chat never drops the group message.
  */
@@ -139,7 +151,18 @@ export async function mirrorGroupSpeechToOwnerDm(
       .select({ kind: conversations.kind, ownerAgentId: conversations.ownerAgentId })
       .from(conversations)
       .where(and(eq(conversations.id, message.conversationId), eq(conversations.accountId, message.accountId)));
-    if (!room || room.kind !== "group" || message.agentId === room.ownerAgentId) return;
+    if (!room || room.kind !== "group" || !room.ownerAgentId) return;
+    // Owner bubbles stay in the group only — never echo them into the 1:1.
+    if (message.agentId === room.ownerAgentId) return;
+
+    const [owner] = await store
+      .select({ name: agents.name, label: agents.label })
+      .from(agents)
+      .where(and(eq(agents.id, room.ownerAgentId), eq(agents.accountId, message.accountId)));
+    if (!owner) return;
+    // Only when the lead is @mentioned — otherwise the person opens the group.
+    if (!bodyMentionsName(message.body, [owner.name, owner.label])) return;
+
     const [dm] = await store
       .select({ id: conversations.id })
       .from(conversations)
@@ -165,6 +188,9 @@ export async function mirrorGroupSpeechToOwnerDm(
         kind: message.kind,
         payload: message.payload,
         replyTo: null,
+        sourceConversationId: message.conversationId,
+        relayKind: "from",
+        relayPeers: [] as RelayPeer[],
         createdAt: message.createdAt,
       })
       .returning();

@@ -225,6 +225,13 @@
       "when": 1790718000000,
       "tag": "0031_account-timezone",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1790719000000,
+      "tag": "0032_message-relay",
+      "breakpoints": true
     }
   ]
 }

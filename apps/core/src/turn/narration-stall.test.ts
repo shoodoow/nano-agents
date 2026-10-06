@@ -30,11 +30,30 @@ describe("shouldRetryStall", () => {
     ).toBe(true);
   });
 
+  it("retries once when the model returned empty text with no send_message", () => {
+    expect(
+      shouldRetryStall({
+        attempt: 0,
+        text: "",
+        sentMessage: false,
+        ended: false,
+      }),
+    ).toBe(true);
+  });
+
   it("does not retry after a send_message, an ended turn, or a second attempt", () => {
     expect(
       shouldRetryStall({
         attempt: 0,
         text: "Let me list everything.",
+        sentMessage: true,
+        ended: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRetryStall({
+        attempt: 0,
+        text: "",
         sentMessage: true,
         ended: false,
       }),

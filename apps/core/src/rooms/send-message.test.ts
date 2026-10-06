@@ -99,7 +99,7 @@ describe("send_message protocol", () => {
     ).rejects.toThrow();
   });
 
-  it("copies a teammate's group message into the owner's private chat", async () => {
+  it("mirrors a teammate group ping into the owner's private chat only when @mentioned", async () => {
     const account = await createAccount(db, { name: "Mirror" });
     const owner = await createAgent(db, account.id, {
       name: "Sara",
@@ -146,6 +146,13 @@ describe("send_message protocol", () => {
       blocks: [{ kind: "text", markdown: "Thanks, I'll take it from here." }],
       createdAt: new Date(),
     });
+    await saveSendMessage(db, {
+      accountId: account.id,
+      conversationId: group!.id,
+      agentId: maya.id,
+      blocks: [{ kind: "text", markdown: "@Sara closest fit is OpenHands." }],
+      createdAt: new Date(),
+    });
 
     const copies = await db
       .select()
@@ -154,6 +161,8 @@ describe("send_message protocol", () => {
     expect(copies).toHaveLength(1);
     expect(copies[0]?.agentId).toBe(maya.id);
     expect(copies[0]?.viaAgentId).toBeNull();
-    expect(copies[0]?.body).toContain("OpenHands");
+    expect(copies[0]?.body).toContain("@Sara");
+    expect(copies[0]?.relayKind).toBe("from");
+    expect(copies[0]?.sourceConversationId).toBe(group!.id);
   });
 });

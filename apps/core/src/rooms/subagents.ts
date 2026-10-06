@@ -296,7 +296,9 @@ export async function addGroupMember(
 }
 
 const WORKER_RESULT_MAX = 20_000;
+/** Default step budget. Browser/computer audits need more than a short shell install. */
 const WORKER_STEPS = 10;
+const WORKER_STEPS_LONG = 18;
 export const WORKER_STALE_MS = 4 * 60 * 60 * 1000;
 
 async function latestDelegationStatus(
@@ -923,8 +925,13 @@ export async function runWorker(
     let shouldEarlyStop = false;
     let lastToolCallSignature = "";
     let duplicateCallCount = 0;
-    // Shell workers do focused commands/installs — 5 steps is plenty; other kinds get WORKER_STEPS (10).
-    const maxSteps = kindMeta.kind === "shell" ? 5 : WORKER_STEPS;
+    // Shell: short installs. Browser/computer: long UI loops need headroom to write Findings.
+    const maxSteps =
+      kindMeta.kind === "shell"
+        ? 5
+        : kindMeta.kind === "browser" || kindMeta.kind === "computer"
+          ? WORKER_STEPS_LONG
+          : WORKER_STEPS;
     const result = await generateText({
       model: getModel(child.provider, child.modelId, credential.apiKey, credential.baseUrl),
       abortSignal: controller.signal,
@@ -1006,12 +1013,7 @@ export async function runWorker(
       },
       steps: workerSteps,
     });
-    const { claimedWrittenPaths, classifyWorkerEnding, collectWorkerFallback, collectWorkerText } = await import("../turn/worker-report.js");
-    const ranTools =
-      (result.toolResults?.length ?? 0) > 0 ||
-      (result.steps ?? []).some(
-        (step) => ((step as { toolCalls?: unknown[] }).toolCalls?.length ?? 0) > 0 || (step.toolResults?.length ?? 0) > 0,
-      );
+    const { claimedWrittenPaths, resolveWorkerEnding } = await import("../turn/worker-report.js");
     // Billable usage for this worker (AI SDK 7: result.usage already sums all
     // steps, screenshots included) — persisted on the delegation row so the
     // per-chat display matches the provider dashboard.
@@ -1027,15 +1029,12 @@ export async function runWorker(
       reasoningTokens: outDetails?.reasoningTokens ?? null,
       modelSteps: result.steps?.length ?? null,
     };
-    const text = collectWorkerText(result);
-    const ending = classifyWorkerEnding(text, ranTools);
+    const ending = resolveWorkerEnding(result);
     if (ending.kind === "stall") {
-      // The worker narrated a next step but never took it (weak model ended on a
-      // text-only turn). Hand back a tool digest if any ran, else a clean
-      // failure — never record the narration as a success the parent delivers.
+      // No tools and no report — weak model ended on empty/"Let me…" narration.
       await finish(
         "failed",
-        collectWorkerFallback(result) || "The task was not completed — the worker stopped before acting. No findings were returned.",
+        "The task was not completed — the worker stopped before acting. No findings were returned.",
         usage,
       );
       return;

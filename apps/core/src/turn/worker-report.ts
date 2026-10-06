@@ -5,7 +5,7 @@ const MAX = 20_000;
 export const EMPTY_WORKER_REPORT = "The worker finished with no output.";
 
 type ToolLike = { toolName?: string; output?: unknown; result?: unknown };
-type StepLike = { text?: string; reasoningText?: string; toolResults?: ToolLike[] };
+type StepLike = { text?: string; reasoningText?: string; toolResults?: ToolLike[]; toolCalls?: unknown[] };
 
 export type WorkerModelResult = {
   text?: string;
@@ -23,7 +23,7 @@ export function isEmptyWorkerReport(text: string): boolean {
   );
 }
 
-/** The labeled sections (or a NEEDS_PERSON line) that mark a finished worker report. */
+/** Labeled report sections (prompt convention — not a hard pass/fail gate). */
 const REPORT_MARKERS = /(^|\n)\s*(\*{0,2}(findings|what i did|blockers)\*{0,2}\s*:)|NEEDS_PERSON:/i;
 
 /** Mid-task narration that promises a next step the worker never took. */
@@ -57,49 +57,48 @@ export type WorkerEnding =
   | { kind: "stall" };
 
 /**
- * Decides what a worker's final text actually is.
- * Why: the AI SDK stops the moment a step has no tool call, so a weak model
- * that narrates ("Let me take a screenshot") instead of acting ends the run,
- * and that narration was being recorded as a successful result. A real report
- * carries Findings/What I did/Blockers or a NEEDS_PERSON line; a run that did
- * real tool work is trusted even without the labels; everything else is a stall
- * — and a stall that mentions a login/2FA/payment wall becomes a NEEDS_PERSON
- * handoff so the person is actually asked to step in instead of left hanging.
- * Input: the collected text and whether any tool ran. Output: the ending kind.
+ * Decides whether a worker ending is deliverable.
+ * Why: the AI SDK stops on a text-only step, so "Let me…" with no tools used to
+ * ship as a fake success. Tool work is trusted — narration after tools is
+ * progress, not failure. Findings labels stay a prompt convention only.
  */
 export function classifyWorkerEnding(text: string, ranTools: boolean): WorkerEnding {
   const trimmed = text.trim();
-  // Tools ran is trust — unless the text promises a next step without
-  // reporting one (narration like "Let me open it in Chromium" with no
-  // Findings). That is a stall even with tool calls behind it.
-  if (trimmed && (REPORT_MARKERS.test(trimmed) || (ranTools && !NEXT_STEP_NARRATION.test(trimmed)))) {
+
+  if (/NEEDS_PERSON:/i.test(trimmed)) {
     return { kind: "report", result: trimmed.slice(0, MAX) };
   }
-  const stalledOnNarration = !trimmed || (!ranTools && NEXT_STEP_NARRATION.test(trimmed));
-  if (stalledOnNarration && PERSON_GATE.test(trimmed)) {
+
+  // No tools: empty or next-step narration never acted. Login walls become a handoff.
+  if (!ranTools) {
+    if (!trimmed || NEXT_STEP_NARRATION.test(trimmed)) {
+      if (trimmed && PERSON_GATE.test(trimmed)) {
+        return { kind: "needs_person", result: "NEEDS_PERSON: Sign in on my computer, then tell me to continue." };
+      }
+      return { kind: "stall" };
+    }
+    return { kind: "report", result: trimmed.slice(0, MAX) };
+  }
+
+  // Tools ran: always deliver. Empty body is filled by resolveWorkerEnding.
+  if (trimmed && PERSON_GATE.test(trimmed) && NEXT_STEP_NARRATION.test(trimmed) && !REPORT_MARKERS.test(trimmed)) {
+    // Stuck on a login/2FA wall after looking — ask the person, don't retry-loop.
     return { kind: "needs_person", result: "NEEDS_PERSON: Sign in on my computer, then tell me to continue." };
-  }
-  if (!trimmed || (!ranTools && NEXT_STEP_NARRATION.test(trimmed))) {
-    return { kind: "stall" };
-  }
-  // Narration promising a next step with no reported findings is a stall even
-  // when tools ran behind it — otherwise "Let me open it in Chromium" ships
-  // as a success and the job silently dies. Plain non-narration text stays a report.
-  if (NEXT_STEP_NARRATION.test(trimmed)) {
-    return { kind: "stall" };
   }
   return { kind: "report", result: trimmed.slice(0, MAX) };
 }
 
 /**
  * Pulls a deliverable report out of a generateText result.
- * Why: AI SDK `text` is only the final step. OpenRouter reasoning models
- * (Deepseek and others) often end on a tool step or put Findings in reasoning,
- * so `text` is empty even though the run produced a report.
+ * Prefers a labeled Findings block from any step over the last mid-task line.
  */
 export function collectWorkerText(result: WorkerModelResult): string {
   const steps = result.steps ?? [];
   const texts = [...steps.map((step) => step.text ?? ""), result.text ?? ""].map((part) => part.trim()).filter(Boolean);
+  for (let i = texts.length - 1; i >= 0; i--) {
+    const report = findingsSlice(texts[i]!);
+    if (report) return report.slice(0, MAX);
+  }
   const lastText = texts.at(-1);
   if (lastText) return lastText.slice(0, MAX);
   const reasoning = [...steps.map((step) => step.reasoningText ?? ""), result.reasoningText ?? ""]
@@ -126,6 +125,31 @@ export function collectWorkerFallback(result: WorkerModelResult): string {
     .slice(-5);
   if (lines.length === 0) return "";
   return `The model ran tools but wrote no report.\n${lines.join("\n")}`.slice(0, MAX);
+}
+
+export function workerRanTools(result: WorkerModelResult): boolean {
+  if ((result.toolResults?.length ?? 0) > 0) return true;
+  return (result.steps ?? []).some(
+    (step) => (step.toolCalls?.length ?? 0) > 0 || (step.toolResults?.length ?? 0) > 0,
+  );
+}
+
+/**
+ * Single policy for turning a generateText result into a worker ending.
+ * Tools + empty text → done with tool digest. Stall only when nothing ran.
+ */
+export function resolveWorkerEnding(result: WorkerModelResult): WorkerEnding {
+  const ranTools = workerRanTools(result);
+  const text = collectWorkerText(result);
+  const ending = classifyWorkerEnding(text, ranTools);
+  if (ending.kind !== "report") return ending;
+  if (ending.result.trim()) return ending;
+  const fallback = collectWorkerFallback(result);
+  if (fallback) return { kind: "report", result: fallback };
+  if (ranTools) {
+    return { kind: "report", result: "Tools ran but produced no text output." };
+  }
+  return { kind: "stall" };
 }
 
 export function formatWorkerReport(raw: string, status: "done" | "failed"): string {

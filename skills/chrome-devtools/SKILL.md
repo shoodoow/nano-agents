@@ -77,6 +77,13 @@ Use these names. They run inside the account computer over localhost Chrome debu
 
 ## Workflow Patterns
 
+### Live SPA / signed-in session (Instagram, dashboards)
+
+1. `browser_navigate` to the exact profile/post URL.
+2. `browser_snapshot` — read counts and captions from the snapshot text.
+3. `browser_click` / `browser_press_key` with fresh `uid`s only.
+4. Write Findings when Success is met. Do **not** fall back to `bash`, `grep` of HTML, `curl`, or `chromium --headless --dump-dom`.
+
 ### Pattern A: Identifying Elements (Snapshot-First)
 
 Always prefer `take_snapshot` over `take_screenshot` for finding elements. The snapshot provides `uid` values which are required by interaction tools.

@@ -8,11 +8,12 @@ const keyOrder = ["decisions", "actions", "open", "entities", "corrections", "to
  * Why: skill names and the long system prompt sit in the middle, which cheap models drop.
  */
 export const TOOL_CONTRACT = [
-  "Tool contract:",
-  "On a person-opened turn, the first action is a send_message tool call. Plain text is not a reply.",
-  "Then one next tool. Do not write the plan.",
-  'Example: send_message with { "blocks": [{ "kind": "text", "markdown": "On it." }] }.',
-  "Stop.",
+  "Tool contract (hard):",
+  "On a person-opened turn, tool call #1 MUST be send_message — a short ack or answer the person can see.",
+  "Never call spawn_worker, web_search, read_skill, glob, hire_subagent, or any other tool before that first send_message.",
+  "Plain assistant text is invisible and does not count as a reply.",
+  "After send_message lands: at most one next work tool (usually spawn_worker), then stop.",
+  'Example first call: send_message { "blocks": [{ "kind": "text", "markdown": "On it — pulling the numbers now." }] }.',
 ].join("\n");
 
 export type PersonContext = {

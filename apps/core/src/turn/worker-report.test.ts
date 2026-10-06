@@ -5,6 +5,7 @@ import {
   collectWorkerFallback,
   collectWorkerText,
   isEmptyWorkerReport,
+  resolveWorkerEnding,
 } from "./worker-report.js";
 
 describe("collectWorkerText", () => {
@@ -17,6 +18,18 @@ describe("collectWorkerText", () => {
       ],
     });
     expect(report).toContain("Findings: bio is empty.");
+  });
+
+  it("prefers a Findings block over later next-step narration", () => {
+    const report = collectWorkerText({
+      text: "",
+      steps: [
+        { text: "Findings: Chrome DevTools was down.\nWhat I did: took a screenshot.\nBlockers: none" },
+        { text: "I'll relaunch Chrome with debugging and retry." },
+      ],
+    });
+    expect(report.startsWith("Findings:")).toBe(true);
+    expect(report).toContain("DevTools was down");
   });
 
   it("lifts Findings out of reasoning when OpenRouter left content empty", () => {
@@ -90,7 +103,6 @@ describe("classifyWorkerEnding", () => {
   });
 
   it("turns the Emily login-wall stall into a sign-in handoff", () => {
-    // The exact text that was recorded as a false success.
     const ending = classifyWorkerEnding("The page shows an Instagram login wall. Let me take a fresh screenshot to confirm.", false);
     expect(ending.kind).toBe("needs_person");
     if (ending.kind === "needs_person") expect(ending.result).toMatch(/NEEDS_PERSON:/);
@@ -101,10 +113,13 @@ describe("classifyWorkerEnding", () => {
     expect(classifyWorkerEnding("", false).kind).toBe("stall");
   });
 
-  it("flags next-step narration as a stall even when tools ran (Jenny/objkt case)", () => {
+  it("trusts next-step narration when tools already ran (Emily Chrome / Jenny objkt)", () => {
+    expect(
+      classifyWorkerEnding("The DevTools endpoint refused. I'll relaunch Chrome and retry.", true).kind,
+    ).toBe("report");
     expect(
       classifyWorkerEnding("The web_fetch returned empty (JS-heavy). Let me open objkt.com in Chromium.", true).kind,
-    ).toBe("stall");
+    ).toBe("report");
   });
 
   it("does not treat the word captcha alone as a person gate", () => {
@@ -121,5 +136,23 @@ describe("classifyWorkerEnding", () => {
   it("passes an explicit NEEDS_PERSON line straight through as a report", () => {
     const ending = classifyWorkerEnding("NEEDS_PERSON: Sign in to Instagram @getstackbrief", false);
     expect(ending.kind).toBe("report");
+  });
+});
+
+describe("resolveWorkerEnding", () => {
+  it("delivers a tool digest as done when tools ran with empty final text", () => {
+    const ending = resolveWorkerEnding({
+      text: "",
+      steps: [{ text: "", toolResults: [{ toolName: "bash", output: "chromium relaunched" }], toolCalls: [{}] }],
+    });
+    expect(ending.kind).toBe("report");
+    if (ending.kind === "report") {
+      expect(ending.result).toContain("bash");
+      expect(ending.result).toContain("chromium relaunched");
+    }
+  });
+
+  it("still stalls when nothing ran and the model only narrated", () => {
+    expect(resolveWorkerEnding({ text: "Let me open Chromium next.", steps: [] }).kind).toBe("stall");
   });
 });

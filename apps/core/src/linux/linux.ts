@@ -18,6 +18,24 @@ const docker = new Dockerode({
 
 export type ExecResult = { stdout: string; code: number };
 
+/** Docker demux can write after the hijack socket closes; swallow EPIPE so it never crashes core. */
+function swallowBrokenPipe(stream: PassThrough): void {
+  stream.on("error", (error: NodeJS.ErrnoException) => {
+    if (error.code === "EPIPE" || error.code === "ERR_STREAM_DESTROYED") return;
+  });
+}
+
+function execCaptureStreams(): { stdout: PassThrough; stderr: PassThrough; chunks: Buffer[] } {
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  swallowBrokenPipe(stdout);
+  swallowBrokenPipe(stderr);
+  const chunks: Buffer[] = [];
+  stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
+  stderr.on("data", (chunk: Buffer) => chunks.push(chunk));
+  return { stdout, stderr, chunks };
+}
+
 /**
  * Returns the directory every agent on this account's Linux can use.
  * Input: the account id. The container already belongs to that account.
@@ -131,13 +149,12 @@ export async function execBytes(
     AttachStderr: true,
   });
   const stream = await running.start({ hijack: true, stdin: false });
-  const stdout = new PassThrough();
-  const stderr = new PassThrough();
-  const chunks: Buffer[] = [];
-  stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
-  stderr.on("data", (chunk: Buffer) => chunks.push(chunk));
+  stream.on("error", () => {});
+  const { stdout, stderr, chunks } = execCaptureStreams();
   container.modem.demuxStream(stream, stdout, stderr);
   await finished(stream);
+  stdout.destroy();
+  stderr.destroy();
   const info = await running.inspect();
   return { stdout: Buffer.concat(chunks), code: info.ExitCode ?? 1 };
 }
@@ -167,15 +184,14 @@ export async function execStdin(
     AttachStderr: true,
   });
   const stream = await running.start({ hijack: true, stdin: true });
-  const stdout = new PassThrough();
-  const stderr = new PassThrough();
-  const chunks: Buffer[] = [];
-  stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
-  stderr.on("data", (chunk: Buffer) => chunks.push(chunk));
+  stream.on("error", () => {});
+  const { stdout, stderr, chunks } = execCaptureStreams();
   container.modem.demuxStream(stream, stdout, stderr);
   stream.write(stdin);
   stream.end();
   await finished(stream);
+  stdout.destroy();
+  stderr.destroy();
   const info = await running.inspect();
   return { stdout: Buffer.concat(chunks), code: info.ExitCode ?? 1 };
 }
@@ -194,19 +210,31 @@ export async function pipeExec(accountId: string, command: string[], socket: Dup
     AttachStderr: true,
   });
   const stream = await running.start({ hijack: true, stdin: true });
+  stream.on("error", () => socket.destroy());
   const stdout = new PassThrough();
   const stderr = new PassThrough();
+  swallowBrokenPipe(stdout);
+  swallowBrokenPipe(stderr);
   stderr.resume();
   container.modem.demuxStream(stream, stdout, stderr);
   if (preamble) {
     stream.write(preamble);
   }
+  stdout.on("error", () => socket.destroy());
   stdout.pipe(socket, { end: true });
+  socket.on("error", () => {
+    stream.destroy();
+    stdout.destroy();
+  });
   socket.on("data", (chunk: Buffer) => {
-    stream.write(chunk);
+    if (!stream.writable) return;
+    stream.write(chunk, (error) => {
+      if (error && (error as NodeJS.ErrnoException).code !== "EPIPE") {
+        socket.destroy();
+      }
+    });
   });
   socket.on("close", () => stream.end());
-  stream.on("error", () => socket.destroy());
   stream.on("end", () => socket.end());
 }
 
