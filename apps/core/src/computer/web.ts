@@ -18,6 +18,23 @@ function quietConsole(): VirtualConsole {
 const STATIC_MAX_BYTES = 500_000;
 const TEXT_MAX_CHARS = 15_000;
 
+/**
+ * Browser identity for static fetches (proven pattern from opencode's webfetch:
+ * a real browser UA + Accept-Language passes bot walls that flag script UAs
+ * like curl/wget defaults). The previous `nano-agents/1` UA was flagged by
+ * Cloudflare and JS-heavy marketing pages, turning one cheap fetch into a
+ * 300k-token browser worker escalation.
+ */
+export const BROWSER_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
+/** Alternate UA for the Cloudflare-challenge retry (opencode retries as "opencode"). */
+export const FALLBACK_USER_AGENT = "nano-agents/1";
+const ACCEPT_HEADERS = "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,text/markdown;q=0.8,text/plain;q=0.7,*/*;q=0.1";
+const ACCEPT_LANGUAGE = "Accept-Language: en-US,en;q=0.9";
+
+/** Extensions that are never page text — refuse before spending render budget. */
+const BINARY_EXTENSIONS = /\.(png|jpe?g|gif|webp|avif|svg|ico|pdf|zip|tar|gz|mp4|mp3|woff2?|ttf|eot)$/i;
+
 export type FetchedPage = {
   url: string;
   title: string;
@@ -144,9 +161,36 @@ function collectCodeSamples(document: Document): { lang: string; code: string }[
  * Input: live document (mutated). Output: nothing.
  */
 function stripBoilerplate(document: Document): void {
-  for (const node of document.querySelectorAll("script, style, noscript, template")) {
+  for (const node of document.querySelectorAll("script, style, noscript, template, header, nav, footer, aside")) {
     node.remove();
   }
+  // Embedded JSON blobs (__NEXT_DATA__, hydration state) leak through
+  // Turndown as text noise — on skills.sh the rows drowned in escaped JSON.
+  for (const node of document.querySelectorAll('script[type="application/json"], script#__NEXT_DATA__')) {
+    node.remove();
+  }
+}
+
+/** MIME guard (opencode pattern): refuse images/binaries with a clear message instead of garbage. */
+export function unsupportedMimeMessage(mime: string): string | null {
+  const base = mime.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  if (!base) return null;
+  if (base.startsWith("image/") && base !== "image/svg+xml") {
+    return `Unsupported fetched image content type: ${base}. Describe it from the page that links it, or use a browser worker with computer_screenshot.`;
+  }
+  const textual =
+    !base ||
+    base.startsWith("text/") ||
+    base === "application/json" ||
+    base.endsWith("+json") ||
+    base === "application/xml" ||
+    base.endsWith("+xml") ||
+    base === "application/javascript" ||
+    base === "application/x-javascript";
+  if (!textual) {
+    return `Unsupported fetched file content type: ${base}. Do not retry this URL with web_fetch.`;
+  }
+  return null;
 }
 
 /**
@@ -235,6 +279,15 @@ function headlessDumpDomCommand(quoted: string, wallSec: number, navTimeoutMs: n
   );
 }
 
+function wgetCommand(url: string, userAgent: string, timeoutSec: number): string[] {
+  const quoted = `'${url.replaceAll("'", `'\\''`)}'`;
+  return [
+    "sh",
+    "-c",
+    `wget -qO- --timeout=${timeoutSec} --tries=1 --max-redirect=5 -U '${userAgent}' --header='${ACCEPT_HEADERS}' --header='${ACCEPT_LANGUAGE}' ${quoted} 2>/dev/null | head -c ${STATIC_MAX_BYTES}`,
+  ];
+}
+
 export async function webFetch(
   accountId: string,
   profile: string,
@@ -242,18 +295,13 @@ export async function webFetch(
   opts?: WebFetchOptions,
 ): Promise<FetchedPage> {
   const url = safeUrl(rawUrl);
+  if (BINARY_EXTENSIONS.test(new URL(url).pathname)) {
+    throw new Error(`That URL looks like a file, not a page. Do not retry it with web_fetch.`);
+  }
   const quoted = `'${url.replaceAll("'", `'\\''`)}'`;
   const peek = opts?.dispatcherPeek === true;
   const wgetTimeoutSec = peek ? 8 : 20;
-  const staticResult = await exec(
-    accountId,
-    [
-      "sh",
-      "-c",
-      `wget -qO- --timeout=${wgetTimeoutSec} --tries=1 --max-redirect=5 -U 'nano-agents/1' --header='Accept: text/html' ${quoted} 2>/dev/null | head -c ${STATIC_MAX_BYTES}`,
-    ],
-    profile,
-  );
+  const staticResult = await exec(accountId, wgetCommand(url, BROWSER_USER_AGENT, wgetTimeoutSec), profile);
   let html = staticResult.stdout;
   let rendered = false;
   if (html.trim().length < 500) {
@@ -277,8 +325,21 @@ export async function webFetch(
         : "The page came back empty. It may block bots, need a login, or be unreachable from the computer.",
     );
   }
-  const parsed = htmlToMarkdown(html, url);
-  const wall = botWallMessage(`${parsed.title}\n${parsed.markdown}`);
+  let parsed = htmlToMarkdown(html, url);
+  let wall = botWallMessage(`${parsed.title}\n${parsed.markdown}`);
+  if (wall) {
+    // Cloudflare-challenge retry under an alternate UA before escalating to a
+    // worker (opencode pattern: retry as a different client; only escalate if
+    // both identities are walled). A worker escalation costs ~300k tokens.
+    const retry = await exec(accountId, wgetCommand(url, FALLBACK_USER_AGENT, wgetTimeoutSec), profile);
+    if (retry.stdout.trim().length > 0) {
+      const retryParsed = htmlToMarkdown(retry.stdout, url);
+      if (!botWallMessage(`${retryParsed.title}\n${retryParsed.markdown}`)) {
+        parsed = retryParsed;
+        wall = null;
+      }
+    }
+  }
   if (wall) throw new Error(wall);
   const truncated = parsed.markdown.length > TEXT_MAX_CHARS;
   return {

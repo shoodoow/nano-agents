@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { botWallMessage, htmlToMarkdown, safeUrl } from "./web.js";
+import {
+  BROWSER_USER_AGENT,
+  botWallMessage,
+  htmlToMarkdown,
+  safeUrl,
+  unsupportedMimeMessage,
+} from "./web.js";
 
 /**
  * Locks web fetch guards and LLM-ready extraction: only public targets pass,
@@ -43,6 +49,15 @@ describe("web guards and extraction", () => {
     expect(botWallMessage("Just a moment...\nVerification successful.")).toMatch(/challenge/i);
     expect(botWallMessage("# Attention Required! | Cloudflare\nWhy have I been blocked?")).toMatch(/spawn_worker/i);
     expect(botWallMessage("# Claude pricing\n$3 per million input tokens")).toBeNull();
+  });
+
+  it("identifies as a browser and guards non-page content", () => {
+    expect(BROWSER_USER_AGENT).toContain("Chrome/");
+    expect(BROWSER_USER_AGENT).not.toMatch(/nano-agents/);
+    expect(unsupportedMimeMessage("image/png")).toMatch(/Unsupported fetched image/);
+    expect(unsupportedMimeMessage("application/zip")).toMatch(/Unsupported fetched file/);
+    expect(unsupportedMimeMessage("text/html; charset=utf-8")).toBeNull();
+    expect(unsupportedMimeMessage("application/json")).toBeNull();
   });
 
   it("falls back to full-body Markdown when nothing scores as an article", () => {

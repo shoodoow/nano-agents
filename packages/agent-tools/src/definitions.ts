@@ -316,7 +316,7 @@ export const allToolDefinitions: ToolDefinition[] = [
   {
     name: "web_search",
     description:
-      "Search the public web. Returns title, URL, and snippet, not page text. Use to pick links, then web_fetch the ones worth reading.",
+      "Search the public web. Returns title, URL, and a substantive snippet — often enough to answer without fetching. Pick links, then web_fetch the ones worth reading. Never repeat the same query with small rewordings: after one empty result, fetch the closest URL you have or report partial findings.",
     surfaces: ["dispatcher", "worker"],
     requiresLinux: true,
     inputSchema: webSearchInputSchema,

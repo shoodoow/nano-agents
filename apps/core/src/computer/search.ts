@@ -93,9 +93,11 @@ async function runProvider(
       query,
       numResults: count,
       type: "auto",
+      livecrawl: "fallback",
       contents: {
-        text: { maxCharacters: 500 },
-        highlights: { maxCharacters: 400, query },
+        text: { maxCharacters: 2_500 },
+        summary: { query },
+        highlights: { maxCharacters: 1_000, query },
       },
     });
     const error = parseApiError(raw);
@@ -176,8 +178,25 @@ export function parseExaResponse(raw: string): SearchResult[] {
     };
     return (data.results ?? [])
       .map((row) => {
-        const highlight = Array.isArray(row.highlights) ? row.highlights.join(" ").trim() : "";
-        const snippet = String(row.text ?? row.summary ?? highlight).slice(0, 500);
+        // Combine all evidence fields instead of first-nonempty: text carries
+        // the page body, summary carries Exa's query-focused abstract, and
+        // highlights carry the matched passages. One field alone is what made
+        // snippets too thin to answer from.
+        const parts = [
+          typeof row.summary === "string" ? row.summary.trim() : "",
+          Array.isArray(row.highlights) ? row.highlights.join(" ").trim() : "",
+          typeof row.text === "string" ? row.text.trim() : "",
+        ].filter((part) => part.length > 0);
+        const seen = new Set<string>();
+        const snippet = parts
+          .filter((part) => {
+            const key = part.slice(0, 80).toLowerCase();
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          })
+          .join("\n")
+          .slice(0, 1_500);
         return {
           title: String(row.title ?? "Untitled").slice(0, 200),
           url: String(row.url ?? ""),

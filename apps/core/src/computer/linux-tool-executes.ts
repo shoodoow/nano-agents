@@ -31,6 +31,11 @@ export function linuxToolExecutes(
   /** Screenshots this worker has taken. Reset per run by construction. */
   let screenshots = 0;
   const SCREENSHOT_BUDGET = 4;
+  /**
+   * Reword-loop breaker. Reset per run by construction
+   */
+  const seenQueries = new Map<string, number>();
+  let consecutiveEmpty = 0;
   return {
     read: async (input) => conciseOutput(await readFile(accountId, profile, String(input.path))),
     write: async (input) => {
@@ -72,16 +77,32 @@ export function linuxToolExecutes(
     web_search: async (input) => {
       const query = String(input.query);
       const numResults = typeof input.numResults === "number" ? input.numResults : undefined;
+      const fingerprint = query.toLowerCase().replace(/\s+/g, " ").trim().slice(0, 200);
+      const repeats = (seenQueries.get(fingerprint) ?? 0) + 1;
+      seenQueries.set(fingerprint, repeats);
+      if (repeats >= 3) {
+        return (
+          `Same query asked ${repeats} times this run — stop rewording it. ` +
+          `web_fetch the best URL you already have, or report partial findings with blockers. ` +
+          `Do not call web_search again with the same words.`
+        );
+      }
       const [braveKey, exaKey] = await Promise.all([
         toolKeyFor(db, accountId, "brave").catch(() => null),
         toolKeyFor(db, accountId, "exa").catch(() => null),
       ]);
       const searched = await webSearch(accountId, profile, query, { numResults, braveKey, exaKey });
       if (searched.results.length === 0) {
+        consecutiveEmpty += 1;
         const via = searched.fallbackFrom ? `${searched.fallbackFrom} then ${searched.provider}` : searched.provider;
         if (searched.error) return `Search failed (${via}): ${searched.error}`;
-        return `No results (${via}). Try different words or spawn_worker for deep research.`;
+        const stopHint =
+          consecutiveEmpty >= 2
+            ? " Two empty searches in a row — do not reword again. web_fetch the closest URL you have or report partial findings."
+            : " If a reword also comes back empty, stop searching: web_fetch the closest URL you have or report partial findings.";
+        return `No results (${via}).${stopHint}`;
       }
+      consecutiveEmpty = 0;
       const via =
         searched.fallbackFrom != null
           ? `${searched.provider} (fallback after ${searched.fallbackFrom})`

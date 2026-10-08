@@ -29,6 +29,25 @@ describe("web search providers", () => {
     expect(rows[0]!.snippet).toContain("$3 per million");
   });
 
+  it("combines summary, highlights, and text so one search answers", () => {
+    const raw = JSON.stringify({
+      results: [
+        {
+          title: "Pricing",
+          url: "https://docs.example/pricing",
+          summary: "Input is $3 per million tokens.",
+          highlights: ["$3 per million input"],
+          text: "Full pricing page body with output at $15.",
+        },
+      ],
+    });
+    const rows = parseExaResponse(raw);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.snippet).toContain("$3 per million tokens");
+    expect(rows[0]!.snippet).toContain("$15");
+    expect(rows[0]!.snippet.length).toBeGreaterThan(50);
+  });
+
   it("surfaces provider API errors", () => {
     expect(parseApiError('{"error":"Invalid API key"}')).toBe("Invalid API key");
     expect(parseBraveResponse('{"web":{"results":[{"title":"A","url":"https://a.com","description":"hi"}]}}')).toHaveLength(1);
