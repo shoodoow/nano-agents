@@ -42,22 +42,32 @@ Chat from your phone. Agents team up, run workers, remember, schedule routines, 
 
 ---
 
-## ⚡ 60-second quickstart
+## ⚡ How to run
 
-> Full tunnel + OAuth + VPS guide: [`deploy/SETUP.md`](deploy/SETUP.md)
+> Tunnel, Google OAuth, and VPS details: [`deploy/SETUP.md`](deploy/SETUP.md)
+
+Need **Node.js ≥ 22.13**, **pnpm 12.6** (`packageManager` in the root `package.json`), and **Docker** (Postgres). A phone also needs **Expo Go**, **cloudflared**, a domain, and a Google OAuth web client. Copy env files only when they are missing so you do not wipe secrets.
 
 ```bash
 git clone git@github.com:shoodoow/nano-agents.git && cd nano-agents
 pnpm install
-docker compose up -d postgres
+
+docker compose up -d postgres          # waits until healthy on :5432
+cp -n apps/core/.env.example apps/core/.env
+cp -n apps/mobile/.env.example apps/mobile/.env
+# apps/core/.env: DATABASE_URL, BETTER_AUTH_SECRET (openssl rand -hex 32),
+# BETTER_AUTH_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+# apps/mobile/.env: EXPO_PUBLIC_CORE_URL = the same public HTTPS origin
+
 pnpm db:migrate
 
-cp apps/core/.env.example apps/core/.env       # fill secrets (never commit!)
-cp apps/mobile/.env.example apps/mobile/.env   # EXPO_PUBLIC_CORE_URL=https://<your-host>
+pnpm --filter core dev                 # API on :3000 — leave this running
+curl -fsS http://127.0.0.1:3000/health # {"ok":true}
 
-pnpm --filter core dev            # API on :3000
-pnpm --filter mobile start:clear  # scan QR with Expo Go
+pnpm --filter mobile start:clear       # second terminal; scan the QR in Expo Go
 ```
+
+Local emulator without a tunnel: Android `pnpm --filter mobile android:local` (`http://10.0.2.2:3000`), iOS simulator `pnpm --filter mobile ios` (`http://127.0.0.1:3000`). A physical phone must use the public HTTPS core URL.
 
 <details>
 <summary><b>Prerequisites (click to expand)</b></summary>
