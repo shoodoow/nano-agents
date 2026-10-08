@@ -1,5 +1,5 @@
 import { Image, Modal, Pressable, StyleSheet, Text, View } from "react-native";
-import { colors } from "../theme/tokens";
+import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
 import type { Reaction } from "../api";
 
 // Server allowlist (shared reactionSchema) — the only emoji that may be sent.
@@ -91,7 +91,8 @@ export function Reactions({
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
   wrap: { marginTop: 4, gap: 4 },
   chipsRow: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" },
   chip: {
@@ -113,10 +114,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     gap: 2,
     alignItems: "center",
-    shadowColor: "#000",
-    shadowOpacity: 0.5,
-    shadowRadius: 12,
-    elevation: 8,
+    boxShadow: "0 8px 16px rgba(0, 0, 0, 0.35)",
   },
   key: { paddingVertical: 6, paddingHorizontal: 8 },
+});
+}
+
+let styles = createStyles(darkColors);
+onPaletteChange((next) => {
+  styles = createStyles(next);
 });

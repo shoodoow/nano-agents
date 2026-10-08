@@ -1,13 +1,11 @@
-import { useMemo, useState, type ReactNode } from "react";
-import { Feather } from "@expo/vector-icons";
-import { FlatList, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { useMemo, useState } from "react";
+import { FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import type { RosterAgent } from "../api";
-import { colors } from "../theme/tokens";
+import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
+import { useResolvedScheme } from "../theme/appearance";
 import { Avatar } from "../ui/Avatar";
 import { GroupCluster, type GroupFace } from "../ui/GroupCluster";
-import { CircleButton } from "../ui/CircleButton";
-import { pressableStyle } from "../ui/pressableStyles";
-import { IconPlus, IconReply, IconSearch } from "../ui/icons";
+import { IconPin, IconEyeOff, IconReply } from "../ui/icons";
 
 /**
  * Shows the account roster plus group rooms in a chat-list layout.
@@ -20,30 +18,24 @@ import { IconPlus, IconReply, IconSearch } from "../ui/icons";
 export function InboxScreen({
   agents,
   groups,
-  pendingCount,
-  onAccount,
-  onNew,
+  searching,
   onOpen,
   onOpenGroup,
   onPin,
   onHide,
-  menu,
-  onCloseMenu,
+  note,
 }: {
   agents: RosterAgent[];
   groups: { id: string; title: string; memberCount: number; members: GroupFace[] }[];
-  pendingCount?: number;
-  onAccount: () => void;
-  onNew: () => void;
+  searching: boolean;
   onOpen: (agent: RosterAgent) => void;
   onOpenGroup: (conversationId: string) => void;
   onPin: (agent: RosterAgent) => void;
   onHide: (agent: RosterAgent) => void;
-  menu?: ReactNode;
-  onCloseMenu?: () => void;
+  note?: string;
 }) {
+  useResolvedScheme();
   const [query, setQuery] = useState("");
-  const [searching, setSearching] = useState(false);
   const visible = useMemo(() => agents.filter((agent) => !agent.hidden), [agents]);
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -58,29 +50,6 @@ export function InboxScreen({
 
   return (
     <View style={styles.screen}>
-      <View style={styles.header}>
-        <Pressable
-          accessibilityLabel="Account"
-          accessibilityRole="button"
-          onPress={onAccount}
-          style={({ pressed }) => pressableStyle(styles.account, { pressed })}
-        >
-          <Avatar id="account" size={36} person />
-        </Pressable>
-        <View style={styles.headerActions}>
-          {pendingCount != null && pendingCount > 0 ? (
-            <View style={styles.pingBadge} accessibilityLabel={`${pendingCount} unread pings`}>
-              <Text style={styles.pingText}>{pendingCount > 99 ? "99+" : String(pendingCount)}</Text>
-            </View>
-          ) : null}
-          <CircleButton label="Search" active={searching} onPress={() => setSearching((open) => !open)}>
-            <IconSearch />
-          </CircleButton>
-          <CircleButton label="New chat" onPress={onNew}>
-            <IconPlus />
-          </CircleButton>
-        </View>
-      </View>
       {searching ? (
         <TextInput
           value={query}
@@ -96,6 +65,8 @@ export function InboxScreen({
         data={rows}
         keyExtractor={(agent) => agent.id}
         contentContainerStyle={styles.list}
+        contentInsetAdjustmentBehavior="automatic"
+        keyboardShouldPersistTaps="handled"
         ListHeaderComponent={
           <>
             {pinned.length > 0 ? (
@@ -190,16 +161,7 @@ export function InboxScreen({
           </Pressable>
         )}
       />
-      {menu ? (
-        <Modal
-          visible
-          animationType="slide"
-          presentationStyle={Platform.OS === "ios" ? "pageSheet" : "fullScreen"}
-          onRequestClose={onCloseMenu}
-        >
-          <View style={styles.iosSheet}>{menu}</View>
-        </Modal>
-      ) : null}
+      {note ? <Text style={styles.note}>{note}</Text> : null}
       <Modal visible={held !== null} transparent animationType="fade" onRequestClose={() => setHeld(null)}>
         <Pressable accessibilityLabel="Dismiss" style={styles.scrim} onPress={() => setHeld(null)}>
           {held ? (
@@ -228,7 +190,7 @@ export function InboxScreen({
                     onPin(agent);
                   }}
                 >
-                  <Feather name="map-pin" size={18} color="#fff" />
+                  <IconPin />
                   <Text style={styles.holdLabel}>{held.pinned ? "Unpin" : "Pin"}</Text>
                 </Pressable>
                 <Pressable
@@ -240,7 +202,7 @@ export function InboxScreen({
                     onHide(agent);
                   }}
                 >
-                  <Feather name="eye-off" size={18} color={colors.danger} />
+                  <IconEyeOff />
                   <Text style={[styles.holdLabel, styles.holdDanger]}>Hide</Text>
                 </Pressable>
               </View>
@@ -271,7 +233,8 @@ function PinnedFace({ agent }: { agent: RosterAgent }) {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingTop: 8 },
   account: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
@@ -290,7 +253,7 @@ const styles = StyleSheet.create({
     height: 44,
     fontSize: 16,
   },
-  list: { paddingBottom: 32 },
+  list: { paddingTop: 8, paddingBottom: 32 },
   groups: { marginTop: 8 },
   groupsTitle: { color: colors.muted, fontSize: 13, fontWeight: "700", textTransform: "uppercase", paddingHorizontal: 16, marginBottom: 4 },
   pinnedRow: { gap: 8, paddingTop: 28, paddingBottom: 16, paddingHorizontal: 16, flexGrow: 1, justifyContent: "center" },
@@ -298,6 +261,7 @@ const styles = StyleSheet.create({
   pinnedFace: { width: 108, height: 76, alignItems: "center", justifyContent: "center" },
   pinnedLabel: { color: colors.text, fontSize: 13, textAlign: "center" },
   empty: { color: colors.muted, textAlign: "center", marginTop: 80, fontSize: 16, paddingHorizontal: 32 },
+  note: { color: colors.danger, position: "absolute", left: 20, right: 20, bottom: 24, fontSize: 14 },
   row: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 10, gap: 12 },
   pressed: { opacity: 0.6 },
   rowBody: { flex: 1, gap: 3 },
@@ -316,4 +280,10 @@ const styles = StyleSheet.create({
   holdRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, paddingVertical: 14 },
   holdLabel: { color: colors.text, fontSize: 16 },
   holdDanger: { color: colors.danger },
+});
+}
+
+let styles = createStyles(darkColors);
+onPaletteChange((next) => {
+  styles = createStyles(next);
 });

@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Linking, Platform, StatusBar, StyleSheet, Text } from "react-native";
-import { AppKeyboardShell } from "./src/ui/AppKeyboardShell";
-import { authCallbackURL } from "./src/auth-callback-url";
-import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { Linking, Platform } from "react-native";
+import { router } from "expo-router";
+import type { MenuPage, SignedAccount } from "../account/MenuSheet";
+import { authCallbackURL } from "../auth-callback-url";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
@@ -20,7 +20,7 @@ import {
   type RosterAgent,
   type Routine,
   type ToolApproval,
-} from "./src/api";
+} from "../api";
 import { blocksFromMaybeWidgetText, expandWidgetMarkupBlocks } from "@nano-agents/shared";
 import {
   configureForegroundBanners,
@@ -28,27 +28,19 @@ import {
   getPushToken,
   onPushTap,
   scheduleLocalNotification,
-} from "./src/push";
-import { authClient } from "./src/auth";
-import { installOAuthReturnHandler } from "./src/auth-oauth-return";
+} from "../push";
+import { authClient } from "../auth";
+import { installOAuthReturnHandler } from "../auth-oauth-return";
 import * as WebBrowser from "expo-web-browser";
-import { coreBaseUrl } from "./src/core-url";
-import { MenuSheet, type MenuPage, type SignedAccount } from "./src/account/MenuSheet";
-import { pluginSlug } from "./src/account/PluginsPage";
-import { ApprovalsScreen } from "./src/approvals/ApprovalsScreen";
-import { BotInfoScreen } from "./src/chat/BotInfoScreen";
-import { GroupInfoScreen } from "./src/chat/GroupInfoScreen";
-import { ChatScreen, type Bubble } from "./src/chat/ChatScreen";
-import type { RoomActivityPhase } from "./src/chat/room-activity";
-import { DesktopScreen } from "./src/desktop/DesktopScreen";
-import { InboxScreen } from "./src/inbox/InboxScreen";
-import { DotBakery, hydrateMarkThumbCache, warmMarkThumbs } from "./src/ui/DotStage";
-import { resolveMarkLook } from "./src/ui/Mark";
-import { NewRoomSheet } from "./src/inbox/NewRoomSheet";
-import { documentPickerOptions } from "./src/media/documentPickerOptions";
-import { cameraPickerOptions, imageLibraryPickerOptions } from "./src/media/imagePickerOptions";
-import { colors } from "./src/theme/tokens";
-import type { GroupFace } from "./src/ui/GroupCluster";
+import { coreBaseUrl } from "../core-url";
+import { pluginSlug } from "../account/PluginsPage";
+import { ChatScreen, type Bubble } from "../chat/ChatScreen";
+import type { RoomActivityPhase } from "../chat/room-activity";
+import { DotBakery, hydrateMarkThumbCache, warmMarkThumbs } from "../ui/DotStage";
+import { resolveMarkLook } from "../ui/Mark";
+import { documentPickerOptions } from "../media/documentPickerOptions";
+import { cameraPickerOptions, imageLibraryPickerOptions } from "../media/imagePickerOptions";
+import type { GroupFace } from "../ui/GroupCluster";
 
 configureAuthCookie(authClient.getCookie);
 const core = createCore();
@@ -134,42 +126,33 @@ export type Attachment = {
   mime?: string | null;
 };
 
-type Screen =
-  | { name: "inbox" }
-  | {
-      name: "chat";
-      agent: RosterAgent;
-      conversationId: string;
-      kind: "direct" | "group";
-      title: string;
-      subtitle: string;
-      memberIds: string[];
-    }
-  | { name: "desktop"; agent: RosterAgent }
-  | { name: "profile"; agent: RosterAgent; fromGroup?: boolean }
-  | {
-      name: "group";
-      conversationId: string;
-      title: string;
-      memberIds: string[];
-      owner: RosterAgent;
-    }
-  | { name: "approvals" };
+export type ChatTarget = {
+  agent: RosterAgent;
+  conversationId: string;
+  kind: "direct" | "group";
+  title: string;
+  subtitle: string;
+  memberIds: string[];
+};
+
+function closeSheets(): void {
+  if (router.canDismiss()) {
+    router.dismissAll();
+  }
+}
 
 /**
  * Shows the roster, a chat, approvals, a profile, and the live desktop.
  * Input: none. The core URL comes from EXPO_PUBLIC_CORE_URL.
  * Output: the phone screens for those actions.
  */
-export default function App() {
+export function SessionProvider({ children }: { children: ReactNode }) {
   const [accounts, setAccounts] = useState<SignedAccount[]>([]);
   const [accountId, setAccountId] = useState("");
   const [agents, setAgents] = useState<RosterAgent[]>([]);
   const [providers, setProviders] = useState<ProviderSetting[]>([]);
   const [plugins, setPlugins] = useState<PluginList | null>(null);
-  const [screen, setScreen] = useState<Screen>({ name: "inbox" });
   const [menu, setMenu] = useState<MenuPage | null>(null);
-  const [creating, setCreating] = useState(false);
   const [afterSignup, setAfterSignup] = useState(false);
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<Bubble[]>([]);
@@ -198,14 +181,10 @@ export default function App() {
   const [contextRing, setContextRing] = useState<{ share: number; hint: string } | null>(null);
   const [groups, setGroups] = useState<{ id: string; title: string; memberCount: number; members: GroupFace[] }[]>([]);
   // Last opened chat, so the desktop back-button returns to the right title.
-  const [lastChat, setLastChat] = useState<{
-    agent: RosterAgent;
-    conversationId: string;
-    kind: "direct" | "group";
-    title: string;
-    subtitle: string;
-    memberIds: string[];
-  } | null>(null);
+  const [lastChat, setLastChat] = useState<ChatTarget | null>(null);
+  const lastChatRef = useRef(lastChat);
+  lastChatRef.current = lastChat;
+  const [desktopAgent, setDesktopAgent] = useState<RosterAgent | null>(null);
   const [notifications, setNotifications] = useState(true);
   const [pendingCount, setPendingCount] = useState(0);
   const [autoReview, setAutoReview] = useState(true);
@@ -249,8 +228,9 @@ export default function App() {
     if (zone) {
       await core.rememberTimezone(accountIdFromSession, zone).catch(() => {});
     }
-    setScreen({ name: "inbox" });
     setMenu(null);
+    closeSheets();
+    router.replace("/");
     setNote("");
     await loadGroups(accountIdFromSession, roster);
     // Best-effort push registration + badge: no EAS projectId, denied
@@ -311,7 +291,7 @@ export default function App() {
     }
     if (afterSignup) {
       setAfterSignup(false);
-      setCreating(true);
+      router.push("/new-room");
     }
   }
 
@@ -386,7 +366,6 @@ export default function App() {
     const roster = await core.listAgents(id);
     setAgents(roster);
     setProviders(await core.listProviders(id));
-    setScreen({ name: "inbox" });
     setMenu("menu");
     setNote("");
     await loadGroups(id, roster);
@@ -413,7 +392,6 @@ export default function App() {
     const fresh = rows.find((row) => row.id === hired.id) ?? hired;
     setAgents(rows);
     await enterRoom({ id: room.id, kind: "direct", title: fresh.name, ownerAgentId: fresh.id }, rows);
-    setCreating(false);
     await loadGroups(accountId, rows);
   }
 
@@ -427,7 +405,6 @@ export default function App() {
     const rows = await core.listAgents(accountId);
     setAgents(rows);
     await enterRoom({ id: room.id, kind: "group", title, ownerAgentId: agentIds[0]! }, rows);
-    setCreating(false);
     await loadGroups(accountId, rows);
   }
 
@@ -474,10 +451,11 @@ export default function App() {
   }
 
   function turnMetaFromScreen(): { isGroup: boolean; agentName: string } {
-    if (screen.name !== "chat") {
+    const chat = lastChatRef.current;
+    if (!chat) {
       return { isGroup: false, agentName: "Agent" };
     }
-    return { isGroup: screen.kind === "group", agentName: screen.agent.name };
+    return { isGroup: chat.kind === "group", agentName: chat.agent.name };
   }
 
   function mergeThread(fresh: Bubble[]): void {
@@ -501,7 +479,7 @@ export default function App() {
     mergeThread(await loadThread(roomId, roster));
   }
 
-  const liveRoomId = screen.name === "chat" ? screen.conversationId : "";
+  const liveRoomId = conversationId;
 
   /**
    * Keeps the open chat matched to the server while the room stays on screen.
@@ -626,7 +604,8 @@ export default function App() {
     setAgents(roster);
     setConversationId(room.id);
     setLastChat(opened);
-    setScreen({ name: "chat", ...opened });
+    closeSheets();
+    router.push(`/chat/${room.id}`);
     setContextRing(null);
     void loadContextLine(room.id);
     setMessages(toBubbles(history, taps, roster));
@@ -1009,8 +988,9 @@ export default function App() {
       : await core.listProposals(accountId.trim());
     setProposals(next);
     setToolApprovals(await core.listToolApprovals(accountId.trim()).catch(() => []));
-    setScreen({ name: "approvals" });
     setMenu(null);
+    closeSheets();
+    router.push("/approvals");
     setNote("");
   }
 
@@ -1040,38 +1020,33 @@ export default function App() {
    * desktop More menu used to open. Input: the agent. Output: nothing.
    * The profile screen opens on it.
    */
-  function openProfile(agent: RosterAgent, fromGroup = false): void {
+  function openProfile(agent: RosterAgent): void {
     void core
       .listProviders(accountId.trim())
       .then(setProviders)
       .catch(show);
     void refreshRoutines(agent.id).catch(show);
     setProfile(agent);
-    if (screen.name === "chat" && screen.kind === "direct" && screen.agent.id === agent.id) {
-      setProfileFeed(messages.map((row) => ({ ...row, conversationId: screen.conversationId })));
+    const chat = lastChatRef.current;
+    if (chat && chat.kind === "direct" && chat.agent.id === agent.id) {
+      setProfileFeed(messages.map((row) => ({ ...row, conversationId: chat.conversationId })));
     } else {
       setProfileFeed([]);
     }
-    setScreen({ name: "profile", agent, fromGroup });
+    router.push(`/profile/${agent.id}`);
     void loadDirectFeed(agent.id).then(setProfileFeed).catch(show);
   }
 
   /** Opens the room page for a group instead of the owner's profile. */
   async function openGroupInfo(): Promise<void> {
-    if (screen.name !== "chat" || screen.kind !== "group") return;
-    const conversationId = screen.conversationId;
-    const memberIds = screen.memberIds;
-    setGroupFeed(messages.map((row) => ({ ...row, conversationId })));
-    setScreen({
-      name: "group",
-      conversationId,
-      title: screen.title,
-      memberIds,
-      owner: screen.agent,
-    });
-    const history = await core.listMessages(accountId.trim(), conversationId).catch(() => null);
+    const chat = lastChatRef.current;
+    if (!chat || chat.kind !== "group") return;
+    const roomId = chat.conversationId;
+    setGroupFeed(messages.map((row) => ({ ...row, conversationId: roomId })));
+    router.push(`/group/${roomId}`);
+    const history = await core.listMessages(accountId.trim(), roomId).catch(() => null);
     if (!Array.isArray(history)) return;
-    setGroupFeed(toBubbles(history, [], agents).map((row) => ({ ...row, conversationId })));
+    setGroupFeed(toBubbles(history, [], agents).map((row) => ({ ...row, conversationId: roomId })));
   }
 
   /** Loads one agent's private thread for the profile Links, Media, and Files tabs. */
@@ -1214,242 +1189,212 @@ export default function App() {
     await Linking.openURL(started.url);
   }
 
-  return (
-    <SafeAreaProvider>
-    <AppKeyboardShell>
-    <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
-      <StatusBar barStyle="light-content" />
-      <DotBakery />
-      {screen.name === "inbox" ? (
-        <InboxScreen
-          agents={agents}
-          groups={groups}
-          pendingCount={pendingCount}
-          onOpenGroup={(id) => void openGroup(id).catch(show)}
-          onAccount={() => {
-            if (!account) {
-              setMenu("signup");
-              return;
-            }
-            void core
-              .listProviders(account.id)
-              .then((rows) => {
-                setProviders(rows);
-                setMenu("menu");
-              })
-              .catch(show);
-          }}
-          onNew={() => {
-            if (!accountId) {
-              setAfterSignup(true);
-              setMenu("signup");
-              return;
-            }
-            setCreating(true);
-          }}
-          onOpen={(agent) => void openAgent(agent).catch(show)}
-          onPin={(agent) => void setRosterFlag(agent, { pinned: !agent.pinned }).catch(show)}
-          onHide={(agent) => void setRosterFlag(agent, { hidden: true }).catch(show)}
-          onCloseMenu={() => setMenu(null)}
-          menu={
-            menu ? (
-              <MenuSheet
-                page={menu}
-                account={account}
-                accounts={accounts}
-                notifications={notifications}
-                autoReview={autoReview}
-                autoTimeZone={autoTimeZone}
-                timeZone={timeZone}
-                providers={providers}
-                plugins={plugins}
-                onClose={() => setMenu(null)}
-                onPage={(page) => {
-                  setMenu(page);
-                  if (page === "plugins") void refreshPlugins().catch(show);
-                }}
-                onNotifications={setNotifications}
-                onAutoReview={(value) => void persistAutoReview(value).catch(show)}
-                onAutoTimeZone={setAutoTimeZone}
-                onApprovals={() => void refreshProposals().catch(show)}
-                onComputer={() => {
-                  const agent = agents.find((row) => row.linuxProfile) ?? agents[0];
-                  if (agent) {
-                    setMenu(null);
-                    setScreen({ name: "desktop", agent });
-                  }
-                }}
-                onSaveProvider={(provider, secret, baseUrl) =>
-                  void saveProvider(provider, secret, baseUrl).catch(show)
-                }
-                onAddPlugin={(id) => void addPlugin(id).catch(show)}
-                onRemovePlugin={(id) => void core.deleteMcpPlugin(accountId, id).then(refreshPlugins).catch(show)}
-                onRefreshPlugins={() => void refreshPlugins().catch(show)}
-                onSaveCustomPlugin={(name, url, secret) => void saveCustomPlugin(name, url, secret).catch(show)}
-                onSignInCustomPlugin={(name, url) => void signInCustomPlugin(name, url).catch(show)}
-                onGoogle={() => void signInWithGoogle().catch(show)}
-                onSwitch={(id) => void switchAccount(id).catch(show)}
-                onSignOut={() => {
-                  void authClient.signOut().catch(show);
-                  setAccountId("");
-                  setAgents([]);
-                  setMenu("signup");
-                }}
-                onDelete={(id) => {
-                  setAccounts((rows) => rows.filter((row) => row.id !== id));
-                  if (accountId === id) {
-                    setAccountId("");
-                    setAgents([]);
-                    setMenu("signup");
-                  }
-                }}
-              />
-            ) : null
-          }
-        />
-      ) : null}
-      {screen.name === "chat" ? (
-        <ChatScreen
-          agent={screen.agent}
-          conversationId={screen.conversationId}
-          title={screen.title}
-          subtitle={screen.subtitle}
-          contextRing={contextRing}
-          members={
-            screen.kind === "group" ? agents.filter((row) => screen.memberIds.includes(row.id)) : []
-          }
-          roster={agents}
-          messages={messages}
-          draft={draft}
-          sending={sending}
-          roomActivity={roomActivity}
-          isGroup={screen.kind === "group"}
-          error={note}
-          replyTo={replyTo}
-          attachments={attachments}
-          onDraft={setDraft}
-          onSend={() => void send(screen.conversationId).catch(show).finally(() => setSending(false))}
-          onPickImage={() => void pickImage().catch(show)}
-          onPickCamera={() => void pickCamera().catch(show)}
-          onPickFile={() => void pickFile().catch(show)}
-          onRemoveAttachment={(id) => setAttachments((current) => current.filter((attachment) => attachment.id !== id))}
-          onReply={setReplyTo}
-          onClearReply={() => setReplyTo(null)}
-          onPollSubmit={(text) => void sendText(screen.conversationId, text).catch(show)}
-          onQuestionPick={(messageId, pick) =>
-            void answerQuestion(screen.conversationId, messageId, pick).catch(show)
-          }
-          onSecretSubmit={(name, secret) => saveVaultSecret(name, secret)}
-          onReact={(bubble, emoji) => void toggleReaction(screen.conversationId, bubble, emoji).catch(show)}
-          onApprove={(approvalId) => {
-            if (approvalId) void decideToolRow(approvalId, true).catch(show);
-            else void refreshProposals().catch(show);
-          }}
-          onDeny={(approvalId) => {
-            if (approvalId) void decideToolRow(approvalId, false).catch(show);
-            else void refreshProposals().catch(show);
-          }}
-          onFetchBlob={(messageId, index) =>
-            core.blob(accountId.trim(), screen.conversationId, messageId, index)
-          }
-          onBack={() => setScreen({ name: "inbox" })}
-          onDesktop={() => setScreen({ name: "desktop", agent: screen.agent })}
-          onAgentMenu={() => {
-            if (screen.kind === "group") void openGroupInfo().catch(show);
-            else openProfile(screen.agent);
-          }}
-          onOpenAgent={(agentId) => {
-            const target = agents.find((row) => row.id === agentId);
-            if (target) void openAgent(target).catch(show);
-          }}
-        />
-      ) : null}
-      {screen.name === "desktop" ? (
-        <DesktopScreen
-          accountId={accountId.trim()}
-          agent={screen.agent}
-          onBack={() =>
-            lastChat && conversationId
-              ? setScreen({ name: "chat", ...lastChat })
-              : setScreen({ name: "inbox" })
-          }
-          onApprovals={() => void refreshProposals().catch(show)}
-          onError={show}
-        />
-      ) : null}
-      {screen.name === "profile" && profile ? (
-        <BotInfoScreen
-          profile={profile}
-          providers={providers}
-          routines={routines}
-          onChange={setProfile}
-          onSave={() => void saveProfile().catch(show)}
-          onSaveNotify={(draft) => void saveProfile(draft).catch(show)}
-          onBack={() => {
-            if (screen.fromGroup && lastChat?.kind === "group") {
-              setScreen({
-                name: "group",
-                conversationId: lastChat.conversationId,
-                title: lastChat.title,
-                memberIds: lastChat.memberIds,
-                owner: lastChat.agent,
-              });
-              return;
-            }
-            setScreen(lastChat && conversationId ? { name: "chat", ...lastChat } : { name: "inbox" });
-          }}
-          onApprovals={() => void refreshProposals().catch(show)}
-          onPickAvatar={() => void pickAvatar().catch(show)}
-          onPauseRoutine={(routine, paused) => void pauseRoutine(routine, paused).catch(show)}
-          onLoadRoutineRuns={(routineId) =>
-            core.listRoutineRuns(accountId.trim(), profile.id, routineId)
-          }
-          messages={profileFeed}
-          onFetchBlob={(roomId, messageId, index) => core.blob(accountId.trim(), roomId, messageId, index)}
-        />
-      ) : null}
-      {screen.name === "group" ? (
-        <GroupInfoScreen
-          title={screen.title}
-          members={screen.memberIds
-            .map((id) => agents.find((agent) => agent.id === id))
-            .filter((agent): agent is RosterAgent => Boolean(agent))}
-          messages={groupFeed}
-          onBack={() => setScreen(lastChat ? { name: "chat", ...lastChat } : { name: "inbox" })}
-          onOpenMember={(member) => void openAgent(member).catch(show)}
-          onFetchBlob={(roomId, messageId, index) => core.blob(accountId.trim(), roomId, messageId, index)}
-        />
-      ) : null}
-      {screen.name === "approvals" ? (
-        <ApprovalsScreen
-          proposals={proposals}
-          toolApprovals={toolApprovals}
-          onApprove={(id) => void refreshProposals(id, true).catch(show)}
-          onReject={(id) => void refreshProposals(id, false).catch(show)}
-          onApproveTool={(id) => void decideToolRow(id, true).catch(show)}
-          onDenyTool={(id) => void decideToolRow(id, false).catch(show)}
-          onBack={() => setScreen({ name: "inbox" })}
-        />
-      ) : null}
-      {screen.name === "inbox" && note ? <Text style={styles.note}>{note}</Text> : null}
-      {screen.name === "profile" && note ? <Text style={styles.note}>{note}</Text> : null}
-      <NewRoomSheet
-        open={creating}
-        agents={agents}
-        providers={providers}
-        onClose={() => setCreating(false)}
-        onCreateChat={(name, role, jobDescription, provider, modelId) =>
-          void createChat(name, role, jobDescription, provider, modelId).catch(show)
-        }
-        onCreateGroup={(title, agentIds) => void createGroup(title, agentIds).catch(show)}
-      />
-    </SafeAreaView>
-    </AppKeyboardShell>
-    </SafeAreaProvider>
-  );
+  function openAccount(page: MenuPage): void {
+    setMenu(page);
+    if (page === "plugins") void refreshPlugins().catch(show);
+    router.push("/account");
+  }
+
+  function openNewRoom(): void {
+    if (!accountId) {
+      setAfterSignup(true);
+      openAccount("signup");
+      return;
+    }
+    router.push("/new-room");
+  }
+
+  function openDesktop(agent: RosterAgent): void {
+    setDesktopAgent(agent);
+    closeSheets();
+    router.push(`/desktop/${agent.id}`);
+  }
+
+  function leaveChat(roomId: string): void {
+    setConversationId((current) => (current === roomId ? "" : current));
+  }
+
+  const value: SessionValue = {
+    accounts,
+    accountId,
+    account,
+    agents,
+    providers,
+    plugins,
+    menu,
+    setMenu,
+    draft,
+    setDraft,
+    messages,
+    sending,
+    setSending,
+    roomActivity,
+    replyTo,
+    setReplyTo,
+    attachments,
+    setAttachments,
+    note,
+    setNote,
+    proposals,
+    toolApprovals,
+    routines,
+    groupFeed,
+    profileFeed,
+    profile,
+    setProfile,
+    conversationId,
+    contextRing,
+    groups,
+    lastChat,
+    desktopAgent,
+    notifications,
+    setNotifications,
+    pendingCount,
+    autoReview,
+    autoTimeZone,
+    setAutoTimeZone,
+    timeZone,
+    show,
+    signInWithGoogle,
+    openAgent,
+    openGroup,
+    send,
+    sendText,
+    pickImage,
+    pickCamera,
+    pickFile,
+    toggleReaction,
+    persistAutoReview,
+    refreshProposals,
+    decideToolRow,
+    openProfile,
+    openGroupInfo,
+    saveProfile,
+    pickAvatar,
+    pauseRoutine,
+    saveProvider,
+    refreshPlugins,
+    addPlugin,
+    saveCustomPlugin,
+    signInCustomPlugin,
+    setRosterFlag,
+    answerQuestion,
+    saveVaultSecret,
+    openAccount,
+    openNewRoom,
+    openDesktop,
+    leaveChat,
+    switchAccount,
+    createChat,
+    createGroup,
+    signOut() {
+      void authClient.signOut().catch(show);
+      setAccountId("");
+      setAgents([]);
+      setMenu("signup");
+    },
+    deleteAccount(id: string) {
+      setAccounts((rows) => rows.filter((row) => row.id !== id));
+      if (accountId === id) {
+        setAccountId("");
+        setAgents([]);
+        setMenu("signup");
+      }
+    },
+    removePlugin(id: string) {
+      void core.deleteMcpPlugin(accountId, id).then(refreshPlugins).catch(show);
+    },
+  };
+
+  return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
-  note: { color: colors.danger, position: "absolute", left: 20, right: 20, bottom: 24, fontSize: 14 },
-});
+const SessionContext = createContext<SessionValue | null>(null);
+
+export function useSession(): SessionValue {
+  const value = useContext(SessionContext);
+  if (!value) {
+    throw new Error("useSession must be used inside SessionProvider");
+  }
+  return value;
+}
+
+type SessionValue = {
+  accounts: SignedAccount[];
+  accountId: string;
+  account: SignedAccount | null;
+  agents: RosterAgent[];
+  providers: ProviderSetting[];
+  plugins: PluginList | null;
+  menu: MenuPage | null;
+  setMenu: (page: MenuPage | null) => void;
+  draft: string;
+  setDraft: (value: string) => void;
+  messages: Bubble[];
+  sending: boolean;
+  setSending: (value: boolean) => void;
+  roomActivity: RoomActivityPhase | null;
+  replyTo: Bubble | null;
+  setReplyTo: (bubble: Bubble | null) => void;
+  attachments: Attachment[];
+  setAttachments: (value: Attachment[] | ((current: Attachment[]) => Attachment[])) => void;
+  note: string;
+  setNote: (value: string) => void;
+  proposals: Proposal[];
+  toolApprovals: ToolApproval[];
+  routines: Routine[];
+  groupFeed: (Bubble & { conversationId?: string })[];
+  profileFeed: (Bubble & { conversationId?: string })[];
+  profile: RosterAgent | null;
+  setProfile: (agent: RosterAgent | null) => void;
+  conversationId: string;
+  contextRing: { share: number; hint: string } | null;
+  groups: { id: string; title: string; memberCount: number; members: GroupFace[] }[];
+  lastChat: ChatTarget | null;
+  desktopAgent: RosterAgent | null;
+  notifications: boolean;
+  setNotifications: (value: boolean) => void;
+  pendingCount: number;
+  autoReview: boolean;
+  autoTimeZone: boolean;
+  setAutoTimeZone: (value: boolean) => void;
+  timeZone: string;
+  show: (error: unknown) => void;
+  signInWithGoogle: () => Promise<void>;
+  openAgent: (agent: RosterAgent) => Promise<void>;
+  openGroup: (roomId: string) => Promise<void>;
+  send: (conversationId: string) => Promise<void>;
+  sendText: (conversationId: string, body: string) => Promise<void>;
+  pickImage: () => Promise<void>;
+  pickCamera: () => Promise<void>;
+  pickFile: () => Promise<void>;
+  toggleReaction: (conversationId: string, bubble: Bubble, emoji: string) => Promise<void>;
+  persistAutoReview: (value: boolean) => Promise<void>;
+  refreshProposals: (proposalId?: string, accept?: boolean) => Promise<void>;
+  decideToolRow: (approvalId: string, accept: boolean) => Promise<void>;
+  openProfile: (agent: RosterAgent) => void;
+  openGroupInfo: () => Promise<void>;
+  saveProfile: (draft?: RosterAgent) => Promise<void>;
+  pickAvatar: () => Promise<void>;
+  pauseRoutine: (routine: Routine, paused: boolean) => Promise<void>;
+  saveProvider: (provider: ProviderSetting["provider"], secret: string, baseUrl: string | null) => Promise<void>;
+  refreshPlugins: () => Promise<void>;
+  addPlugin: (id: string) => Promise<void>;
+  saveCustomPlugin: (name: string, url: string, secret: string) => Promise<void>;
+  signInCustomPlugin: (name: string, url: string) => Promise<void>;
+  setRosterFlag: (agent: RosterAgent, patch: { pinned?: boolean; hidden?: boolean }) => Promise<void>;
+  answerQuestion: (conversationId: string, messageId: string, pick: { value: string; label: string }) => Promise<void>;
+  saveVaultSecret: (name: string, secret: string) => Promise<void>;
+  openAccount: (page: MenuPage) => void;
+  openNewRoom: () => void;
+  openDesktop: (agent: RosterAgent) => void;
+  leaveChat: (roomId: string) => void;
+  switchAccount: (id: string) => Promise<void>;
+  createChat: (name: string, role: string, jobDescription: string, provider: ProviderSetting["provider"], modelId: string) => Promise<void>;
+  createGroup: (title: string, agentIds: string[]) => Promise<void>;
+  signOut: () => void;
+  deleteAccount: (id: string) => void;
+  removePlugin: (id: string) => void;
+};
+
+

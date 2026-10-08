@@ -1,5 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Image } from "expo-image";
+import { useNavigation } from "expo-router";
+import { HeaderBackButton } from "expo-router/react-navigation";
 import {
   Alert,
   Linking,
@@ -14,10 +16,9 @@ import {
 } from "react-native";
 import type { MessageBlock, ProviderSetting, RosterAgent, Routine, RoutineRun } from "../api";
 import { formatLastRun, formatNextRunRelative, formatRunHistoryWhen, formatSchedule, routineTitle } from "../api";
-import { colors } from "../theme/tokens";
-import { CircleButton } from "../ui/CircleButton";
+import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
 import { Feather } from "@expo/vector-icons";
-import { IconBack, IconCheck, IconChevron, IconClock, IconDoc, IconMore, IconShare } from "../ui/icons";
+import { IconCheck, IconChevron, IconClock, IconDoc, IconMore, IconShare } from "../ui/icons";
 import type { MarkMaterial, MarkShape } from "@nano-agents/shared";
 import { warmMarkThumbs } from "../ui/DotStage";
 import {
@@ -36,6 +37,8 @@ import { collectShares, type SharedFile } from "./shares";
 type Page = "info" | "instructions" | "provider" | "routine";
 type Tab = "info" | "links" | "media" | "files";
 type CharacterTab = "shape" | "color" | "material";
+
+const headerHit = { width: 36, height: 36, alignItems: "center" as const, justifyContent: "center" as const };
 
 const CHARACTER_TABS: { id: CharacterTab; label: string }[] = [
   { id: "shape", label: "Shape" },
@@ -93,6 +96,51 @@ export function BotInfoScreen({
   const [mark, setMark] = useState(() => initialMark(profile));
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = routines.find((row) => row.id === selectedId) ?? null;
+  const navigation = useNavigation();
+  const onBackRef = useRef(onBack);
+  onBackRef.current = onBack;
+
+  useLayoutEffect(() => {
+    const title =
+      page === "instructions" ? "Instructions" : page === "provider" ? "Provider" : page === "routine" && selected ? routineTitle(selected) : profile.name || "Profile";
+    const back = page === "info" ? () => onBackRef.current() : () => setPage("info");
+    navigation.setOptions({
+      title,
+      headerLeft: () => <HeaderBackButton tintColor={colors.text} onPress={back} />,
+      headerRight:
+        page === "info"
+          ? () => (
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <Pressable
+                  accessibilityLabel="Share bot"
+                  accessibilityRole="button"
+                  hitSlop={8}
+                  onPress={() => {
+                    void Share.share({ message: `${profile.name} — ${profile.role}` }).catch(() => {});
+                  }}
+                  style={headerHit}
+                >
+                  <IconShare />
+                </Pressable>
+                <Pressable
+                  accessibilityLabel="More"
+                  accessibilityRole="button"
+                  hitSlop={8}
+                  onPress={() => {
+                    Alert.alert(profile.name, undefined, [
+                      { text: "Approvals", onPress: onApprovals },
+                      { text: "Cancel", style: "cancel" },
+                    ]);
+                  }}
+                  style={headerHit}
+                >
+                  <IconMore />
+                </Pressable>
+              </View>
+            )
+          : () => null,
+    });
+  }, [navigation, onApprovals, page, profile.name, profile.role, selected?.id]);
 
   /** Stages one mark pick in the preview and the profile draft (clears photo). */
   function pickMark(next: MarkLook): void {
@@ -122,24 +170,12 @@ export function BotInfoScreen({
     });
   }
 
-  function share(): void {
-    void Share.share({ message: `${profile.name} — ${profile.role}` }).catch(() => {});
-  }
-
-  function more(): void {
-    Alert.alert(profile.name, undefined, [
-      { text: "Approvals", onPress: onApprovals },
-      { text: "Cancel", style: "cancel" },
-    ]);
-  }
-
   if (page === "instructions") {
     return (
       <InstructionsPage
         profile={profile}
         onChange={onChange}
         onSave={onSave}
-        onBack={() => setPage("info")}
       />
     );
   }
@@ -152,7 +188,6 @@ export function BotInfoScreen({
           onChange({ ...profile, provider });
           setPage("info");
         }}
-        onBack={() => setPage("info")}
       />
     );
   }
@@ -180,9 +215,6 @@ export function BotInfoScreen({
       onChange={onChange}
       onSave={onSave}
       onSaveNotify={onSaveNotify}
-      onBack={onBack}
-      onShare={share}
-      onMore={more}
       onInstructions={() => setPage("instructions")}
       onProvider={() => setPage("provider")}
       onRoutine={(routine) => {
@@ -217,9 +249,6 @@ function InfoPage({
   onChange,
   onSave,
   onSaveNotify,
-  onBack,
-  onShare,
-  onMore,
   onInstructions,
   onProvider,
   onRoutine,
@@ -238,9 +267,6 @@ function InfoPage({
   onChange: (profile: RosterAgent) => void;
   onSave: () => void;
   onSaveNotify: (profile: RosterAgent) => void;
-  onBack: () => void;
-  onShare: () => void;
-  onMore: () => void;
   onInstructions: () => void;
   onProvider: () => void;
   onRoutine: (routine: Routine) => void;
@@ -269,21 +295,9 @@ function InfoPage({
   const providerName = profile.provider === "xai" ? "xAI" : profile.provider[0]?.toUpperCase() + profile.provider.slice(1);
   return (
     <View style={styles.screen}>
-      <View style={styles.header}>
-        <CircleButton label="Back" onPress={onBack}>
-          <IconBack />
-        </CircleButton>
-        <View style={styles.headerRight}>
-          <CircleButton label="Share bot" onPress={onShare}>
-            <IconShare />
-          </CircleButton>
-          <CircleButton label="More" onPress={onMore}>
-            <IconMore />
-          </CircleButton>
-        </View>
-      </View>
       <ScrollView
         contentContainerStyle={styles.pageScroll}
+        contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
@@ -631,22 +645,13 @@ function InstructionsPage({
   profile,
   onChange,
   onSave,
-  onBack,
 }: {
   profile: RosterAgent;
   onChange: (profile: RosterAgent) => void;
   onSave: () => void;
-  onBack: () => void;
 }) {
   return (
     <View style={styles.screen}>
-      <View style={styles.pageHeader}>
-        <CircleButton label="Back" onPress={onBack}>
-          <IconBack />
-        </CircleButton>
-        <Text style={styles.pageTitle}>Instructions</Text>
-        <View style={styles.spacer} />
-      </View>
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         <Text style={styles.fieldLabel}>Role</Text>
         <TextInput
@@ -687,12 +692,10 @@ function ProviderPage({
   profile,
   providers,
   onSelect,
-  onBack,
 }: {
   profile: RosterAgent;
   providers: ProviderSetting[];
   onSelect: (provider: ProviderSetting["provider"]) => void;
-  onBack: () => void;
 }) {
   const configured = providers.filter((row) => row.configured);
   const choices: ProviderSetting["provider"][] = [
@@ -700,13 +703,6 @@ function ProviderPage({
   ];
   return (
     <View style={styles.screen}>
-      <View style={styles.pageHeader}>
-        <CircleButton label="Back" onPress={onBack}>
-          <IconBack />
-        </CircleButton>
-        <Text style={styles.pageTitle}>Provider</Text>
-        <View style={styles.spacer} />
-      </View>
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         <View style={styles.group}>
           {choices.map((name) => (
@@ -760,18 +756,24 @@ function RoutineDetailPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routine.id]);
 
+  const navigation = useNavigation();
+  useLayoutEffect(() => {
+    if (!showInstructions) return;
+    navigation.setOptions({
+      title: "Instruction",
+      headerLeft: () => <HeaderBackButton tintColor={colors.text} onPress={() => setShowInstructions(false)} />,
+    });
+    return () => {
+      navigation.setOptions({
+        title: routineTitle(routine),
+        headerLeft: () => <HeaderBackButton tintColor={colors.text} onPress={onBack} />,
+      });
+    };
+  }, [navigation, onBack, routine, showInstructions]);
+
   if (showInstructions) {
     return (
       <View style={styles.screen}>
-        <View style={styles.pageHeader}>
-          <CircleButton label="Back" onPress={() => setShowInstructions(false)}>
-            <IconBack />
-          </CircleButton>
-          <Text style={styles.pageTitle} numberOfLines={1}>
-            Instruction
-          </Text>
-          <View style={styles.spacer} />
-        </View>
         <ScrollView contentContainerStyle={styles.routineScroll} showsVerticalScrollIndicator={false}>
           <View style={styles.card}>
             <Text style={styles.routineFullBody} selectable>
@@ -783,18 +785,8 @@ function RoutineDetailPage({
     );
   }
 
-  const title = routineTitle(routine);
   return (
     <View style={styles.screen}>
-      <View style={styles.pageHeader}>
-        <CircleButton label="Back" onPress={onBack}>
-          <IconBack />
-        </CircleButton>
-        <Text style={[styles.pageTitle, styles.routineNavTitle]} numberOfLines={1}>
-          {title}
-        </Text>
-        <View style={styles.spacer} />
-      </View>
       <ScrollView contentContainerStyle={styles.routineScroll} showsVerticalScrollIndicator={false}>
         <View style={styles.activeCard}>
           <Text style={styles.rowLabel}>Active</Text>
@@ -857,7 +849,8 @@ function RoutineDetailPage({
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 10, paddingTop: 2 },
   headerRight: { flexDirection: "row", alignItems: "center", gap: 4 },
@@ -894,7 +887,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 14,
   },
-  pageScroll: { paddingBottom: 40 },
+  pageScroll: { paddingTop: 12, paddingBottom: 40 },
   tabs: {
     flexDirection: "row",
     marginTop: 14,
@@ -1120,4 +1113,10 @@ const styles = StyleSheet.create({
   tabEmptyInline: { alignItems: "center", gap: 6, paddingHorizontal: 48, paddingVertical: 64 },
   tabEmptyTitle: { color: colors.text, fontSize: 17, fontWeight: "600" },
   tabEmptyHint: { color: colors.muted, fontSize: 14, textAlign: "center" },
+});
+}
+
+let styles = createStyles(darkColors);
+onPaletteChange((next) => {
+  styles = createStyles(next);
 });

@@ -5,7 +5,7 @@
     "scheme": "nano-agents",
     "version": "1.0.0",
     "orientation": "portrait",
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "automatic",
     "backgroundColor": "#000000",
     "newArchEnabled": true,
     "eas": {
@@ -35,6 +35,7 @@
       "bundler": "metro"
     },
     "plugins": [
+      "expo-router",
       "expo-web-browser",
       "expo-sharing",
       ["expo-notifications", { "defaultChannel": "default" }],

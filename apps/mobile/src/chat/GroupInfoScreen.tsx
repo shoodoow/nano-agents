@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useNavigation } from "expo-router";
 import type { MessageBlock, RosterAgent } from "../api";
-import { colors } from "../theme/tokens";
+import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
 import { Avatar } from "../ui/Avatar";
-import { CircleButton } from "../ui/CircleButton";
 import { GroupCluster } from "../ui/GroupCluster";
-import { IconBack, IconChevron, IconMore } from "../ui/icons";
+import { IconChevron } from "../ui/icons";
 import { openFileBlock } from "./blocks";
 import { collectShares, type SharedFile } from "./shares";
 
@@ -20,7 +20,6 @@ export function GroupInfoScreen({
   title,
   members,
   messages,
-  onBack,
   onOpenMember,
   onFetchBlob,
 }: {
@@ -33,17 +32,13 @@ export function GroupInfoScreen({
 }) {
   const [tab, setTab] = useState<Tab>("info");
   const shares = collectShares(messages);
+  const navigation = useNavigation();
+  useLayoutEffect(() => {
+    navigation.setOptions({ title: title || "Group" });
+  }, [navigation, title]);
   return (
     <View style={styles.screen}>
-      <View style={styles.header}>
-        <CircleButton label="Back" onPress={onBack}>
-          <IconBack />
-        </CircleButton>
-        <CircleButton label="More" onPress={() => {}}>
-          <IconMore />
-        </CircleButton>
-      </View>
-      <ScrollView contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={styles.page} contentInsetAdjustmentBehavior="automatic" showsVerticalScrollIndicator={false}>
         <View style={styles.cluster}>
           <GroupCluster members={members} size={52} />
         </View>
@@ -146,10 +141,11 @@ function Rows({
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
   header: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 12, paddingTop: 4 },
-  page: { paddingBottom: 32 },
+  page: { paddingTop: 12, paddingBottom: 32 },
   cluster: { alignItems: "center", marginTop: 8 },
   nameCard: { marginHorizontal: 16, marginTop: 10, backgroundColor: colors.bubble, borderRadius: 14, borderCurve: "continuous" },
   name: { color: colors.text, fontSize: 17, fontWeight: "600", textAlign: "center", paddingVertical: 12 },
@@ -166,4 +162,10 @@ const styles = StyleSheet.create({
   empty: { alignItems: "center", paddingTop: 40, paddingHorizontal: 28, gap: 6 },
   emptyTitle: { color: colors.text, fontSize: 16, fontWeight: "600" },
   emptyHint: { color: colors.muted, fontSize: 13, textAlign: "center" },
+});
+}
+
+let styles = createStyles(darkColors);
+onPaletteChange((next) => {
+  styles = createStyles(next);
 });

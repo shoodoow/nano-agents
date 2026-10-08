@@ -1,101 +1,112 @@
-import { Feather, MaterialIcons } from "@expo/vector-icons";
+import MaterialIcons from "@expo/vector-icons/MaterialIcons";
+import { SymbolView, type SymbolViewProps } from "expo-symbols";
+import type { ComponentProps } from "react";
+import type { ColorValue } from "react-native";
 import { colors } from "../theme/tokens";
 
+type MaterialName = ComponentProps<typeof MaterialIcons>["name"];
+
 /**
- * Draws one white icon used in the phone chrome.
- * Input: none.
- * Output: an 18-point glyph.
+ * Draws one icon in the platform's own set.
+ * iOS uses an SF Symbol. Android uses a Material icon. Web uses Material too.
  */
+function PlatformIcon({
+  sf,
+  md,
+  size,
+  color,
+}: {
+  sf: SymbolViewProps["name"];
+  md: MaterialName;
+  size: number;
+  color: ColorValue;
+}) {
+  if (process.env.EXPO_OS === "ios") {
+    return <SymbolView name={sf} tintColor={color} size={size} />;
+  }
+  return <MaterialIcons name={md} size={size} color={color as string} />;
+}
+
 export function IconSearch() {
-  return <Feather name="search" size={18} color="#fff" />;
+  return <PlatformIcon sf="magnifyingglass" md="search" size={18} color={colors.label} />;
 }
 
-/** Draws a plus. Input: none. Output: a plus glyph. */
 export function IconPlus() {
-  return <Feather name="plus" size={18} color="#fff" />;
+  return <PlatformIcon sf="plus" md="add" size={18} color={colors.label} />;
 }
 
-/** Draws a back chevron. Input: none. Output: a left chevron. */
 export function IconBack() {
-  return <Feather name="chevron-left" size={22} color="#fff" />;
+  return <PlatformIcon sf="chevron.left" md="arrow-back" size={22} color={colors.label} />;
 }
 
-/** Draws a desktop. Input: none. Output: a monitor glyph. */
 export function IconMonitor() {
-  return <Feather name="monitor" size={18} color="#fff" />;
+  return <PlatformIcon sf="desktopcomputer" md="desktop-windows" size={18} color={colors.label} />;
 }
 
-/** Draws a microphone. Input: none. Output: a mic glyph. */
 export function IconMic() {
-  return <Feather name="mic" size={18} color="#fff" />;
+  return <PlatformIcon sf="mic" md="mic" size={18} color={colors.label} />;
 }
 
-/** Draws a voice waveform. Input: none. Output: a pulse glyph. */
 export function IconWave() {
-  return <Feather name="activity" size={18} color="#fff" />;
+  return <PlatformIcon sf="waveform" md="graphic-eq" size={18} color={colors.label} />;
 }
 
-/** Draws a question mark. Input: none. Output: a help glyph. */
 export function IconHelp() {
-  return <Feather name="help-circle" size={18} color="#fff" />;
+  return <PlatformIcon sf="questionmark.circle" md="help-outline" size={18} color={colors.label} />;
 }
 
-/** Draws an ellipsis. Input: none. Output: three dots. */
 export function IconMore() {
-  return <Feather name="more-horizontal" size={18} color="#fff" />;
+  return <PlatformIcon sf="ellipsis" md="more-horiz" size={18} color={colors.label} />;
 }
 
-/** Draws a clipboard. Input: none. Output: a clipboard glyph. */
 export function IconClipboard() {
-  return <Feather name="clipboard" size={18} color="#fff" />;
+  return <PlatformIcon sf="list.clipboard" md="assignment" size={18} color={colors.label} />;
 }
 
-/** Draws a keyboard. Input: none. Output: a keyboard glyph. */
 export function IconKeyboard() {
-  return <MaterialIcons name="keyboard" size={20} color="#fff" />;
+  return <PlatformIcon sf="keyboard" md="keyboard" size={20} color={colors.label} />;
 }
 
-/** Draws a close mark. Input: none. Output: an X glyph. */
 export function IconClose() {
-  return <Feather name="x" size={18} color="#fff" />;
+  return <PlatformIcon sf="xmark" md="close" size={18} color={colors.label} />;
 }
 
-/** Draws a right chevron. Input: none. Output: a right chevron. */
 export function IconChevron() {
-  return <Feather name="chevron-right" size={18} color="#8E8E93" />;
+  return <PlatformIcon sf="chevron.right" md="chevron-right" size={18} color={colors.secondaryLabel} />;
 }
 
-/** Draws a check. Input: none. Output: a check glyph. */
 export function IconCheck() {
-  return <Feather name="check" size={18} color="#fff" />;
+  return <PlatformIcon sf="checkmark" md="check" size={18} color={colors.label} />;
 }
 
-/** Draws a trash can. Input: none. Output: a trash glyph in red. */
 export function IconTrash() {
-  return <Feather name="trash-2" size={18} color="#FF453A" />;
+  return <PlatformIcon sf="trash" md="delete-outline" size={18} color={colors.danger} />;
 }
 
-/** Draws a reply arrow. Input: none. Output: a reply glyph. */
 export function IconReply() {
-  return <Feather name="corner-up-left" size={16} color="#8E8E93" />;
+  return <PlatformIcon sf="arrowshape.turn.up.left" md="reply" size={16} color={colors.secondaryLabel} />;
 }
 
-/** Draws a share tray with an up arrow. Input: none. Output: an iOS-style share glyph. */
 export function IconShare() {
-  return <Feather name="upload" size={20} color="#fff" />;
+  return <PlatformIcon sf="square.and.arrow.up" md="share" size={20} color={colors.label} />;
 }
 
-/** Draws a document with text lines. Input: none. Output: an instructions glyph. */
 export function IconDoc() {
-  return <Feather name="file-text" size={20} color="#8E8E93" />;
+  return <PlatformIcon sf="doc.text" md="description" size={20} color={colors.secondaryLabel} />;
 }
 
-/** Draws a clock face. Input: none. Output: a green schedule glyph. */
 export function IconClock() {
-  return <Feather name="clock" size={20} color={colors.green} />;
+  return <PlatformIcon sf="clock" md="schedule" size={20} color={colors.green} />;
 }
 
-/** Draws a shield badge. Input: none. Output: a secure-storage glyph. */
+export function IconPin() {
+  return <PlatformIcon sf="pin" md="push-pin" size={18} color={colors.label} />;
+}
+
+export function IconEyeOff() {
+  return <PlatformIcon sf="eye.slash" md="visibility-off" size={18} color={colors.danger} />;
+}
+
 export function IconShield() {
-  return <Feather name="shield" size={16} color="#8E8E93" />;
+  return <PlatformIcon sf="shield" md="shield" size={16} color={colors.secondaryLabel} />;
 }

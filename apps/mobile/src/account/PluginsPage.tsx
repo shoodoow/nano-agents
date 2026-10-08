@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { AppState, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { AppState, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type ViewStyle } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { PluginCard, PluginList } from "../api";
-import { colors } from "../theme/tokens";
+import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
 import { CircleButton } from "../ui/CircleButton";
 import { PrimaryButton } from "../ui/PrimaryButton";
 import { pressableStyle } from "../ui/pressableStyles";
-import { IconBack, IconClose, IconPlus, IconSearch } from "../ui/icons";
+import { IconClose, IconPlus, IconSearch } from "../ui/icons";
 
 /**
  * Browses featured plugins and this account's own connectors.
@@ -14,18 +15,18 @@ import { IconBack, IconClose, IconPlus, IconSearch } from "../ui/icons";
  */
 export function PluginsPage({
   plugins,
-  onBack,
   onCustom,
   onAdd,
   onRemove,
   onRefresh,
+  scrollStyle,
 }: {
   plugins: PluginList | null;
-  onBack: () => void;
   onCustom: () => void;
   onAdd: (id: string) => void;
   onRemove: (id: string) => void;
   onRefresh: () => void;
+  scrollStyle: ViewStyle;
 }) {
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<PluginCard | null>(null);
@@ -42,12 +43,8 @@ export function PluginsPage({
   }, [query, rows]);
   const sections = [...new Set(visible.map((row) => row.section))];
   return (
-    <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+    <ScrollView style={scrollStyle} contentInsetAdjustmentBehavior="automatic" nestedScrollEnabled contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
       <View style={styles.header}>
-        <CircleButton label="Back" onPress={onBack}>
-          <IconBack />
-        </CircleButton>
-        <Text style={styles.title}>Plugins</Text>
         <View style={styles.count}>
           <Text style={styles.countText}>{plugins?.installed ?? 0} installed</Text>
         </View>
@@ -119,26 +116,20 @@ export function PluginsPage({
  * Output: the custom plugin form.
  */
 export function CustomPluginPage({
-  onBack,
   onSave,
   onSignIn,
+  scrollStyle,
 }: {
-  onBack: () => void;
   onSave: (name: string, url: string, secret: string) => void;
   onSignIn: (name: string, url: string) => void;
+  scrollStyle: ViewStyle;
 }) {
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [secret, setSecret] = useState("");
   const ready = name.trim().length > 0 && url.trim().length > 0;
   return (
-    <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-      <View style={styles.header}>
-        <CircleButton label="Back" onPress={onBack}>
-          <IconBack />
-        </CircleButton>
-        <Text style={styles.title}>Your MCP</Text>
-      </View>
+    <ScrollView style={scrollStyle} contentInsetAdjustmentBehavior="automatic" nestedScrollEnabled contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
       <Text style={styles.description}>Paste a public HTTPS MCP URL. The token stays on this account's computer.</Text>
       <TextInput value={name} onChangeText={setName} placeholder="Name" placeholderTextColor={colors.muted} autoCapitalize="none" keyboardAppearance="dark" style={styles.input} />
       <TextInput value={url} onChangeText={setUrl} placeholder="https://example.com/mcp" placeholderTextColor={colors.muted} autoCapitalize="none" autoCorrect={false} keyboardAppearance="dark" style={styles.input} />
@@ -150,7 +141,7 @@ export function CustomPluginPage({
 }
 
 /**
- * Plugin detail, presented as the iOS page sheet.
+ * Plugin detail. iOS uses a page sheet; Android uses a full-screen page.
  * Input: the selected plugin. Output: description, bundled skills, and Add.
  */
 function PluginDetail({
@@ -166,14 +157,16 @@ function PluginDetail({
 }) {
   const skills = plugin?.skills ?? [];
   const skillLabel = skills.length === 1 ? "1 skill" : `${skills.length} skills`;
+  const insets = useSafeAreaInsets();
+  const pageSheet = process.env.EXPO_OS === "ios";
   return (
-    <Modal visible={plugin !== null} animationType="slide" presentationStyle={Platform.OS === "ios" ? "pageSheet" : "fullScreen"} onRequestClose={onClose}>
+    <Modal visible={plugin !== null} animationType="slide" presentationStyle={pageSheet ? "pageSheet" : "fullScreen"} onRequestClose={onClose}>
       {plugin ? (
-        <View style={styles.detail}>
+        <View style={[styles.detail, pageSheet ? null : { paddingTop: insets.top + 8, paddingBottom: Math.max(28, insets.bottom + 12) }]}>
           <CircleButton label="Close" onPress={onClose}>
             <IconClose />
           </CircleButton>
-          <ScrollView contentContainerStyle={styles.detailScroll} showsVerticalScrollIndicator={false}>
+          <ScrollView style={styles.detailScrollView} contentInsetAdjustmentBehavior="automatic" contentContainerStyle={styles.detailScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
             <View style={styles.detailTitle}>
               <PluginGlyph mark={plugin.mark} name={plugin.name} large />
               <Text style={styles.detailName}>{plugin.name}</Text>
@@ -227,7 +220,8 @@ export function pluginSlug(name: string): string {
   return slug;
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
   scroll: { padding: 14, paddingBottom: 28, gap: 12 },
   header: { flexDirection: "row", alignItems: "center", gap: 8 },
   title: { color: colors.text, fontSize: 20, fontWeight: "600", flex: 1 },
@@ -243,6 +237,7 @@ const styles = StyleSheet.create({
   mark: { width: 40, height: 40, borderRadius: 12, alignItems: "center", justifyContent: "center" },
   markLarge: { width: 64, height: 64, borderRadius: 16, alignItems: "center", justifyContent: "center" },
   detail: { flex: 1, backgroundColor: colors.sheet, padding: 16, paddingBottom: 28 },
+  detailScrollView: { flex: 1 },
   detailScroll: { gap: 14, paddingBottom: 24 },
   detailTitle: { flexDirection: "row", alignItems: "center", gap: 14, marginTop: 12 },
   detailName: { color: colors.text, fontSize: 28, fontWeight: "700", flex: 1 },
@@ -265,4 +260,10 @@ const styles = StyleSheet.create({
   primaryText: { color: colors.bg, fontSize: 16, fontWeight: "600" },
   secondary: { backgroundColor: colors.card, borderRadius: 22, height: 48, alignItems: "center", justifyContent: "center" },
   disabled: { opacity: 0.4 },
+});
+}
+
+let styles = createStyles(darkColors);
+onPaletteChange((next) => {
+  styles = createStyles(next);
 });

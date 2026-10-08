@@ -1,19 +1,8 @@
 import { useState } from "react";
-import {
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useKeyboardInset } from "../ui/useKeyboardInset";
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import type { ProviderSetting, RosterAgent } from "../api";
-import { colors } from "../theme/tokens";
+import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
+import { useResolvedScheme } from "../theme/appearance";
 import { IconCheck } from "../ui/icons";
 import { PrimaryButton } from "../ui/PrimaryButton";
 import { pressableStyle } from "../ui/pressableStyles";
@@ -22,21 +11,17 @@ import { pressableStyle } from "../ui/pressableStyles";
  * Creates a direct chat or a group on the signed-in account.
  * Why: hiring needs role + job up front (personality optional) so the agent
  * starts sharp instead of a vague blob.
- * Input: whether the sheet is open, the account's agents, and the create handlers.
- * Output: the new-room sheet. The account id stays outside this form.
+ * Input: the account's agents and the create handlers.
+ * Output: the new-room form. The account id stays outside this form.
  */
 export function NewRoomSheet({
-  open,
   agents,
   providers,
-  onClose,
   onCreateChat,
   onCreateGroup,
 }: {
-  open: boolean;
   agents: RosterAgent[];
   providers: ProviderSetting[];
-  onClose: () => void;
   onCreateChat: (
     name: string,
     role: string,
@@ -62,8 +47,7 @@ export function NewRoomSheet({
     modelId.trim().length > 0 &&
     configured.some((row) => row.provider === provider);
   const groupReady = title.trim().length > 0 && picked.length >= 2;
-  const insets = useSafeAreaInsets();
-  const keyboardInset = useKeyboardInset();
+  useResolvedScheme();
 
   /**
    * Toggles one agent in the group.
@@ -75,25 +59,14 @@ export function NewRoomSheet({
   }
 
   return (
-    <Modal visible={open} animationType="slide" transparent onRequestClose={onClose}>
-      <KeyboardAvoidingView
-        style={styles.modalRoot}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        enabled={Platform.OS === "ios"}
+      <ScrollView
+        style={process.env.EXPO_OS === "ios" ? { backgroundColor: colors.sheet } : { flex: 1, backgroundColor: colors.sheet }}
+        nestedScrollEnabled
+        contentInsetAdjustmentBehavior="automatic"
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
       >
-        <Pressable
-          style={[styles.backdrop, Platform.OS === "android" && keyboardInset > 0 ? { paddingBottom: keyboardInset } : null]}
-          onPress={onClose}
-          accessibilityLabel="Close new room"
-        >
-          <Pressable style={[styles.sheet, { paddingBottom: Math.max(36, insets.bottom + 16) }]} onPress={() => undefined}>
-            <ScrollView
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-              bounces={false}
-              contentContainerStyle={styles.scrollContent}
-            >
-          <Text style={styles.title}>New</Text>
           <View style={styles.kinds}>
             <Pressable
               accessibilityRole="button"
@@ -179,20 +152,13 @@ export function NewRoomSheet({
               <PrimaryButton label="Create group" disabled={!groupReady} onPress={() => onCreateGroup(title.trim(), picked)} />
             </>
           )}
-            </ScrollView>
-          </Pressable>
-        </Pressable>
-      </KeyboardAvoidingView>
-    </Modal>
+      </ScrollView>
   );
 }
 
-const styles = StyleSheet.create({
-  modalRoot: { flex: 1 },
-  backdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.45)" },
-  sheet: { backgroundColor: colors.sheet, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, maxHeight: "92%" },
-  scrollContent: { gap: 10 },
-  title: { color: colors.text, fontSize: 20, fontWeight: "600" },
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
+  scrollContent: { padding: 14, paddingBottom: 28, gap: 10 },
   kinds: { flexDirection: "row", gap: 8 },
   kind: { flex: 1, height: 40, borderRadius: 14, backgroundColor: colors.card, alignItems: "center", justifyContent: "center" },
   kindOn: { backgroundColor: colors.text },
@@ -202,4 +168,10 @@ const styles = StyleSheet.create({
   hint: { color: colors.muted, fontSize: 14 },
   agent: { flexDirection: "row", alignItems: "center", backgroundColor: colors.card, borderRadius: 14, paddingHorizontal: 14, height: 48 },
   agentName: { color: colors.text, fontSize: 16, flex: 1 },
+});
+}
+
+let styles = createStyles(darkColors);
+onPaletteChange((next) => {
+  styles = createStyles(next);
 });

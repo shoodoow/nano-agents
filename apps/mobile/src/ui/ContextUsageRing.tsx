@@ -1,6 +1,6 @@
 import { View, StyleSheet } from "react-native";
 import Svg, { Circle, G } from "react-native-svg";
-import { colors } from "../theme/tokens";
+import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
 
 const SIZE = 22;
 const STROKE = 2.5;
@@ -53,11 +53,18 @@ export function ContextUsageRing({ share, hint }: { share: number; hint?: string
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
   wrap: {
     width: SIZE + 4,
     height: SIZE + 4,
     alignItems: "center",
     justifyContent: "center",
   },
+});
+}
+
+let styles = createStyles(darkColors);
+onPaletteChange((next) => {
+  styles = createStyles(next);
 });

@@ -1,7 +1,7 @@
 import type { ComponentProps } from "react";
 import { Feather } from "@expo/vector-icons";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { colors } from "../theme/tokens";
+import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
 import { IconCheck } from "../ui/icons";
 
 /**
@@ -86,7 +86,8 @@ function MenuRow({
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
   menu: {
     backgroundColor: "rgba(44, 44, 46, 0.94)",
     borderRadius: 22,
@@ -119,4 +120,10 @@ const styles = StyleSheet.create({
     marginHorizontal: 14,
     marginVertical: 4,
   },
+});
+}
+
+let styles = createStyles(darkColors);
+onPaletteChange((next) => {
+  styles = createStyles(next);
 });

@@ -1,6 +1,6 @@
 import { StyleSheet, Text, View } from "react-native";
 import type { RosterAgent } from "../api";
-import { colors } from "../theme/tokens";
+import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
 import { Avatar } from "../ui/Avatar";
 import { roomActivityLabel, type RoomActivityPhase } from "./room-activity";
 
@@ -38,7 +38,8 @@ export function RoomActivityBar({
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
   row: {
     flexDirection: "row",
     alignItems: "center",
@@ -48,4 +49,10 @@ const styles = StyleSheet.create({
     paddingTop: 2,
   },
   label: { color: colors.muted, fontSize: 13, flexShrink: 1 },
+});
+}
+
+let styles = createStyles(darkColors);
+onPaletteChange((next) => {
+  styles = createStyles(next);
 });

@@ -1,5 +1,5 @@
 import { ActivityIndicator, Pressable, StyleSheet, Text, type StyleProp, type ViewStyle } from "react-native";
-import { colors } from "../theme/tokens";
+import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
 import { pressableStyle } from "./pressableStyles";
 
 /**
@@ -81,7 +81,8 @@ export function PillButton({
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
   primary: {
     backgroundColor: colors.text,
     borderRadius: 22,
@@ -119,4 +120,10 @@ const styles = StyleSheet.create({
   pillAccent: { backgroundColor: colors.link },
   pillMuted: { backgroundColor: colors.control },
   pillText: { color: "#fff", fontSize: 16, fontWeight: "700" },
+});
+}
+
+let styles = createStyles(darkColors);
+onPaletteChange((next) => {
+  styles = createStyles(next);
 });

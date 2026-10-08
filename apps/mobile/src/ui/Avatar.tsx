@@ -1,6 +1,6 @@
 import { memo } from "react";
 import { Image } from "expo-image";
-import { View } from "react-native";
+import { Text, View } from "react-native";
 import { isLiveMark } from "./DotStage";
 import { LivingMark, Mark, resolveMarkLook, type MarkMood } from "./Mark";
 import { palette } from "../theme/tokens";
@@ -19,11 +19,23 @@ export function colorFor(id: string): string {
   return palette[hash] ?? palette[0];
 }
 
+/** First letters of the signed-in name, or a single mark when the name is empty. */
+function initials(label?: string): string {
+  const parts = (label ?? "").trim().split(/\s+/).filter(Boolean);
+  const letters = parts
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
+  return letters || "?";
+}
+
 type AvatarProps = {
   id: string;
   size: number;
   round?: boolean;
   person?: boolean;
+  /** Signed-in name. The person badge shows initials from this. */
+  label?: string;
   shape?: string | null;
   color?: string | null;
   material?: string | null;
@@ -36,9 +48,11 @@ type AvatarProps = {
 };
 
 function AvatarInner({
+  id,
   size,
   round = false,
   person = false,
+  label,
   shape = null,
   color = null,
   material = null,
@@ -101,23 +115,12 @@ function AvatarInner({
         width: size,
         height: size,
         borderRadius: size / 2,
-        backgroundColor: "#3A3A3C",
+        backgroundColor: colorFor(id),
         alignItems: "center",
         justifyContent: "center",
-        overflow: "hidden",
       }}
     >
-      <View style={{ width: size * 0.34, height: size * 0.34, borderRadius: size, backgroundColor: "#FFFFFF", marginTop: size * 0.08 }} />
-      <View
-        style={{
-          width: size * 0.62,
-          height: size * 0.34,
-          borderTopLeftRadius: size,
-          borderTopRightRadius: size,
-          backgroundColor: "#FFFFFF",
-          marginTop: size * 0.06,
-        }}
-      />
+      <Text style={{ color: "#FFFFFF", fontSize: Math.max(12, Math.round(size * 0.38)), fontWeight: "600" }}>{initials(label)}</Text>
     </View>
   );
 }
@@ -125,8 +128,10 @@ function AvatarInner({
 function avatarPropsEqual(left: AvatarProps, right: AvatarProps): boolean {
   return (
     left.size === right.size &&
+    left.id === right.id &&
     left.round === right.round &&
     left.person === right.person &&
+    left.label === right.label &&
     left.shape === right.shape &&
     left.color === right.color &&
     left.material === right.material &&

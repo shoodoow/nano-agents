@@ -1,13 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { useNavigation } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { createCore } from "../api";
 import type { RosterAgent } from "../api";
 import { authClient } from "../auth";
-import { colors } from "../theme/tokens";
+import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
+import { useResolvedScheme } from "../theme/appearance";
 import { Avatar } from "../ui/Avatar";
 import { CircleButton } from "../ui/CircleButton";
-import { IconBack, IconHelp, IconKeyboard, IconMore } from "../ui/icons";
+import { IconHelp, IconKeyboard, IconMore } from "../ui/icons";
 import { DesktopInputMenu } from "./DesktopInputMenu";
 import { getTrackpadMode, setTrackpadMode } from "./desktopPrefs";
 import { TrackpadCapture } from "./TrackpadCapture";
@@ -33,7 +36,6 @@ const KEYSYM_RETURN = 0xff0d;
 export function DesktopScreen({
   accountId,
   agent,
-  onBack,
   onApprovals,
   onError,
 }: {
@@ -43,6 +45,7 @@ export function DesktopScreen({
   onApprovals: () => void;
   onError: (error: unknown) => void;
 }) {
+  useResolvedScheme();
   const profile = agent.linuxProfile ?? "";
   const [live, setLive] = useState(false);
   const [keyboard, setKeyboard] = useState(false);
@@ -51,6 +54,8 @@ export function DesktopScreen({
   const [menuOpen, setMenuOpen] = useState(false);
   const [trackpad, setTrackpad] = useState(false);
   const [prefsReady, setPrefsReady] = useState(false);
+  const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
   const webRef = useRef<WebView>(null);
   const inputRef = useRef<TextInput>(null);
   const trackpadRef = useRef(false);
@@ -196,13 +201,10 @@ export function DesktopScreen({
     void setTrackpadMode(next).catch(() => {});
   }
 
-  return (
-    <View style={styles.screen}>
-      <View style={styles.header}>
-        <View style={styles.headerSide}>
-          <CircleButton label="Back" onPress={onBack}>
-            <IconBack />
-          </CircleButton>
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerTitle: () => (
+        <View style={styles.headerTitle}>
           <Avatar
             id={agent.id}
             size={22}
@@ -214,11 +216,17 @@ export function DesktopScreen({
             gender={agent.markGender}
             photo={agent.avatarUrl}
           />
-          <Text style={styles.name}>{agent.name}</Text>
+          <Text style={styles.name} numberOfLines={1}>
+            {agent.name}
+          </Text>
         </View>
+      ),
+      headerRight: () => (
         <View style={styles.headerSide}>
-          <CircleButton
-            label="About this screen"
+          <Pressable
+            accessibilityLabel="About this screen"
+            accessibilityRole="button"
+            hitSlop={8}
             onPress={() =>
               Alert.alert(
                 "Desktop",
@@ -227,34 +235,44 @@ export function DesktopScreen({
                   : "Direct touch maps taps to the spot under your finger. Turn on trackpad mode in the menu for a laptop-style pointer.",
               )
             }
+            style={styles.headerHit}
           >
             <IconHelp />
-          </CircleButton>
-          <View style={styles.menuAnchor}>
-            <CircleButton label="Desktop options" onPress={() => setMenuOpen((open) => !open)}>
-              <IconMore />
-            </CircleButton>
-            {menuOpen ? (
-              <View style={styles.menuCard}>
-                <DesktopInputMenu
-                  trackpad={trackpad}
-                  onToggleTrackpad={toggleTrackpad}
-                  onRecenterPointer={recenterPointer}
-                  onApprovals={onApprovals}
-                  onClose={() => setMenuOpen(false)}
-                />
-              </View>
-            ) : null}
-          </View>
+          </Pressable>
+          <Pressable
+            accessibilityLabel="Desktop options"
+            accessibilityRole="button"
+            hitSlop={8}
+            onPress={() => setMenuOpen((open) => !open)}
+            style={styles.headerHit}
+          >
+            <IconMore />
+          </Pressable>
         </View>
-      </View>
+      ),
+    });
+  }, [agent, navigation, trackpad]);
+
+  return (
+    <View style={styles.screen}>
       {menuOpen ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Close menu"
-          onPress={() => setMenuOpen(false)}
-          style={styles.menuScrim}
-        />
+        <>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Close menu"
+            onPress={() => setMenuOpen(false)}
+            style={styles.menuScrim}
+          />
+          <View style={styles.menuCard}>
+            <DesktopInputMenu
+              trackpad={trackpad}
+              onToggleTrackpad={toggleTrackpad}
+              onRecenterPointer={recenterPointer}
+              onApprovals={onApprovals}
+              onClose={() => setMenuOpen(false)}
+            />
+          </View>
+        </>
       ) : null}
       <View style={styles.stage}>
         {page ? (
@@ -315,7 +333,7 @@ export function DesktopScreen({
         onSubmitEditing={() => sendKey(KEYSYM_RETURN)}
         style={styles.hidden}
       />
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: Math.max(18, insets.bottom) }]}>
         <CircleButton
           label={keyboard ? "Hide keyboard" : "Keyboard"}
           onPress={() => {
@@ -333,11 +351,13 @@ export function DesktopScreen({
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
-  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 8, paddingVertical: 4 },
-  headerSide: { flexDirection: "row", alignItems: "center", gap: 6 },
-  name: { color: colors.text, fontSize: 17, fontWeight: "600" },
+  headerTitle: { flexDirection: "row", alignItems: "center", gap: 8, maxWidth: 220 },
+  headerSide: { flexDirection: "row", alignItems: "center", gap: 8 },
+  headerHit: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
+  name: { color: colors.text, fontSize: 17, fontWeight: "600", flexShrink: 1 },
   stage: { flex: 1, backgroundColor: "#111" },
   viewer: { flex: 1, alignSelf: "stretch", backgroundColor: "#111" },
   empty: { flex: 1, alignItems: "center", justifyContent: "center" },
@@ -346,7 +366,12 @@ const styles = StyleSheet.create({
   live: { color: "#7ddc7d" },
   hidden: { position: "absolute", top: 0, left: 0, width: 1, height: 1, opacity: 0 },
   footer: { flexDirection: "row", justifyContent: "center", paddingHorizontal: 16, paddingVertical: 18 },
-  menuAnchor: { position: "relative", zIndex: 2 },
-  menuCard: { position: "absolute", top: 44, right: 0, zIndex: 3 },
-  menuScrim: { ...StyleSheet.absoluteFill, zIndex: 1 },
+  menuCard: { position: "absolute", top: 8, right: 8, zIndex: 3 },
+  menuScrim: { ...StyleSheet.absoluteFill, zIndex: 2 },
+});
+}
+
+let styles = createStyles(darkColors);
+onPaletteChange((next) => {
+  styles = createStyles(next);
 });

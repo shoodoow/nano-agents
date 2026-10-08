@@ -15,12 +15,14 @@ import {
 import { AttachMenu } from "./AttachMenu";
 import type { MessageBlock, Reaction, RosterAgent } from "../api";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { colors } from "../theme/tokens";
+import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
+import { useResolvedScheme } from "../theme/appearance";
 import { Avatar, colorFor } from "../ui/Avatar";
 import { CircleButton } from "../ui/CircleButton";
+import { AdaptiveSurface } from "../ui/AdaptiveSurface";
+import { IconPlus } from "../ui/icons";
 import { PillButton } from "../ui/PrimaryButton";
 import { ContextUsageRing } from "../ui/ContextUsageRing";
-import { IconBack, IconMonitor, IconPlus } from "../ui/icons";
 import { BlockView } from "./blocks";
 import { Reactions } from "./Reactions";
 import { RoomActivityBar } from "./RoomActivityBar";
@@ -224,6 +226,7 @@ export function ChatScreen({
   /** Opens a teammate's private chat (agent-card tap / relay avatar). */
   onOpenAgent?: (agentId: string) => void;
 }) {
+  useResolvedScheme();
   const insets = useSafeAreaInsets();
   const [attachOpen, setAttachOpen] = useState(false);
   const listRef = useRef<FlatList<Bubble>>(null);
@@ -281,47 +284,6 @@ export function ChatScreen({
 
   return (
     <View style={styles.screen}>
-      <View style={styles.header}>
-        <CircleButton label="Back" onPress={onBack}>
-          <IconBack />
-        </CircleButton>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={members.length > 0 ? `Group details for ${title}` : `Agent details for ${title}`}
-          onPress={onAgentMenu}
-          style={styles.pill}
-        >
-          <Avatar
-            id={agent.id}
-            size={22}
-            round
-            shape={agent.markShape}
-            color={agent.markColor}
-            material={agent.markMaterial}
-            style={agent.markStyle}
-            gender={agent.markGender}
-            photo={agent.avatarUrl}
-            mood={roomActivity ? "working" : "idle"}
-          />
-          <View style={styles.titles}>
-            <Text style={styles.pillName} numberOfLines={1}>
-              {title}
-            </Text>
-            {subtitle ? (
-              <Text style={styles.pillSub} numberOfLines={1}>
-                {subtitle}
-              </Text>
-            ) : null}
-          </View>
-        </Pressable>
-        {members.length === 0 && agent.linuxProfile ? (
-          <CircleButton label="Desktop" onPress={onDesktop}>
-            <IconMonitor />
-          </CircleButton>
-        ) : (
-          <View style={styles.headerSpacer} />
-        )}
-      </View>
       {contextRing?.hint ? (
         <Text style={styles.contextLine} numberOfLines={1}>
           {contextRing.hint}
@@ -335,6 +297,7 @@ export function ChatScreen({
         data={thread}
         keyExtractor={(message) => message.id}
         contentContainerStyle={styles.thread}
+        contentInsetAdjustmentBehavior="automatic"
         keyboardShouldPersistTaps="handled"
         automaticallyAdjustKeyboardInsets
         onScrollToIndexFailed={({ index }) => {
@@ -583,6 +546,7 @@ export function ChatScreen({
         <CircleButton label="Attach" active={attachOpen} onPress={() => setAttachOpen((open) => !open)}>
           <IconPlus />
         </CircleButton>
+        <AdaptiveSurface style={styles.inputSurface}>
         <View style={styles.inputWrap}>
           <TextInput
             value={draft}
@@ -603,13 +567,15 @@ export function ChatScreen({
             </View>
           ) : null}
         </View>
+        </AdaptiveSurface>
         <PillButton label="Send" onPress={onSend} disabled={!canSend} busy={sending} />
       </View>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
   header: {
     flexDirection: "row",
@@ -721,12 +687,12 @@ const styles = StyleSheet.create({
   attachBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)" },
   attachAnchor: { position: "absolute", left: 10 },
   composer: { flexDirection: "row", alignItems: "flex-end", paddingHorizontal: 8, paddingBottom: 8, gap: 2 },
+  inputSurface: { flex: 1, borderRadius: 22, borderCurve: "continuous" },
   inputWrap: {
     flex: 1,
     minHeight: 44,
     maxHeight: INPUT_MAX_HEIGHT,
     borderRadius: 22,
-    backgroundColor: colors.bubble,
     position: "relative",
   },
   inputRing: {
@@ -735,8 +701,6 @@ const styles = StyleSheet.create({
     top: 0,
     bottom: 0,
     justifyContent: "center",
-    zIndex: 2,
-    elevation: 2,
   },
   input: {
     flex: 1,
@@ -750,4 +714,10 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
   },
   inputWithRing: { paddingRight: 38 },
+});
+}
+
+let styles = createStyles(darkColors);
+onPaletteChange((next) => {
+  styles = createStyles(next);
 });

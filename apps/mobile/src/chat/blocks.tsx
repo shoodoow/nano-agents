@@ -5,7 +5,7 @@ import * as Sharing from "expo-sharing";
 import type { MessageBlock } from "../api";
 import { blocksFromMaybeWidgetText } from "@nano-agents/shared";
 import { parseMarkdownBlocks } from "./markdown";
-import { colors } from "../theme/tokens";
+import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
 import { IconClose, IconMonitor, IconShield } from "../ui/icons";
 
 // Client-side bytes cache: one fetch per attachment no matter how often the
@@ -906,7 +906,8 @@ function SecretWidget({
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
   body: { color: colors.text, fontSize: 16, lineHeight: 24 },
   mdBold: { fontWeight: "700", color: colors.text },
   richStack: { gap: 8 },
@@ -1029,4 +1030,10 @@ const styles = StyleSheet.create({
   secretSaveTextReady: { color: colors.bg },
   secretFoot: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 },
   secretFootText: { color: colors.muted, fontSize: 13, flex: 1 },
+});
+}
+
+let styles = createStyles(darkColors);
+onPaletteChange((next) => {
+  styles = createStyles(next);
 });

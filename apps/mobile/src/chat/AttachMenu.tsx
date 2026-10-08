@@ -1,13 +1,31 @@
 import type { ComponentProps } from "react";
-import { Feather } from "@expo/vector-icons";
-import { Pressable, StyleSheet, Text, View } from "react-native";
-import { colors } from "../theme/tokens";
+import MaterialIcons from "@expo/vector-icons/MaterialIcons";
+import { SymbolView, type SymbolViewProps } from "expo-symbols";
+import { Pressable, StyleSheet, Text } from "react-native";
+import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
+import { AdaptiveSurface } from "../ui/AdaptiveSurface";
+
+type AttachIcon = "image" | "camera" | "folder";
 
 type AttachAction = {
-  icon: ComponentProps<typeof Feather>["name"];
+  icon: AttachIcon;
   label: string;
   onPress: () => void;
 };
+
+const ICONS: Record<AttachIcon, { sf: SymbolViewProps["name"]; md: ComponentProps<typeof MaterialIcons>["name"] }> = {
+  image: { sf: "photo", md: "image" },
+  camera: { sf: "camera", md: "photo-camera" },
+  folder: { sf: "folder", md: "folder" },
+};
+
+function AttachIconView({ name }: { name: AttachIcon }) {
+  const icon = ICONS[name];
+  if (process.env.EXPO_OS === "ios") {
+    return <SymbolView name={icon.sf} tintColor={colors.label} size={20} />;
+  }
+  return <MaterialIcons name={icon.md} size={20} color={colors.label as string} />;
+}
 
 /**
  * Floating attach menu anchored above the composer + button.
@@ -15,7 +33,7 @@ type AttachAction = {
  */
 export function AttachMenu({ actions }: { actions: AttachAction[] }) {
   return (
-    <View style={styles.menu}>
+    <AdaptiveSurface style={styles.menu}>
       {actions.map((action) => (
         <Pressable
           key={action.label}
@@ -24,28 +42,22 @@ export function AttachMenu({ actions }: { actions: AttachAction[] }) {
           onPress={action.onPress}
           style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
         >
-          <Feather name={action.icon} size={20} color={colors.text} />
+          <AttachIconView name={action.icon} />
           <Text style={styles.label}>{action.label}</Text>
         </Pressable>
       ))}
-    </View>
+    </AdaptiveSurface>
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
   menu: {
-    backgroundColor: "rgba(44, 44, 46, 0.94)",
     borderRadius: 22,
     borderCurve: "continuous",
     paddingVertical: 6,
     minWidth: 220,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255, 255, 255, 0.08)",
-    shadowColor: "#000",
-    shadowOpacity: 0.45,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 12 },
-    elevation: 16,
+    boxShadow: "0 12px 24px rgba(0, 0, 0, 0.28)",
   },
   row: {
     flexDirection: "row",
@@ -56,4 +68,10 @@ const styles = StyleSheet.create({
   },
   rowPressed: { backgroundColor: "rgba(255, 255, 255, 0.08)" },
   label: { color: colors.text, fontSize: 17, fontWeight: "400" },
+});
+}
+
+let styles = createStyles(darkColors);
+onPaletteChange((next) => {
+  styles = createStyles(next);
 });

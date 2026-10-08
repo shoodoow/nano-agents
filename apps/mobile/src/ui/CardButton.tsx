@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Pressable, StyleSheet, type StyleProp, type ViewStyle } from "react-native";
-import { colors } from "../theme/tokens";
+import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
 import { interaction, pressableStyle } from "./pressableStyles";
 
 /** Tappable card (account menu entries, inbox rows). */
@@ -35,7 +35,8 @@ export function CardButton({
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
   card: {
     flexDirection: "row",
     alignItems: "center",
@@ -46,4 +47,10 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   cardPressed: { backgroundColor: interaction.rowPressedBackground },
+});
+}
+
+let styles = createStyles(darkColors);
+onPaletteChange((next) => {
+  styles = createStyles(next);
 });

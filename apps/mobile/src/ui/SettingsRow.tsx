@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Pressable, StyleSheet, type StyleProp, type ViewStyle } from "react-native";
-import { colors } from "../theme/tokens";
+import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
 import { interaction } from "./pressableStyles";
 
 /** List row with visible press highlight (settings / menu sheets). */
@@ -19,6 +19,7 @@ export function SettingsRow({
     <Pressable
       accessibilityRole="button"
       disabled={disabled}
+      android_ripple={{ color: "rgba(255,255,255,0.12)" }}
       onPress={onPress}
       style={({ pressed }) => [
         styles.row,
@@ -32,7 +33,8 @@ export function SettingsRow({
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
   row: {
     flexDirection: "row",
     alignItems: "center",
@@ -44,4 +46,10 @@ const styles = StyleSheet.create({
   },
   rowPressed: { backgroundColor: interaction.rowPressedBackground },
   rowDisabled: { opacity: 0.38 },
+});
+}
+
+let styles = createStyles(darkColors);
+onPaletteChange((next) => {
+  styles = createStyles(next);
 });

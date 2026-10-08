@@ -1,16 +1,17 @@
 import { useEffect, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, type ViewStyle } from "react-native";
 import type { ProviderSetting } from "../api";
 import type { PluginList } from "../api";
-import { colors } from "../theme/tokens";
+import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
+import { useAppearance, useResolvedScheme, type AppearanceChoice } from "../theme/appearance";
 import { CustomPluginPage, PluginsPage } from "./PluginsPage";
 import { Avatar } from "../ui/Avatar";
 import { CardButton } from "../ui/CardButton";
-import { CircleButton } from "../ui/CircleButton";
 import { PrimaryButton } from "../ui/PrimaryButton";
 import { SettingsRow } from "../ui/SettingsRow";
 import { pressableStyle } from "../ui/pressableStyles";
-import { IconBack, IconCheck, IconChevron, IconClose, IconTrash } from "../ui/icons";
+import { useSheetScrollStyle } from "../ui/sheet-scroll";
+import { IconCheck, IconChevron, IconTrash } from "../ui/icons";
 
 export type SignedAccount = {
   id: string;
@@ -18,7 +19,7 @@ export type SignedAccount = {
   email: string;
 };
 
-export type MenuPage = "menu" | "account" | "signup" | "providers" | "plugins" | "plugin-custom";
+export type MenuPage = "menu" | "account" | "signup" | "providers" | "plugins" | "plugin-custom" | "appearance";
 
 /**
  * Shows the account menu, the account switcher, or signup.
@@ -35,7 +36,6 @@ export function MenuSheet({
   timeZone,
   providers,
   plugins,
-  onClose,
   onPage,
   onNotifications,
   onAutoReview,
@@ -62,7 +62,6 @@ export function MenuSheet({
   timeZone: string;
   providers: ProviderSetting[];
   plugins: PluginList | null;
-  onClose: () => void;
   onPage: (page: MenuPage) => void;
   onNotifications: (value: boolean) => void;
   onAutoReview: (value: boolean) => void;
@@ -80,6 +79,8 @@ export function MenuSheet({
   onSignOut: () => void;
   onDelete: (id: string) => void;
 }) {
+  useResolvedScheme();
+  const scrollStyle = useSheetScrollStyle();
   return (
     <View style={styles.sheet}>
       {page === "menu" && account ? (
@@ -89,7 +90,6 @@ export function MenuSheet({
           autoReview={autoReview}
           autoTimeZone={autoTimeZone}
           timeZone={timeZone}
-          onClose={onClose}
           onAccount={() => onPage("account")}
           onNotifications={onNotifications}
           onAutoReview={onAutoReview}
@@ -98,45 +98,48 @@ export function MenuSheet({
           onComputer={onComputer}
           onProviders={() => onPage("providers")}
           onPlugins={() => onPage("plugins")}
+          onAppearance={() => onPage("appearance")}
+          scrollStyle={scrollStyle}
         />
       ) : null}
       {page === "account" && account ? (
         <AccountPage
           account={account}
           accounts={accounts}
-          onBack={() => onPage("menu")}
           onAdd={() => onPage("signup")}
           onSwitch={onSwitch}
           onSignOut={onSignOut}
           onDelete={() => onDelete(account.id)}
+          scrollStyle={scrollStyle}
         />
       ) : null}
       {page === "signup" ? (
         <SignupPage
           accounts={accounts}
-          onBack={account ? () => onPage("account") : onClose}
           onGoogle={onGoogle}
           onSwitch={onSwitch}
+          scrollStyle={scrollStyle}
         />
       ) : null}
       {page === "plugins" ? (
         <PluginsPage
           plugins={plugins}
-          onBack={() => onPage("menu")}
           onCustom={() => onPage("plugin-custom")}
           onAdd={onAddPlugin}
           onRemove={onRemovePlugin}
           onRefresh={onRefreshPlugins}
+          scrollStyle={scrollStyle}
         />
       ) : null}
       {page === "plugin-custom" ? (
-        <CustomPluginPage onBack={() => onPage("plugins")} onSave={onSaveCustomPlugin} onSignIn={onSignInCustomPlugin} />
+        <CustomPluginPage onSave={onSaveCustomPlugin} onSignIn={onSignInCustomPlugin} scrollStyle={scrollStyle} />
       ) : null}
+      {page === "appearance" ? <AppearancePage scrollStyle={scrollStyle} /> : null}
       {page === "providers" ? (
         <ProviderPage
           providers={providers}
-          onBack={() => onPage("menu")}
           onSave={onSaveProvider}
+          scrollStyle={scrollStyle}
         />
       ) : null}
     </View>
@@ -149,7 +152,6 @@ function MenuPageView({
   autoReview,
   autoTimeZone,
   timeZone,
-  onClose,
   onAccount,
   onNotifications,
   onAutoReview,
@@ -158,13 +160,14 @@ function MenuPageView({
   onComputer,
   onProviders,
   onPlugins,
+  onAppearance,
+  scrollStyle,
 }: {
   account: SignedAccount;
   notifications: boolean;
   autoReview: boolean;
   autoTimeZone: boolean;
   timeZone: string;
-  onClose: () => void;
   onAccount: () => void;
   onNotifications: (value: boolean) => void;
   onAutoReview: (value: boolean) => void;
@@ -173,14 +176,14 @@ function MenuPageView({
   onComputer: () => void;
   onProviders: () => void;
   onPlugins: () => void;
+  onAppearance: () => void;
+  scrollStyle: ViewStyle;
 }) {
+  const { choice } = useAppearance();
   return (
-    <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-      <CircleButton label="Close menu" onPress={onClose}>
-        <IconClose />
-      </CircleButton>
+    <ScrollView style={scrollStyle} contentInsetAdjustmentBehavior="automatic" nestedScrollEnabled contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
       <CardButton onPress={onAccount}>
-        <Avatar id={account.id} size={44} person />
+        <Avatar id={account.id} size={44} person label={account.name} />
         <View style={styles.cardBody}>
           <Text style={styles.name}>{account.name}</Text>
           <Text style={styles.email}>{account.email}</Text>
@@ -242,13 +245,42 @@ function MenuPageView({
           <Text style={styles.rowLabel}>Notifications</Text>
           <Switch value={notifications} onValueChange={onNotifications} trackColor={{ true: colors.green, false: colors.line }} />
         </View>
-        <View style={styles.groupRow}>
+        <SettingsRow onPress={onAppearance}>
           <Text style={styles.rowLabel}>Appearance</Text>
           <View style={styles.trailing}>
-            <Text style={styles.trailingText}>System · Black</Text>
+            <Text style={styles.trailingText}>{appearanceLabel(choice)}</Text>
             <IconChevron />
           </View>
-        </View>
+        </SettingsRow>
+      </View>
+    </ScrollView>
+  );
+}
+
+const APPEARANCE_OPTIONS: { id: AppearanceChoice; label: string }[] = [
+  { id: "light", label: "Light" },
+  { id: "dark", label: "Dark" },
+  { id: "system", label: "System" },
+];
+
+function appearanceLabel(choice: AppearanceChoice): string {
+  return APPEARANCE_OPTIONS.find((option) => option.id === choice)?.label ?? "System";
+}
+
+/**
+ * Lets the person pick Light, Dark, or the device setting.
+ */
+function AppearancePage({ scrollStyle }: { scrollStyle: ViewStyle }) {
+  const { choice, setChoice } = useAppearance();
+  return (
+    <ScrollView style={scrollStyle} contentInsetAdjustmentBehavior="automatic" nestedScrollEnabled contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+      <View style={styles.group}>
+        {APPEARANCE_OPTIONS.map((option) => (
+          <SettingsRow key={option.id} onPress={() => setChoice(option.id)}>
+            <Text style={styles.rowLabel}>{option.label}</Text>
+            {choice === option.id ? <IconCheck /> : null}
+          </SettingsRow>
+        ))}
       </View>
     </ScrollView>
   );
@@ -263,12 +295,12 @@ const providerNames: ProviderSetting["provider"][] = ["openai", "anthropic", "xa
  */
 function ProviderPage({
   providers,
-  onBack,
   onSave,
+  scrollStyle,
 }: {
   providers: ProviderSetting[];
-  onBack: () => void;
   onSave: (provider: ProviderSetting["provider"], secret: string, baseUrl: string | null) => void;
+  scrollStyle: ViewStyle;
 }) {
   const [provider, setProvider] = useState<ProviderSetting["provider"]>("openai");
   const [secret, setSecret] = useState("");
@@ -282,13 +314,7 @@ function ProviderPage({
 
   const ready = provider === "local" ? baseUrl.trim().length > 0 : secret.trim().length > 0 || configured?.configured;
   return (
-    <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-      <View style={styles.accountHeader}>
-        <CircleButton label="Back" onPress={onBack}>
-          <IconBack />
-        </CircleButton>
-        <Text style={styles.accountTitle}>AI Providers</Text>
-      </View>
+    <ScrollView style={scrollStyle} contentInsetAdjustmentBehavior="automatic" nestedScrollEnabled contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
       <Text style={styles.hint}>Keys are encrypted on the server and never returned to this phone.</Text>
       <View style={styles.group}>
         {providerNames.map((name) => (
@@ -334,30 +360,24 @@ function ProviderPage({
 function AccountPage({
   account,
   accounts,
-  onBack,
   onAdd,
   onSwitch,
   onSignOut,
   onDelete,
+  scrollStyle,
 }: {
   account: SignedAccount;
   accounts: SignedAccount[];
-  onBack: () => void;
   onAdd: () => void;
   onSwitch: (id: string) => void;
   onSignOut: () => void;
   onDelete: () => void;
+  scrollStyle: ViewStyle;
 }) {
   return (
-    <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-      <View style={styles.accountHeader}>
-        <CircleButton label="Back" onPress={onBack}>
-          <IconBack />
-        </CircleButton>
-        <Text style={styles.accountTitle}>Account</Text>
-      </View>
+    <ScrollView style={scrollStyle} contentInsetAdjustmentBehavior="automatic" nestedScrollEnabled contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
       <View style={styles.card}>
-        <Avatar id={account.id} size={44} person />
+        <Avatar id={account.id} size={44} person label={account.name} />
         <View style={styles.cardBody}>
           <Text style={styles.name}>{account.name}</Text>
           <Text style={styles.email}>{account.email}</Text>
@@ -394,23 +414,17 @@ function AccountPage({
  */
 function SignupPage({
   accounts,
-  onBack,
   onGoogle,
   onSwitch,
+  scrollStyle,
 }: {
   accounts: SignedAccount[];
-  onBack?: () => void;
   onGoogle: () => void;
   onSwitch: (id: string) => void;
+  scrollStyle: ViewStyle;
 }) {
   return (
-    <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-      {onBack ? (
-        <CircleButton label="Back" onPress={onBack}>
-          <IconBack />
-        </CircleButton>
-      ) : null}
-      <Text style={styles.signupTitle}>Sign in</Text>
+    <ScrollView style={scrollStyle} contentInsetAdjustmentBehavior="automatic" nestedScrollEnabled contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
       <Text style={styles.hint}>Google creates your account. Chats and groups use that account id.</Text>
       <PrimaryButton label="Continue with Google" onPress={onGoogle} />
       {accounts.length > 0 ? <Text style={styles.section}>On this phone</Text> : null}
@@ -423,8 +437,9 @@ function SignupPage({
   );
 }
 
-const styles = StyleSheet.create({
-  sheet: { flex: 1, backgroundColor: colors.sheet, borderRadius: 28, overflow: "hidden" },
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
+  sheet: { flex: 1, backgroundColor: colors.sheet },
   scroll: { padding: 14, paddingBottom: 28, gap: 10 },
   card: {
     flexDirection: "row",
@@ -441,7 +456,7 @@ const styles = StyleSheet.create({
   rowLabel: { color: colors.text, fontSize: 16, flex: 1 },
   hint: { color: colors.muted, fontSize: 13, lineHeight: 18 },
   section: { color: colors.muted, fontSize: 13, marginTop: 8, marginLeft: 6 },
-  group: { backgroundColor: colors.card, borderRadius: 16, overflow: "hidden" },
+  group: { backgroundColor: colors.card, borderRadius: 16, borderCurve: "continuous", overflow: "hidden" },
   groupRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -476,4 +491,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     fontSize: 16,
   },
+});
+}
+
+let styles = createStyles(darkColors);
+onPaletteChange((next) => {
+  styles = createStyles(next);
 });

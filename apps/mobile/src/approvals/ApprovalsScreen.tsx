@@ -1,9 +1,7 @@
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import type { Proposal, ToolApproval } from "../api";
-import { colors } from "../theme/tokens";
-import { CircleButton } from "../ui/CircleButton";
+import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
 import { pressableStyle } from "../ui/pressableStyles";
-import { IconBack } from "../ui/icons";
 
 /**
  * Lists pending skill proposals and Auto-review tool rows.
@@ -17,7 +15,7 @@ export function ApprovalsScreen({
   onReject,
   onApproveTool,
   onDenyTool,
-  onBack,
+  onBack: _onBack,
 }: {
   proposals: Proposal[];
   toolApprovals: ToolApproval[];
@@ -30,14 +28,7 @@ export function ApprovalsScreen({
   const empty = proposals.length === 0 && toolApprovals.length === 0;
   return (
     <View style={styles.screen}>
-      <View style={styles.header}>
-        <CircleButton label="Back" onPress={onBack}>
-          <IconBack />
-        </CircleButton>
-        <Text style={styles.title}>Approvals</Text>
-        <View style={styles.spacer} />
-      </View>
-      <ScrollView contentContainerStyle={styles.list}>
+      <ScrollView contentContainerStyle={styles.list} contentInsetAdjustmentBehavior="automatic">
         {empty ? <Text style={styles.empty}>Nothing to review.</Text> : null}
         {toolApprovals.map((row) => (
           <View key={row.id} style={styles.card}>
@@ -88,7 +79,8 @@ export function ApprovalsScreen({
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 8 },
   title: { color: colors.text, fontSize: 17, fontWeight: "600" },
@@ -102,4 +94,10 @@ const styles = StyleSheet.create({
   action: { minHeight: 44, justifyContent: "center", paddingHorizontal: 4 },
   actionText: { color: colors.link, fontSize: 16, fontWeight: "600" },
   rejectText: { color: colors.danger, fontSize: 16, fontWeight: "600" },
+});
+}
+
+let styles = createStyles(darkColors);
+onPaletteChange((next) => {
+  styles = createStyles(next);
 });
