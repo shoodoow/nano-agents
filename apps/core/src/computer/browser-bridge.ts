@@ -1,4 +1,4 @@
-import { cdpPortFor } from "../desktop/desktop.js";
+import { cdpPortFor, resolveSession } from "../desktop/desktop.js";
 import { execStdin } from "../linux/linux.js";
 
 /** Tools the in-container bridge accepts. Names match the agent tool list. */
@@ -46,6 +46,8 @@ export async function runBrowserTool(
   name: string,
   args: Record<string, unknown>,
 ): Promise<string> {
+  // Chromium needs the desktop up before it can open a window the person can see.
+  await resolveSession(accountId, profile);
   const cdpPort = cdpPortFor(profile);
   const body = JSON.stringify({
     ...JSON.parse(browserBridgeRequest(name, args)),

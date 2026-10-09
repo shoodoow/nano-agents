@@ -1,5 +1,4 @@
 import {
-  agentDisplay,
   assertControllable,
   click,
   keyboard,
@@ -129,8 +128,8 @@ export async function writeFile(accountId: string, profile: string, path: string
  */
 export async function bash(accountId: string, profile: string, command: string): Promise<string> {
   assertShellSafe(command);
-  const display = agentDisplay(accountId, profile) ?? (await resolveSession(accountId, profile)).display;
-  const displayName = typeof display === "string" ? display : `:${display}`;
+  // Starts the desktop when it is down, so a GUI program launched here has a screen.
+  const displayName = `:${(await resolveSession(accountId, profile)).display}`;
   const result = await exec(accountId, ["bash", "-lc", command], profile, [`DISPLAY=${displayName}`]);
   if (result.code !== 0) {
     throw new Error(result.stdout || "The command failed.");

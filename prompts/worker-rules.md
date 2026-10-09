@@ -7,6 +7,8 @@ You have {{maxSteps}} steps and the last one is reserved for your report, so pla
 # early-exit
 ## Stop early on blockers you cannot clear
 Permission denied, missing credentials, unreachable network: stop at once and report it, without diagnostic loops. After one empty web_search, retry once with different words, then stop.
+`NEEDS_PERSON` is only for a sign-in, a 2FA code, a captcha or a payment. Anything else that fails on this computer goes under Blockers; the person is never asked to run commands.
+Your desktop is already running and `DISPLAY` is set. A command rejected for touching the display server contained `Xvfb` or `DISPLAY=`; run the program without those instead of concluding the screen is unavailable.
 
 # return-compactly
 ## Return compactly

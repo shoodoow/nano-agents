@@ -30,6 +30,16 @@ Use these names. They run inside the account computer over localhost Chrome debu
 - `browser_handle_dialog` accepts or dismisses `alert` / `confirm` / `prompt`
 - `browser_wait_for` waits for visible text
 
+## Opening the browser
+
+The browser tools drive the visible Chromium on this agent's desktop. If they report no Chrome, start it with `bash` and retry:
+
+```bash
+chromium --no-sandbox --disable-dev-shm-usage --disable-gpu --no-first-run --remote-debugging-address=127.0.0.1 --remote-debugging-port=$((9200 + ${DISPLAY#:})) 'URL' >/dev/null 2>&1 &
+```
+
+Never use `--headless` or another port: the person watches this screen, and a headless browser shows them nothing.
+
 ## Ads versus captchas
 
 1. `browser_snapshot` first.
