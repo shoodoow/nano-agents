@@ -443,6 +443,33 @@ export const workLog = pgTable(
   (table) => [index("work_log_room_agent_index").on(table.conversationId, table.agentId, table.createdAt)],
 );
 
+/**
+ * A worker's model conversation, saved every few steps.
+ * Why: the same worker can then continue a job with what it already learned
+ * (a follow-up, an approval, a core restart) instead of starting blank.
+ * Kept out of `delegations` so ordinary delegation reads stay small.
+ */
+export const workerTranscripts = pgTable(
+  "worker_transcripts",
+  {
+    delegationId: uuid("delegation_id")
+      .primaryKey()
+      .references(() => delegations.id, { onDelete: "cascade" }),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    childAgentId: uuid("child_agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    messages: jsonb("messages").$type<unknown[]>().notNull().default([]),
+    steps: integer("steps").notNull().default(0),
+    /** What the run was started with, so a continuation rebuilds the same prompt. */
+    meta: jsonb("meta").$type<{ skills?: string[]; context?: string }>().notNull().default({}),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("worker_transcripts_child_index").on(table.childAgentId, table.updatedAt)],
+);
+
 export const events = pgTable(
   "events",
   {

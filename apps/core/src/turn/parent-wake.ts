@@ -72,15 +72,16 @@ function cleanReport(result: string): string {
 }
 
 function workerCompletionCue(
-  settled: Array<{ task: string; result: string; status: "done" | "failed" }>,
+  settled: Array<{ workerId: string; task: string; result: string; status: "done" | "failed" }>,
 ): string {
   const reports = settled
     .map((item, index) =>
       prompt("cues", "worker-result-item", {
         index: index + 1,
         status: item.status,
+        workerId: item.workerId,
         task: item.task.slice(0, 200),
-        report: cleanReport(item.result).slice(0, 2_000),
+        report: cleanReport(item.result).slice(0, 3_500),
       }),
     )
     .join("\n\n");

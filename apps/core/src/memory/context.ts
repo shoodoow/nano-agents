@@ -75,8 +75,9 @@ export function buildContext(input: {
     task: string;
     progress?: string | null;
     createdAt?: Date | null;
+    heartbeatAt?: Date | null;
   }[];
-  workHistory?: { kind: "worker" | "routine"; title: string; outcome: string; status: string; createdAt: Date }[];
+  workHistory?: { kind: "worker" | "routine"; title: string; outcome: string; status: string; createdAt: Date; workerId?: string }[];
   /** Team brief, the other room's latest lines, and requests that failed to start. */
   team?: string;
   /** Specs of the agent's own computer, so it never asks the person about them. */
@@ -93,7 +94,8 @@ export function buildContext(input: {
   );
   const memoryBlock = memorySection(input.memories ?? []);
   const recallBlock = recallSection(input.recall ?? []);
-  const workersBlock = activeWorkersSection(input.activeWorkers ?? []);
+  // Only an agent that can start work is told what is (or is not) running.
+  const workersBlock = input.activeWorkers ? activeWorkersSection(input.activeWorkers) : "";
   const workBlock = workHistorySection(input.workHistory ?? []);
   const summaryBlock = summarySection(summaryLines);
   // Slow-changing blocks first, per-turn blocks last: a provider that caches
@@ -107,7 +109,7 @@ export function buildContext(input: {
     ...(memoryBlock ? [`## Memory\n${memoryBlock}`] : []),
     ...(summaryBlock ? [`## Summary\n${summaryBlock}`] : []),
     ...(recallBlock ? [`## Recall\n${recallBlock}`] : []),
-    ...(workersBlock ? [`## Active workers\n${workersBlock}`] : []),
+    ...(workersBlock ? [`## Work in progress\n${workersBlock}`] : []),
     ...(workBlock ? [`## Recent work\n${workBlock}`] : []),
     ...(input.team?.trim() ? [`## Team\n${input.team.trim()}`] : []),
     ...(input.person ? [`## Now\n${clockLine(input.person)}`] : []),
@@ -280,17 +282,28 @@ export function activeWorkersSection(
     task: string;
     progress?: string | null;
     createdAt?: Date | null;
+    /** Last sign of life from the worker. */
+    heartbeatAt?: Date | null;
   }[],
+  now: Date = new Date(),
 ): string {
+  // Said outright, so "it is still running" is never asserted from memory.
   if (workers.length === 0) {
-    return "";
+    return "Nothing is running right now. Any work you mentioned earlier has stopped or finished; see Recent work.";
   }
+  const minutes = (from?: Date | null): string => {
+    if (!from) return "";
+    const value = Math.max(0, Math.round((now.getTime() - from.getTime()) / 60_000));
+    return value < 1 ? "under a minute" : `${value} min`;
+  };
   return workers
     .slice(0, 5)
     .map((w) => {
       const name = (w.label?.trim() || w.childAgentId).slice(0, 40);
       const progress = w.progress?.trim() ? ` — ${w.progress.replace(/\s+/g, " ").trim().slice(0, 120)}` : "";
-      return `- ${name} (id:${w.childAgentId}): ${w.task.replace(/\s+/g, " ").trim().slice(0, 120)}${progress}`;
+      const started = w.createdAt ? `, running for ${minutes(w.createdAt)}` : "";
+      const active = w.heartbeatAt ? `, last active ${minutes(w.heartbeatAt)} ago` : "";
+      return `- ${name} (id:${w.childAgentId}${started}${active}): ${w.task.replace(/\s+/g, " ").trim().slice(0, 120)}${progress}`;
     })
     .join("\n");
 }
@@ -303,13 +316,15 @@ export function activeWorkersSection(
  * labeled block in newest-first order.
  */
 export function workHistorySection(
-  history: { kind: "worker" | "routine"; title: string; outcome: string; status: string; createdAt: Date }[],
+  history: { kind: "worker" | "routine"; title: string; outcome: string; status: string; createdAt: Date; workerId?: string }[],
 ): string {
   if (history.length === 0) return "";
   const lines = history.slice(0, 3).map((item) => {
     const title = item.title.replace(/\s+/g, " ").trim().slice(0, 100);
-    const outcome = cleanOutcome(item.outcome).slice(0, 160);
-    return `- ${item.kind} ${item.status}: ${title}${outcome ? ` — ${outcome}` : ""}`;
+    const outcome = cleanOutcome(item.outcome).slice(0, 240);
+    // The id is what `redirect_worker` needs to continue that same job.
+    const id = item.workerId ? ` (id:${item.workerId})` : "";
+    return `- ${item.kind} ${item.status}${id}: ${title}${outcome ? ` — ${outcome}` : ""}`;
   });
   return lines.join("\n");
 }

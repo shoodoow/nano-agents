@@ -32,13 +32,11 @@ Use these names. They run inside the account computer over localhost Chrome debu
 
 ## Opening the browser
 
-The browser tools drive the visible Chromium on this agent's desktop. If they report no Chrome, start it with `bash` and retry:
+The browser tools drive the visible Chromium on this agent's desktop, and they start it themselves when it is not running. There is nothing to launch from `bash`.
 
-```bash
-chromium --no-sandbox --disable-dev-shm-usage --disable-gpu --no-first-run --remote-debugging-address=127.0.0.1 --remote-debugging-port=$((9200 + ${DISPLAY#:})) 'URL' >/dev/null 2>&1 &
-```
-
-Never use `--headless` or another port: the person watches this screen, and a headless browser shows them nothing.
+- `open_on_screen` with a URL puts that page on screen and confirms the window is showing.
+- Never start Chromium by hand and never use `--headless`: the person watches this screen, and a headless browser shows them nothing.
+- If a browser tool says the browser did not start, report that message as the blocker.
 
 ## Ads versus captchas
 

@@ -20,7 +20,7 @@ describe("fillPrompt", () => {
 describe("prompt files on disk", () => {
   it("loads every section the code asks for", () => {
     expect(prompt("dispatcher", "stall-nudge").length).toBeGreaterThan(10);
-    expect(prompt("worker-rules", "step-budget", { maxSteps: 10, reportAfter: 8 })).toContain("10");
+    expect(prompt("worker-rules", "wrap-up", { steps: 10, unused: 8 })).toContain("10");
     expect(promptKeys("cues")).toContain("worker-results");
     expect(promptKeys("memory")).toContain("fold");
   });

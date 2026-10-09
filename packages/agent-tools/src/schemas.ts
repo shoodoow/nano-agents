@@ -66,8 +66,13 @@ export const workerRefInputSchema = z.object({
 
 export const workerRedirectInputSchema = z.object({
   workerId: z.string().uuid(),
-  /** New steering instruction. Must be concrete (what to do differently), not a status question. */
-  instruction: z.string().trim().min(20).max(2000),
+  /** What the worker should do now. It keeps its context, so say only what is new. */
+  instruction: z.string().trim().min(8).max(8000),
+});
+
+/** check_worker: one worker by id, or every worker of this chat when omitted. */
+export const workerCheckInputSchema = z.object({
+  workerId: z.string().uuid().optional(),
 });
 
 export const groupCreateInputSchema = z.object({
@@ -239,8 +244,8 @@ const spawnWorkerFields = {
   kind: z.enum(workerKindNames).optional().default("computer"),
   /** Required when kind is custom: the standing method the worker follows. */
   instructions: z.string().trim().min(1).max(20_000).optional(),
-  /** Step budget override (3-40). Default is 16 (12 shell, 24 browser/computer). */
-  maxSteps: z.number().int().min(3).max(40).optional(),
+  /** Accepted for older callers and ignored: a worker runs until the job is done. */
+  maxSteps: z.number().int().min(1).max(500).optional(),
   provider: z.enum(providerNames).optional(),
   modelId: z.string().trim().min(1).max(200).optional(),
 };
@@ -392,6 +397,11 @@ export const grepInputSchema = z.object({
   pattern: z.string().min(1),
   path: z.string().optional(),
   include: z.string().optional(),
+});
+
+/** open_on_screen: one http(s) page shown in the visible browser on the agent's desktop. */
+export const openOnScreenInputSchema = z.object({
+  url: z.string().trim().min(4).max(2000),
 });
 
 export const browserNavigateInputSchema = z.object({

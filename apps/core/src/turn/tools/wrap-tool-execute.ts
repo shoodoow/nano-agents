@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentMode } from "../types.js";
 import { dispatcherToolBudgetError, dispatcherToolBudgetMs } from "./dispatcher-tool-budget.js";
 import { tracePreview } from "../trace/sinks/jsonl.js";
-import { reviewToolCall } from "../auto-review.js";
+import { reviewToolCall, waitForApproval } from "../auto-review.js";
 import type { ToolContext } from "./context.js";
 import { prompt } from "../../prompt/prompts.js";
 import { workEntry } from "../work-log.js";
@@ -80,7 +80,30 @@ export function wrapToolExecute(
     }
     await ctx.traceSession?.emit({ type: "tool.call.start", toolCallId, name, input });
     try {
-      const reviewed = await reviewToolCall(ctx, name, input ?? {});
+      let reviewed = await reviewToolCall(ctx, name, input ?? {});
+      if (!reviewed.allow && ctx.waitOnApproval && reviewed.approvalId && /Auto-review blocked|still waiting/.test(reviewed.reason)) {
+        // The card is already in the chat. Pause here until the person answers,
+        // then carry on with this same call: nothing the worker did is lost.
+        await ctx.waitOnApproval.onState?.("waiting");
+        const decision = await waitForApproval(ctx.db, ctx.accountId, reviewed.approvalId, {
+          signal: ctx.waitOnApproval.signal,
+          onTick: () => ctx.waitOnApproval?.onState?.("tick"),
+        });
+        await ctx.waitOnApproval.onState?.("resumed");
+        if (decision === "approved") {
+          reviewed = { allow: true };
+        } else {
+          reviewed = {
+            allow: false,
+            blocked: true,
+            approvalId: reviewed.approvalId,
+            reason:
+              decision === "denied"
+                ? "The person said no to this action. Do not retry it or reshape it. Reach the goal a safer way, or report it under Blockers."
+                : "The person did not answer the approval in time. Do not retry this action. Carry on with the rest of the task without it and say so under Blockers.",
+          };
+        }
+      }
       if (!reviewed.allow) {
         const durationMs = Math.round(performance.now() - started);
         await ctx.traceSession?.emit({

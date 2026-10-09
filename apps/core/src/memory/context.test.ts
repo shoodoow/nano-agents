@@ -145,9 +145,12 @@ describe("buildContext", () => {
       ],
     });
     expect(withWorkers.prefix.includes("worker-1")).toBe(false);
-    expect(withWorkers.tail.includes("## Active workers")).toBe(true);
+    expect(withWorkers.tail.includes("## Work in progress")).toBe(true);
     expect(withWorkers.tail.includes("worker-1")).toBe(true);
     expect(withWorkers.tail.includes("Install htop on the system")).toBe(true);
+    // An agent that can start work is told outright when nothing is running.
+    const idle = buildContext({ ...agent, summary: [], messages: [{ body: "Is it done?" }], activeWorkers: [] });
+    expect(idle.tail).toContain("## Work in progress\nNothing is running right now.");
     expect(withWorkers.tail.includes("redirect_worker")).toBe(false);
   });
 

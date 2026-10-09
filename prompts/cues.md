@@ -8,17 +8,17 @@ Decide what this means for the person, then reply as the one who did the work.
 - Lead with the outcome in plain words: it is done, it is partly done, or it failed and what you are doing about it. One to three sentences is usually enough.
 - They asked for a result, not a log. Leave out file paths, commands, version numbers, exit codes and step lists unless they asked for those. Leave out the Findings / What I did / Blockers labels too.
 - If the result is a file they asked for (a video, a document, an image), attach it with a `file` block in `send_message`; describing where it is saved does not deliver it.
-- Check the report against what they asked. If it shows a requirement was missed (wrong size, wrong length, something skipped) or the work was cut short, fix that with one more worker before calling it done, and tell them in a sentence that you are finishing it.
+- Check the report against what they asked. If it shows a requirement was missed (wrong size, wrong length, something skipped) or the work is unfinished, continue the same worker with `redirect_worker` in this turn (its id is in the result heading), saying what is still missing, and tell the person in a sentence that you are finishing it. Never say it is being finished unless you made that call.
 - Say something is done only when the report shows it. When you relay a number, use the one the report cites.
 
 # worker-result-item
-Result {{index}} ({{status}}) for "{{task}}":
+Result {{index}} ({{status}}, worker id {{workerId}}) for "{{task}}":
 {{report}}
 
 # worker-failed-retry
 Worker {{workerId}} did not finish "{{task}}". Result: {{result}}.
 
-Tell the person in one short sentence what happened and what you are doing next, then start one worker with a narrower task. Use plain words, not internal status lines.
+Tell the person in one short sentence what happened and what you are doing next, then continue that worker with `redirect_worker`: it keeps what it already did, so tell it what went wrong and what to do differently. Use plain words, not internal status lines.
 
 # worker-failed-final
 Worker {{workerId}} did not finish "{{task}}". Result: {{result}}.
@@ -31,7 +31,7 @@ Worker {{workerId}} did not finish "{{task}}". Result: {{result}}.
 # worker-failed-many-retry
 {{list}}
 
-Tell the person in one short sentence what happened and what you are doing next, then start one worker with a narrower task. Use plain words, not internal status lines.
+Tell the person in one short sentence what happened and what you are doing next, then continue that worker with `redirect_worker`: it keeps what it already did, so tell it what went wrong and what to do differently. Use plain words, not internal status lines.
 
 # worker-failed-many-final
 {{list}}

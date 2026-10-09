@@ -89,6 +89,22 @@ const MAX_SETUP_STEPS = 6;
 /** What the model may call when asked to act on a promise it just made. */
 export const FOLLOW_THROUGH_TOOLS = ["spawn_worker", "stop_worker", "redirect_worker", "delegate"] as const;
 
+const IN_PROGRESS =
+  /\b(still (going|running|working|rendering|building|processing|in progress|at it)|in progress|(is|are|it['’]?s) (now )?(running|rendering|re-?rendering|building|processing|underway|being \w+)|running (now|right now)|render(ing)? (is |now|right now)|underway|chugging|working on (it|that|this)|i['’]?m (now |still |currently )?(building|rendering|re-?rendering|fixing|installing|running|working on|applying|checking|verifying|finishing|generating|creating|making)|(have|['’]ve) (re)?started|kicked (it |that )?off|should (land|be ready|be done) (soon|shortly)|(is|are) on it\b)/i;
+
+/**
+ * Spots a reply that tells the person work is going on.
+ * Why: after a worker stopped, agents kept answering "still rendering" for
+ * forty minutes with nothing running. The claim is cheap to check against
+ * what is actually running, so the loop checks it.
+ * Input: the reply text. Output: true when it says something is in progress.
+ */
+export function claimsWorkInProgress(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed.length > 1500) return false;
+  return IN_PROGRESS.test(trimmed);
+}
+
 const PROMISE =
   /\b(let me|i['’]?ll|i will|i['’]?m going to|i am going to|i['’]?m about to|give me a (moment|sec|second|minute)|one moment|hang on|hold on|on it|right away|kicking off|getting (it|that|this) (going|started))\b/i;
 

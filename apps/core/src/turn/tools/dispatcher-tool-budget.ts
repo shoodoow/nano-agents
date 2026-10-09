@@ -10,7 +10,10 @@ const DISPATCHER_UNLIMITED_TOOLS = new Set([
   "spawn_worker",
   "delegate",
   "stop_worker",
-  "steer_worker",
+  "redirect_worker",
+  "check_worker",
+  // Starting the desktop and the browser can take longer than a quick lookup.
+  "open_on_screen",
 ]);
 
 const DISPATCHER_LOCAL_IO_TOOLS = new Set(["read", "glob", "grep"]);

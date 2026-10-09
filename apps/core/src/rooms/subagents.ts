@@ -8,7 +8,7 @@ import {
 } from "./worker-kinds.js";
 
 import { workerToolNames as agentWorkerToolNames } from "@nano-agents/agent-tools";
-import { generateText, isStepCount } from "ai";
+import { generateText, isStepCount, type ModelMessage } from "ai";
 import { and, count, desc, eq, inArray, lt } from "drizzle-orm";
 import type { Store } from "../db/client.js";
 import type { getDb } from "../db/client.js";
@@ -24,7 +24,21 @@ import { publish } from "./stream.js";
 import { accountHome, createProfile, exec, execStdin } from "../linux/linux.js";
 import { appendMcpTools } from "../mcp/tools.js";
 import { wrapToolExecute } from "../turn/tools/wrap-tool-execute.js";
-import { agents, conversations, delegations, members, messages } from "../db/schema.js";
+import { agents, conversations, delegations, members, messages, workerTranscripts } from "../db/schema.js";
+import { repairToolInput } from "../turn/tools/repair-input.js";
+import {
+  LOOK_ONLY_NUDGE_AFTER,
+  WORKER_SEGMENT_STEPS,
+  WORKER_STEP_CEILING,
+  WORKER_WALL_MS,
+  WRAP_UP_WARNING_STEPS,
+  compactTranscript,
+  compactionThreshold,
+  estimateTokens,
+  isLookOnlyStep,
+  resumableTranscript,
+  transcriptForStorage,
+} from "./worker-loop.js";
 import { RoomCapacityError } from "./rooms.js";
 
 /** Visible teammates from hire_subagent (hidden background workers do not count). */
@@ -38,6 +52,27 @@ export const MAX_ROOM_MEMBERS = 20;
 
 /** Live model calls keyed by delegation so stop/redirect can cancel immediately. */
 const activeWorkerRuns = new Map<string, AbortController>();
+/** Notes from the agent waiting to be read by a running worker, keyed by delegation. */
+const workerInboxes = new Map<string, string[]>();
+
+/**
+ * Hands a note to a worker that is running right now.
+ * Why: steering used to stop the worker and start a blank one. The note is
+ * read between two steps, so the worker keeps everything it has done.
+ * Input: delegation id and the note. Output: false when no run is live here.
+ */
+export function messageRunningWorker(delegationId: string, note: string): boolean {
+  if (!activeWorkerRuns.has(delegationId)) return false;
+  const inbox = workerInboxes.get(delegationId) ?? [];
+  inbox.push(note);
+  workerInboxes.set(delegationId, inbox);
+  return true;
+}
+
+/** True while this process is running that delegation's model loop. */
+export function isWorkerLive(delegationId: string): boolean {
+  return activeWorkerRuns.has(delegationId);
+}
 /** Serializes free-worker allocation so parallel tool calls cannot claim one row twice. */
 const workerSpawnLocks = new Map<string, Promise<void>>();
 
@@ -298,15 +333,10 @@ export async function addGroupMember(
 }
 
 const WORKER_RESULT_MAX = 20_000;
-/** Default step budget. Browser/computer audits need more than a short shell install. */
-const WORKER_STEPS = 16;
-// Five steps ended installs mid-way: look, run, check, fix, verify needs more.
-const WORKER_STEPS_SHELL = 12;
-const WORKER_STEPS_LONG = 24;
 /** Cap per preloaded skill body so one long playbook cannot dominate every worker step. */
-const PRELOADED_SKILL_CHARS = 12_000;
+const PRELOADED_SKILL_CHARS = 24_000;
 // All preloaded skills together; every worker step resends them.
-const PRELOADED_SKILLS_TOTAL_CHARS = 36_000;
+const PRELOADED_SKILLS_TOTAL_CHARS = 60_000;
 /** One cheap text-only pass when a worker spent its budget on tools and wrote nothing. No tools attached. */
 const workerReportRetryInstructions = (): string => prompt("worker-rules", "report-retry");
 export const WORKER_STALE_MS = 4 * 60 * 60 * 1000;
@@ -551,6 +581,137 @@ export async function spawnWorker(
 }
 
 /**
+ * Starts a new piece of work on one specific worker, continuing its last conversation.
+ * Why: a follow-up belongs to the worker that already knows the job. Picking
+ * any free worker row, as spawn does, would hand it to one that knows nothing.
+ * Input: store, ids, the worker to continue, and the follow-up text.
+ * Output: the new delegation plus the delegation whose conversation it continues (null when none was saved).
+ */
+export async function continueWorker(
+  store: Store,
+  input: { accountId: string; conversationId: string; parentAgentId: string; workerId: string; task: string },
+): Promise<{ workerId: string; delegationId: string; status: "running"; resumeFrom: string | null }> {
+  const id = workerRefSchema.parse({ workerId: input.workerId }).workerId;
+  return withWorkerSpawnLock(`${input.accountId}:${input.parentAgentId}`, async () => {
+    const [worker] = await store
+      .select({ id: agents.id, parentId: agents.parentId })
+      .from(agents)
+      .where(and(eq(agents.id, id), eq(agents.accountId, input.accountId), eq(agents.hidden, true)));
+    if (!worker || worker.parentId !== input.parentAgentId) throw new Error("That worker does not belong to you.");
+    if ((await latestDelegationStatus(store, input.accountId, id)) === "running") {
+      throw new Error("That worker is still running. Send it a note instead of starting it again.");
+    }
+    const [saved] = await store
+      .select({ delegationId: workerTranscripts.delegationId })
+      .from(workerTranscripts)
+      .where(and(eq(workerTranscripts.childAgentId, id), eq(workerTranscripts.accountId, input.accountId)))
+      .orderBy(desc(workerTranscripts.updatedAt))
+      .limit(1);
+    const started = await startWorkerDelegation(store, {
+      accountId: input.accountId,
+      conversationId: input.conversationId,
+      parentAgentId: input.parentAgentId,
+      childAgentId: id,
+      task: input.task,
+    });
+    return { ...started, resumeFrom: saved?.delegationId ?? null };
+  });
+}
+
+/** Last few things a worker did, read from its saved conversation. */
+function recentActions(saved: unknown[], limit = 6): string[] {
+  const actions: string[] = [];
+  for (const message of saved) {
+    const content = (message as { role?: string; content?: unknown } | null)?.content;
+    if ((message as { role?: string } | null)?.role !== "assistant" || !Array.isArray(content)) continue;
+    for (const part of content as { type?: string; toolName?: string; input?: unknown }[]) {
+      if (part.type !== "tool-call") continue;
+      let detail = "";
+      try {
+        detail = JSON.stringify(part.input ?? {}).replace(/\s+/g, " ").slice(0, 140);
+      } catch {
+        detail = "";
+      }
+      actions.push(`${part.toolName ?? "tool"} ${detail}`.trim());
+    }
+  }
+  return actions.slice(-limit);
+}
+
+export type WorkerStatus = {
+  workerId: string;
+  /** `lost` = marked running but no live run behind it (the system restarted). */
+  status: "running" | "done" | "failed" | "lost";
+  task: string;
+  startedMinutesAgo: number;
+  lastActivitySecondsAgo: number;
+  steps: number;
+  progress: string;
+  recentActions: string[];
+  result?: string;
+};
+
+/**
+ * What this agent's workers are doing right now, in this chat.
+ * Why: an agent that cannot look says "still working" from memory, long after
+ * the work stopped. This is the look: status, how long, the last things done.
+ * Input: store, account, parent agent, room, and optionally one worker id.
+ * Output: running workers plus the few that finished most recently.
+ */
+export async function workerStatuses(
+  store: Store,
+  input: { accountId: string; conversationId: string; parentAgentId: string; workerId?: string },
+): Promise<WorkerStatus[]> {
+  const rows = await store
+    .select()
+    .from(delegations)
+    .innerJoin(agents, eq(agents.id, delegations.childAgentId))
+    .where(
+      and(
+        eq(delegations.accountId, input.accountId),
+        eq(delegations.parentAgentId, input.parentAgentId),
+        eq(agents.hidden, true),
+        ...(input.workerId
+          ? [eq(delegations.childAgentId, input.workerId)]
+          : [eq(delegations.conversationId, input.conversationId)]),
+      ),
+    )
+    .orderBy(desc(delegations.createdAt))
+    .limit(12);
+  const picked: typeof rows = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    // One line per worker: its newest piece of work.
+    if (seen.has(row.delegations.childAgentId)) continue;
+    seen.add(row.delegations.childAgentId);
+    if (row.delegations.status === "running" || picked.filter((item) => item.delegations.status !== "running").length < 3) {
+      picked.push(row);
+    }
+  }
+  const now = Date.now();
+  const out: WorkerStatus[] = [];
+  for (const { delegations: row } of picked) {
+    const [saved] = await store
+      .select({ messages: workerTranscripts.messages, steps: workerTranscripts.steps })
+      .from(workerTranscripts)
+      .where(eq(workerTranscripts.delegationId, row.id));
+    const running = row.status === "running";
+    out.push({
+      workerId: row.childAgentId,
+      status: running ? (activeWorkerRuns.has(row.id) ? "running" : "lost") : (row.status as "done" | "failed"),
+      task: row.task.replace(/\s+/g, " ").trim().slice(0, 160),
+      startedMinutesAgo: Math.round((now - row.createdAt.getTime()) / 60_000),
+      lastActivitySecondsAgo: Math.round((now - row.heartbeatAt.getTime()) / 1_000),
+      steps: saved?.steps ?? row.modelSteps ?? 0,
+      progress: (row.progress ?? "").slice(0, 200),
+      recentActions: recentActions(saved?.messages ?? []),
+      ...(running ? {} : { result: (row.result ?? "").slice(0, 900) }),
+    });
+  }
+  return out;
+}
+
+/**
  * Reads a worker's latest delegation.
  * Why: server-side status read for capacity messages and the (non-model)
  * status path — the model never polls this; finished results arrive via
@@ -591,6 +752,7 @@ export async function stopWorker(store: Store, accountId: string, workerId: stri
     .where(and(eq(delegations.id, row.id), eq(delegations.status, "running")))
     .returning({ id: delegations.id });
   if (stopped.length === 0) return { stopped: false };
+  // The run saves its conversation as it aborts, so the work can be continued later.
   activeWorkerRuns.get(row.id)?.abort("Worker stopped by parent.");
   return { stopped: true };
 }
@@ -781,8 +943,12 @@ export async function runWorker(
     delegationId: string;
     task: string;
     skillsRoot?: string;
-    /** Step budget override (3-30). Defaults to 10, or 18 for browser/computer kinds. */
+    /** Kept for callers that still pass it; a worker now runs until the job is done. */
     maxSteps?: number;
+    /** Delegation whose saved conversation this run continues from. */
+    resumeFrom?: string;
+    /** Replaces the usual task message when continuing (a restart note, an approval). */
+    resumeNote?: string;
     /** Skill names whose bodies are placed in the worker's prompt up front. */
     skills?: string[];
     /** Background lines appended to the task the worker reads (not stored as the task). */
@@ -890,6 +1056,20 @@ export async function runWorker(
       },
       linuxProfile: profile,
       voiceAgentId: input.parentAgentId,
+      waitOnApproval: {
+        signal: controller.signal,
+        onState: async (state) => {
+          await db
+            .update(delegations)
+            .set({
+              heartbeatAt: new Date(),
+              ...(state === "waiting" ? { progress: "Paused: waiting for the person to approve an action." } : {}),
+              ...(state === "resumed" ? { progress: "Working." } : {}),
+            })
+            .where(and(eq(delegations.id, input.delegationId), eq(delegations.status, "running")))
+            .catch(() => {});
+        },
+      },
     };
     const tools = buildWorkerToolSet({
       db,
@@ -906,18 +1086,26 @@ export async function runWorker(
     }
     const roleLine = prompt("worker-rules", "role-line", { label: child.label, role: child.role });
     const kindMeta = unpackWorkerJobDescription(child.jobDescription);
-    // Shell: short installs. Browser/computer: long UI loops need headroom to write Findings.
-    // The parent may override via spawn_worker maxSteps (clamped) for multi-stage builds.
-    const defaultMaxSteps =
-      kindMeta.kind === "shell"
-        ? WORKER_STEPS_SHELL
-        : kindMeta.kind === "browser" || kindMeta.kind === "computer"
-          ? WORKER_STEPS_LONG
-          : WORKER_STEPS;
-    const maxSteps = Math.min(Math.max(Math.round(input.maxSteps ?? defaultMaxSteps), 3), 40);
     const home = profile ? accountHome(input.accountId, profile) : "";
+    // Continuing: the same worker picks its earlier conversation back up, so
+    // it keeps what it read, built and learned instead of rediscovering it.
+    let prior: ModelMessage[] = [];
+    let meta: { skills?: string[]; context?: string } = { skills: input.skills ?? [], context: input.context };
+    if (input.resumeFrom) {
+      const [saved] = await db
+        .select({ messages: workerTranscripts.messages, meta: workerTranscripts.meta })
+        .from(workerTranscripts)
+        .where(and(eq(workerTranscripts.delegationId, input.resumeFrom), eq(workerTranscripts.accountId, input.accountId)));
+      if (saved) {
+        prior = resumableTranscript(saved.messages);
+        meta = {
+          skills: input.skills && input.skills.length > 0 ? input.skills : (saved.meta?.skills ?? []),
+          context: input.context ?? saved.meta?.context,
+        };
+      }
+    }
     const standing = [
-      workerPreambleFor(kindMeta.kind, kindMeta.instructions, maxSteps),
+      workerPreambleFor(kindMeta.kind, kindMeta.instructions),
       home ? prompt("worker-rules", "workspace", { home }) : "",
     ]
       .filter(Boolean)
@@ -943,30 +1131,68 @@ export async function runWorker(
     // Named skills ride in the prompt: the parent no longer reads them first,
     // and the worker does not spend a step (and a full resend) fetching them.
     const preloaded: string[] = [];
+    /** Skills named for this job that did not fit in the prompt; the worker is told to read them itself. */
+    const notLoaded: string[] = [];
     let preloadBudget = PRELOADED_SKILLS_TOTAL_CHARS;
-    for (const name of (input.skills ?? []).slice(0, 5)) {
-      if (preloadBudget < 1_000) break;
+    for (const name of (meta.skills ?? []).slice(0, 5)) {
+      if (preloadBudget < 2_000) {
+        notLoaded.push(name);
+        continue;
+      }
       try {
         const body = await readSkillForAgent(
           { skillsRoot: input.skillsRoot, accountId: input.accountId, linuxProfile: profile },
           name,
         );
-        const clipped = body.slice(0, Math.min(PRELOADED_SKILL_CHARS, preloadBudget));
-        preloadBudget -= clipped.length;
+        const limit = Math.min(PRELOADED_SKILL_CHARS, preloadBudget);
+        // A skill cut short must say so. Cut silently, the worker believed it
+        // had the whole procedure and built from the first half of it.
+        const clipped =
+          body.length > limit
+            ? `${body.slice(0, limit)}\n\n${prompt("worker-rules", "skill-cut", { name, shown: limit, total: body.length })}`
+            : body;
+        preloadBudget -= Math.min(body.length, limit);
         preloaded.push(prompt("worker-rules", "preloaded-skill", { name, body: clipped }));
       } catch {
         // Unknown skill name: the worker can still look it up with read_skill.
       }
     }
+    if (notLoaded.length > 0) {
+      preloaded.push(prompt("worker-rules", "skills-not-loaded", { names: notLoaded.map((name) => `\`${name}\``).join(", ") }));
+    }
     // The task is sent once, as the user message; the system text is standing method only.
     const workerInstructions = [standing, roleLine, ...preloaded].join("\n\n");
-    const taskMessage = prompt("worker-rules", "task-message", {
-      task: input.task,
-      context: input.context?.trim() ? `\n${input.context.trim()}` : "",
-    }).trim();
+    const contextLines = meta.context?.trim() ? `\n${meta.context.trim()}` : "";
+    const taskMessage = (
+      input.resumeNote ??
+      (prior.length > 0
+        ? prompt("worker-rules", "continue-message", { task: input.task, context: contextLines })
+        : prompt("worker-rules", "task-message", { task: input.task, context: contextLines }))
+    ).trim();
+    let transcript: ModelMessage[] = [...prior, { role: "user", content: taskMessage }];
+    let totalSteps = 0;
+    const saveTranscript = async (): Promise<void> => {
+      const stored = transcriptForStorage(transcript);
+      await db
+        .insert(workerTranscripts)
+        .values({
+          delegationId: input.delegationId,
+          accountId: input.accountId,
+          childAgentId: input.childId,
+          messages: stored,
+          steps: totalSteps,
+          meta,
+        })
+        .onConflictDoUpdate({
+          target: workerTranscripts.delegationId,
+          set: { messages: stored, steps: totalSteps, meta, updatedAt: new Date() },
+        })
+        .catch(() => {});
+    };
+    await saveTranscript();
     await db
       .update(delegations)
-      .set({ progress: "Working.", heartbeatAt: new Date() })
+      .set({ progress: prior.length > 0 ? "Continuing." : "Working.", heartbeatAt: new Date() })
       .where(and(eq(delegations.id, input.delegationId), eq(delegations.status, "running")));
     await workerTrace.emit({
       type: "run.start",
@@ -977,119 +1203,219 @@ export async function runWorker(
       instructions: [{ role: "system" as const, content: workerInstructions }],
       modelMessages: [{ role: "user", content: taskMessage }],
     });
-    let workerSteps = 0;
-    let shouldEarlyStop = false;
+    const {
+      REPORT_MARKERS,
+      NEXT_STEP_NARRATION,
+      claimedWrittenPaths,
+      collectWorkerFallback,
+      collectWorkerText,
+      isToolDigestFallback,
+      resolveWorkerEnding,
+    } = await import("../turn/worker-report.js");
+    const model = getModel(child.provider, child.modelId, credential.apiKey, credential.baseUrl);
+    const compactAt = compactionThreshold(child.modelContextWindow);
+    const startedAt = Date.now();
+    const usage: Usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, modelSteps: 0 };
+    /** Slim copies of finished steps: enough to write a report from, without holding every screenshot. */
+    const stepLog: { text?: string; reasoningText?: string; toolCalls?: unknown[]; toolResults?: never[] }[] = [];
+    let recentToolResults: unknown[] = [];
+    let lookOnlyStreak = 0;
+    let lastInputTokens = 0;
     let lastToolCallSignature = "";
     let duplicateCallCount = 0;
-    const result = await generateText({
-      model: getModel(child.provider, child.modelId, credential.apiKey, credential.baseUrl),
-      abortSignal: controller.signal,
-      instructions: [{ role: "system" as const, content: workerInstructions }],
-      messages: [{ role: "user", content: taskMessage }],
-      tools,
-      stopWhen: [
-        isStepCount(maxSteps),
-        () => shouldEarlyStop,
-      ],
-      // The last step is for the report. Asking nicely in the prompt was not
-      // enough: workers spent every step on tools and returned nothing.
-      prepareStep: ({ steps, messages }) =>
-        steps.length >= maxSteps - 1
-          ? {
-              activeTools: [] as never,
-              messages: [...messages, { role: "user" as const, content: prompt("worker-rules", "last-step") }],
-            }
-          : undefined,
-      onStepEnd: async (step) => {
-        workerSteps += 1;
-        // Loop detection: if identical tool call repeats consecutively
-        const currentCalls = (step.toolCalls ?? []).map((call) => ({
-          name: (call as { toolName?: string }).toolName,
-          input: (call as { input?: unknown }).input ?? (call as { args?: unknown }).args,
-        }));
-        const callSig = JSON.stringify(currentCalls);
-        if (callSig.length > 2 && callSig === lastToolCallSignature) {
-          duplicateCallCount += 1;
-          if (duplicateCallCount >= 2) {
-            shouldEarlyStop = true;
-          }
-        } else {
-          lastToolCallSignature = callSig;
-          duplicateCallCount = 0;
+    let loopStrikes = 0;
+    let loopFlag = false;
+    let narrationNudges = 0;
+    let challengedPaths = false;
+    let warnedWrapUp = false;
+    let cutShort = false;
+    let finalText = "";
+    /** Messages of the segment in flight, so a stop mid-segment still saves what was done. */
+    let inFlight: ModelMessage[] = [];
+    const missingClaimed = async (text: string): Promise<string[]> => {
+      if (!profile) return [];
+      const missing: string[] = [];
+      for (const path of claimedWrittenPaths(text)) {
+        // -e, not -f: a report often names the project folder it made.
+        const check = await exec(input.accountId, ["test", "-e", path], profile).catch(() => ({ code: 1 }));
+        if (check.code !== 0) missing.push(path);
+      }
+      return missing;
+    };
+    const say = (note: string): void => {
+      transcript.push({ role: "user", content: note });
+    };
+    try {
+      for (;;) {
+        const remaining = WORKER_STEP_CEILING - totalSteps;
+        const closing = remaining <= 1 || Date.now() - startedAt > WORKER_WALL_MS || loopStrikes >= 2;
+        if (closing) {
+          cutShort = true;
+          say(prompt("worker-rules", "last-step"));
         }
-        const toolNames = currentCalls.map((call) => call.name).filter(Boolean).join(", ");
-        const checkpoint = toolNames
-          ? `Step ${workerSteps}: ${toolNames}`
-          : `Step ${workerSteps}: ${(step.text ?? "reasoning").replace(/\s+/g, " ").trim().slice(0, 180)}`;
-        await db
-          .update(delegations)
-          .set({ progress: checkpoint, heartbeatAt: new Date() })
-          .where(and(eq(delegations.id, input.delegationId), eq(delegations.status, "running")))
-          .catch(() => {});
-
-        // Fatal blocker detection: stop early if unrecoverable permission/sudo error occurs
-        for (const tr of (step as { toolResults?: unknown[] }).toolResults ?? []) {
-          const res =
-            (tr as { result?: unknown; output?: unknown }).result ??
-            (tr as { result?: unknown; output?: unknown }).output;
-          const textRes = typeof res === "string" ? res : JSON.stringify(res ?? "");
-          if (/permission denied|sudo:\s*a password is required|is not in the sudoers file/i.test(textRes)) {
-            shouldEarlyStop = true;
-          }
-        }
-
-        const usage = step.usage
-          ? {
-              inputTokens: step.usage.inputTokens,
-              outputTokens: step.usage.outputTokens,
-              cacheReadTokens: step.usage.inputTokenDetails?.cacheReadTokens,
-              reasoningTokens: step.usage.outputTokenDetails?.reasoningTokens,
+        const segmentSteps = closing ? 1 : Math.min(WORKER_SEGMENT_STEPS, remaining - 1);
+        let segmentCount = 0;
+        inFlight = [];
+        const result = await generateText({
+          model,
+          abortSignal: controller.signal,
+          instructions: [{ role: "system" as const, content: workerInstructions }],
+          messages: transcript,
+          tools,
+          stopWhen: [
+            isStepCount(segmentSteps),
+            // A note from the agent, or a repeat loop, is handled between steps.
+            () => loopFlag || (workerInboxes.get(input.delegationId)?.length ?? 0) > 0,
+          ],
+          // The closing step is for the report: no tools on offer.
+          prepareStep: closing ? () => ({ activeTools: [] as never }) : undefined,
+          // One free fix for inputs that are wrong in shape but clear in meaning.
+          repairToolCall: async ({ toolCall }) => {
+            const repaired = repairToolInput(toolCall.toolName, toolCall.input);
+            return repaired ? { ...toolCall, input: repaired } : null;
+          },
+          onStepEnd: async (step) => {
+            totalSteps += 1;
+            segmentCount += 1;
+            const currentCalls = (step.toolCalls ?? []).map((call) => ({
+              name: (call as { toolName?: string }).toolName ?? "",
+              input: (call as { input?: unknown }).input ?? (call as { args?: unknown }).args,
+            }));
+            const stepMessages = (step as { response?: { messages?: unknown } }).response?.messages;
+            if (Array.isArray(stepMessages)) inFlight = stepMessages as ModelMessage[];
+            // The same call three times in a row returns the same thing three times.
+            const callSig = JSON.stringify(currentCalls);
+            if (callSig.length > 2 && callSig === lastToolCallSignature) {
+              duplicateCallCount += 1;
+              if (duplicateCallCount >= 2) loopFlag = true;
+            } else {
+              lastToolCallSignature = callSig;
+              duplicateCallCount = 0;
             }
-          : undefined;
-        await workerTrace.emit({
-          type: "model.step.finish",
-          step: workerSteps,
-          text: (step.text ?? "").slice(0, 300),
-          usage,
-          toolCalls: (step.toolCalls ?? []).map((call) => ({
-            toolCallId: (call as { toolCallId?: string }).toolCallId ?? "",
-            name: (call as { toolName?: string }).toolName ?? "unknown",
-            input: ((call as { input?: unknown }).input ?? (call as { args?: unknown }).args ?? null) as unknown,
-          })),
-          toolResults: [],
+            if (currentCalls.length > 0) lookOnlyStreak = isLookOnlyStep(currentCalls) ? lookOnlyStreak + 1 : 0;
+            stepLog.push({
+              text: step.text,
+              reasoningText: (step as { reasoningText?: string }).reasoningText,
+              toolCalls: currentCalls.length > 0 ? currentCalls.map(() => ({})) : [],
+            });
+            const results = (step as { toolResults?: unknown[] }).toolResults ?? [];
+            if (results.length > 0) recentToolResults = [...recentToolResults, ...results].slice(-5);
+            const toolNames = currentCalls.map((call) => call.name).filter(Boolean).join(", ");
+            const checkpoint = toolNames
+              ? `Step ${totalSteps}: ${toolNames}`
+              : `Step ${totalSteps}: ${(step.text ?? "reasoning").replace(/\s+/g, " ").trim().slice(0, 180)}`;
+            await db
+              .update(delegations)
+              .set({ progress: checkpoint, heartbeatAt: new Date() })
+              .where(and(eq(delegations.id, input.delegationId), eq(delegations.status, "running")))
+              .catch(() => {});
+            lastInputTokens = step.usage?.inputTokens ?? lastInputTokens;
+            await workerTrace.emit({
+              type: "model.step.finish",
+              step: totalSteps,
+              text: (step.text ?? "").slice(0, 300),
+              usage: step.usage
+                ? {
+                    inputTokens: step.usage.inputTokens,
+                    outputTokens: step.usage.outputTokens,
+                    cacheReadTokens: step.usage.inputTokenDetails?.cacheReadTokens,
+                    reasoningTokens: step.usage.outputTokenDetails?.reasoningTokens,
+                  }
+                : undefined,
+              toolCalls: (step.toolCalls ?? []).map((call) => ({
+                toolCallId: (call as { toolCallId?: string }).toolCallId ?? "",
+                name: (call as { toolName?: string }).toolName ?? "unknown",
+                input: ((call as { input?: unknown }).input ?? (call as { args?: unknown }).args ?? null) as unknown,
+              })),
+              toolResults: [],
+            });
+          },
         });
-      },
-    });
+        inFlight = [];
+        transcript.push(...(result.responseMessages as ModelMessage[]));
+        // AI SDK 7: result.usage already sums every step of this call.
+        const inDetails = result.usage.inputTokenDetails as
+          | { cacheReadTokens?: number; cacheWriteTokens?: number }
+          | undefined;
+        const outDetails = result.usage.outputTokenDetails as { reasoningTokens?: number } | undefined;
+        usage.inputTokens = (usage.inputTokens ?? 0) + (result.usage.inputTokens ?? 0);
+        usage.outputTokens = (usage.outputTokens ?? 0) + (result.usage.outputTokens ?? 0);
+        usage.cacheReadTokens = (usage.cacheReadTokens ?? 0) + (inDetails?.cacheReadTokens ?? 0);
+        usage.cacheWriteTokens = (usage.cacheWriteTokens ?? 0) + (inDetails?.cacheWriteTokens ?? 0);
+        usage.reasoningTokens = (usage.reasoningTokens ?? 0) + (outDetails?.reasoningTokens ?? 0);
+        usage.modelSteps = totalSteps;
+        await saveTranscript();
+        if (closing) {
+          finalText = result.text;
+          break;
+        }
+        const notes = workerInboxes.get(input.delegationId)?.splice(0) ?? [];
+        const lastStep = result.steps.at(-1);
+        const endedOnText = segmentCount === 0 || (lastStep?.toolCalls?.length ?? 0) === 0;
+        if (endedOnText && notes.length === 0) {
+          // The model stopped by itself. Accept that only when it is a real ending.
+          const text = collectWorkerText({ text: result.text, steps: stepLog }) || result.text;
+          const isReport = REPORT_MARKERS.test(text);
+          if (narrationNudges < 2 && !isReport && text.trim().length < 700 && (!text.trim() || NEXT_STEP_NARRATION.test(text))) {
+            narrationNudges += 1;
+            say(prompt("worker-rules", "keep-going"));
+            continue;
+          }
+          if (!challengedPaths) {
+            const missing = await missingClaimed(text);
+            if (missing.length > 0) {
+              challengedPaths = true;
+              say(prompt("worker-rules", "missing-paths", { paths: missing.join(", ") }));
+              continue;
+            }
+          }
+          finalText = result.text;
+          break;
+        }
+        // Between segments: pass on what the agent said, and keep the worker honest about progress.
+        for (const note of notes) say(prompt("worker-rules", "agent-note", { note }));
+        if (loopFlag) {
+          loopFlag = false;
+          loopStrikes += 1;
+          duplicateCallCount = 0;
+          lastToolCallSignature = "";
+          say(prompt("worker-rules", "repeat-loop"));
+        }
+        if (lookOnlyStreak >= LOOK_ONLY_NUDGE_AFTER) {
+          say(prompt("worker-rules", "start-doing", { steps: lookOnlyStreak }));
+          lookOnlyStreak = 0;
+        }
+        if (!warnedWrapUp && WORKER_STEP_CEILING - totalSteps <= WRAP_UP_WARNING_STEPS) {
+          warnedWrapUp = true;
+          say(prompt("worker-rules", "wrap-up", { steps: WORKER_STEP_CEILING - totalSteps }));
+        }
+        if (lastInputTokens > compactAt || estimateTokens(transcript) > compactAt) {
+          transcript = compactTranscript(transcript);
+          if (estimateTokens(transcript) > compactAt) {
+            transcript = compactTranscript(transcript, { keepRecent: 6, toolChars: 300, inputChars: 200 });
+          }
+          lastInputTokens = 0;
+        }
+      }
+    } catch (error) {
+      // Stopped or crashed mid-segment: keep what was done so the job can be continued.
+      if (inFlight.length > 0) transcript.push(...inFlight);
+      await saveTranscript();
+      throw error;
+    }
     await workerTrace.emit({
       type: "run.finish",
-      text: result.text,
+      text: finalText,
       usage: {
-        inputTokens: result.usage.inputTokens,
-        outputTokens: result.usage.outputTokens,
-        cacheReadTokens: result.usage.inputTokenDetails?.cacheReadTokens,
-        reasoningTokens: result.usage.outputTokenDetails?.reasoningTokens,
+        inputTokens: usage.inputTokens ?? undefined,
+        outputTokens: usage.outputTokens ?? undefined,
+        cacheReadTokens: usage.cacheReadTokens ?? undefined,
+        reasoningTokens: usage.reasoningTokens ?? undefined,
       },
-      steps: workerSteps,
+      steps: totalSteps,
     });
-    const { claimedWrittenPaths, collectWorkerFallback, isToolDigestFallback, resolveWorkerEnding } = await import(
-      "../turn/worker-report.js"
-    );
-    // Billable usage for this worker (AI SDK 7: result.usage already sums all
-    // steps, screenshots included) — persisted on the delegation row so the
-    // per-chat display matches the provider dashboard.
-    const inDetails = result.usage.inputTokenDetails as
-      | { cacheReadTokens?: number; cacheWriteTokens?: number }
-      | undefined;
-    const outDetails = result.usage.outputTokenDetails as { reasoningTokens?: number } | undefined;
-    const usage = {
-      inputTokens: result.usage.inputTokens ?? null,
-      outputTokens: result.usage.outputTokens ?? null,
-      cacheReadTokens: inDetails?.cacheReadTokens ?? null,
-      cacheWriteTokens: inDetails?.cacheWriteTokens ?? null,
-      reasoningTokens: outDetails?.reasoningTokens ?? null,
-      modelSteps: result.steps?.length ?? null,
-    };
-    const ending = resolveWorkerEnding(result);
+    const outcome = { text: finalText, steps: stepLog, toolResults: recentToolResults as never[] };
+    const ending = resolveWorkerEnding(outcome);
     if (ending.kind === "stall") {
       // No tools and no report — weak model ended on empty/"Let me…" narration.
       await finish(
@@ -1099,16 +1425,15 @@ export async function runWorker(
       );
       return;
     }
-    if (ending.kind === "report" && isToolDigestFallback(result)) {
-      // Tools ran but the model never wrote a report (usually cut off at the
-      // step cap). One cheap text-only pass first — no tools, so it costs a
-      // fraction of a full retry. Still empty → fail loudly so the parent
-      // narrows the task instead of re-spawning the same mega-brief.
-      const digest = collectWorkerFallback(result);
+    const cutShortNote = cutShort ? `${prompt("worker-rules", "cut-short")}\n\n` : "";
+    if (ending.kind === "report" && isToolDigestFallback(outcome)) {
+      // Tools ran but the model never wrote a report. One cheap text-only pass
+      // first — no tools, so it costs a fraction of a full retry.
+      const digest = collectWorkerFallback(outcome);
       let recovered = "";
       try {
         const retry = await generateText({
-          model: getModel(child.provider, child.modelId, credential.apiKey, credential.baseUrl),
+          model,
           abortSignal: controller.signal,
           instructions: [{ role: "system" as const, content: workerReportRetryInstructions() }],
           messages: [
@@ -1121,40 +1446,28 @@ export async function runWorker(
       } catch {
         recovered = "";
       }
-      if (recovered) {
-        // The work may be half done; saying "done" made the parent announce success.
-        await finish("done", `${prompt("worker-rules", "out-of-steps", { maxSteps })}\n\n${recovered}`.slice(0, WORKER_RESULT_MAX), usage);
-        return;
-      }
       await finish(
-        "failed",
-        `Worker used all ${maxSteps} steps on tools and wrote no report. Split the task into smaller chained workers (one file or one finding per worker) or raise maxSteps for this build. Last tool outputs:\n${digest}`,
+        recovered ? "done" : "failed",
+        recovered
+          ? `${cutShortNote}${recovered}`.slice(0, WORKER_RESULT_MAX)
+          : `The worker ran ${totalSteps} steps and wrote no report. Continue it with redirect_worker and ask what state the work is in. Last tool outputs:\n${digest}`,
         usage,
       );
       return;
     }
-    if (ending.kind === "report" && profile) {
-      const missing: string[] = [];
-      for (const path of claimedWrittenPaths(ending.result)) {
-        const check = await exec(input.accountId, ["test", "-f", path], profile).catch(() => ({ code: 1 }));
-        if (check.code !== 0) missing.push(path);
-      }
-      if (missing.length > 0) {
-        await finish(
-          "failed",
-          `Claimed files are missing: ${missing.join(", ")}. Do not tell the person this finished.`,
-          usage,
-        );
-        return;
-      }
-    }
+    // The report is kept either way: a path that is not there is a warning for
+    // the agent, never a reason to throw the worker's findings away.
+    const missing = ending.kind === "report" ? await missingClaimed(ending.result) : [];
+    const missingNote =
+      missing.length > 0 ? `${prompt("worker-rules", "missing-paths-note", { paths: missing.join(", ") })}\n\n` : "";
     // report | needs_person: deliver as-is (needs_person triggers the sign-in handover).
-    await finish("done", ending.result, usage);
+    await finish("done", `${cutShortNote}${missingNote}${ending.result}`, usage);
   } catch (error) {
     await finish("failed", error instanceof Error ? error.message : "The worker failed.");
   } finally {
     if (activeWorkerRuns.get(input.delegationId) === controller) {
       activeWorkerRuns.delete(input.delegationId);
+      workerInboxes.delete(input.delegationId);
     }
   }
 }

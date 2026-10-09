@@ -18,11 +18,11 @@ describe("worker kinds", () => {
     }
   });
 
-  test("preamble carries a step budget so workers stop in time to report", () => {
+  test("preamble tells the worker to keep going until done, with no step budget", () => {
     const text = workerPreambleFor("executor");
-    expect(text).toContain("Step budget: 16 steps");
-    expect(workerPreambleFor("executor", undefined, 25)).toContain("Step budget: 25 steps");
-    expect(workerPreambleFor("browser")).toContain("Step budget: 16 steps");
+    expect(text).toContain("## How to work");
+    expect(text).not.toMatch(/Step budget/);
+    expect(workerPreambleFor("browser")).toContain("## How to work");
   });
 
   test("custom requires instructions", () => {

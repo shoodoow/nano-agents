@@ -7,7 +7,9 @@
  * Chromium-kill lines are stripped rather than rejected. Returns the task to run.
  */
 const MIN_TASK_CHARS = 40;
-const MAX_TASK_CHARS = 4000;
+// Generous on purpose: the brief is the worker's whole world, and a rejected
+// brief left the person with a promise and nothing running.
+const MAX_TASK_CHARS = 16_000;
 
 export function validateWorkerTask(task: string): { ok: true; task: string } | { ok: false; hint: string } {
   const trimmed = task.trim();
@@ -17,11 +19,10 @@ export function validateWorkerTask(task: string): { ok: true; task: string } | {
       hint: "Task is too short for a worker that starts blank. Say what to produce, the exact URLs or paths to use, and what to report back.",
     };
   }
-  // One worker = one deliverable. Mega-briefs never fit the step budget and end with no report.
   if (trimmed.length > MAX_TASK_CHARS) {
     return {
       ok: false,
-      hint: `Task is too long (${trimmed.length} chars) for one worker. Split it: the first worker produces the plan or file, the next one takes that file as input. One deliverable per worker; raise maxSteps (3-30) only for a build that cannot be split.`,
+      hint: `Task is too long (${trimmed.length} chars). Say what to produce, the requirements, the paths or URLs, and what to report back; leave out step-by-step instructions and pasted file contents (name the file instead).`,
     };
   }
 

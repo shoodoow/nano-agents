@@ -1,0 +1,299 @@
+/**
+ * Pure rules for a worker's long-running loop.
+ * Why: a worker used to get a fixed handful of steps and was cut off mid-job,
+ * and every restart began blank. Now it runs until the job is done, so the
+ * loop needs its own guard rails: notice a worker that only reads, keep the
+ * conversation inside the model's window, and store it small enough to
+ * continue later. DB: none (callers persist what these return).
+ */
+import type { ModelMessage } from "ai";
+
+/** Safety ceiling, not a budget: far above what a real job needs, low enough to stop a runaway. */
+export const WORKER_STEP_CEILING = 150;
+/** Steps between housekeeping (save the conversation, deliver notes, trim old output). */
+export const WORKER_SEGMENT_STEPS = 6;
+/** Longest one run may take before it is told to wrap up and report. */
+export const WORKER_WALL_MS = 90 * 60 * 1000;
+/** Steps spent only looking before the worker is told to start doing. */
+export const LOOK_ONLY_NUDGE_AFTER = 8;
+/** Steps left when the worker is warned the ceiling is near. */
+export const WRAP_UP_WARNING_STEPS = 8;
+/** Largest conversation kept for a later continuation, as JSON characters. */
+export const TRANSCRIPT_STORE_CHARS = 600_000;
+
+const LOOK_ONLY_TOOLS = new Set([
+  "read",
+  "glob",
+  "grep",
+  "web_search",
+  "web_fetch",
+  "read_skill",
+  "list_skills",
+  "read_history",
+  "browser_snapshot",
+  "browser_list_pages",
+  "computer_screenshot",
+]);
+
+const READ_ONLY_COMMANDS = new Set([
+  "cat", "ls", "head", "tail", "grep", "egrep", "rg", "wc", "echo", "printf", "pwd", "which", "command", "type",
+  "file", "stat", "tree", "du", "df", "ps", "env", "printenv", "test", "[", "true", "cd", "sort", "uniq", "cut",
+  "tr", "jq", "ffprobe", "date", "id", "whoami", "uname", "nl", "less", "more", "basename", "dirname", "realpath",
+  "readlink", "diff", "cmp", "md5sum", "sha256sum", "hostname", "nproc", "free", "fc-list", "fc-match", "xdpyinfo",
+  "column", "strings", "xxd", "hexdump",
+]);
+
+/**
+ * True when a shell command only inspects things and changes nothing.
+ * Why: a worker stuck reading source files makes no progress however many
+ * steps it gets. Conservative on purpose: anything unrecognised counts as doing.
+ * Input: the command text. Output: whether every part of it only reads.
+ */
+export function isReadOnlyShell(command: string): boolean {
+  const text = command.trim();
+  if (!text) return true;
+  // A redirect into a real file is a write. Discarding output or merging streams is not.
+  const withoutHarmless = text.replace(/\d?>>?\s*\/dev\/null/g, "").replace(/\d?>&\d/g, "");
+  if (/(^|[^<])>>?\s*[^\s&]/.test(withoutHarmless)) return false;
+  if (/<<-?\s*['"]?\w+/.test(text) && !/^\s*(cat|node|python3?)\b/.test(text)) return false;
+  // Quoted text is data, not commands: a `;` inside a one-liner must not split it.
+  const unquoted = withoutHarmless.replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, "Q");
+  const parts = unquoted
+    .split(/&&|\|\||[;|\n]/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  for (const part of parts) {
+    // Leading `NAME=value` assignments are setup for the command that follows.
+    const words = part.split(/\s+/).filter((word) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word));
+    const head = words[0];
+    if (!head) continue;
+    if (head === "sed") {
+      if (!words.includes("-n") || words.some((word) => /^-[a-z]*i/.test(word))) return false;
+      continue;
+    }
+    if (head === "find") {
+      if (words.some((word) => word === "-delete" || word === "-exec" || word === "-execdir")) return false;
+      continue;
+    }
+    if (head === "awk") continue;
+    if (head === "node" || head === "python3" || head === "python") {
+      // One-liners that print parts of a file are reading; a script file may do anything.
+      if (!words.some((word) => word === "-e" || word === "-c" || word === "-p" || word === "-")) return false;
+      if (/writeFile|appendFile|mkdir|unlink|rmSync|open\([^)]*['"][wa]/.test(text)) return false;
+      continue;
+    }
+    if (words.some((word) => word === "--help" || word === "-h" || word === "--version")) continue;
+    // A tool's own documentation command (`npx <tool> docs <topic>`) only prints.
+    if (head === "npx" && words.some((word) => word === "docs" || word === "help")) continue;
+    if (!READ_ONLY_COMMANDS.has(head)) return false;
+  }
+  return true;
+}
+
+/**
+ * True when one finished step only looked at things.
+ * Input: the step's tool calls. Output: false for a step that wrote, ran, or clicked.
+ */
+export function isLookOnlyStep(calls: { name: string; input: unknown }[]): boolean {
+  if (calls.length === 0) return false;
+  return calls.every((call) => {
+    if (LOOK_ONLY_TOOLS.has(call.name)) return true;
+    if (call.name !== "bash") return false;
+    const command = (call.input as { command?: unknown } | null)?.command;
+    return typeof command === "string" && isReadOnlyShell(command);
+  });
+}
+
+type Part = Record<string, unknown>;
+
+function isImagePart(part: Part): boolean {
+  const type = String(part.type ?? "");
+  if (type === "image" || type === "media" || type === "image-data" || type === "file-data") return true;
+  if (type === "file") return /^image\//.test(String(part.mediaType ?? part.mimeType ?? ""));
+  return false;
+}
+
+const IMAGE_GONE = "[A picture was here. It is no longer in view; open the file again if you need to look at it.]";
+
+/** Text of one tool output, with pictures replaced by a note. */
+function outputText(output: unknown): { text: string; hadImage: boolean } {
+  if (output == null) return { text: "", hadImage: false };
+  if (typeof output === "string") return { text: output, hadImage: false };
+  const shaped = output as { type?: unknown; value?: unknown };
+  if (shaped.type === "text" || shaped.type === "error-text") {
+    return { text: String(shaped.value ?? ""), hadImage: false };
+  }
+  if (shaped.type === "content" && Array.isArray(shaped.value)) {
+    let hadImage = false;
+    const text = (shaped.value as Part[])
+      .map((part) => {
+        if (isImagePart(part)) {
+          hadImage = true;
+          return IMAGE_GONE;
+        }
+        return typeof part.text === "string" ? part.text : "";
+      })
+      .filter(Boolean)
+      .join("\n");
+    return { text, hadImage };
+  }
+  try {
+    return { text: JSON.stringify("value" in shaped ? shaped.value : output), hadImage: false };
+  } catch {
+    return { text: "", hadImage: false };
+  }
+}
+
+function clip(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  const head = Math.ceil(limit * 0.7);
+  const tail = Math.max(0, limit - head);
+  return `${text.slice(0, head)}\n[... ${text.length - head - tail} characters of older output trimmed; rerun the command if you need them ...]\n${tail > 0 ? text.slice(-tail) : ""}`;
+}
+
+/** Shortens long string arguments (a whole file body) of an old tool call. */
+function clipInput(input: unknown, limit: number): unknown {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+    out[key] =
+      typeof value === "string" && value.length > limit
+        ? `${value.slice(0, limit)}\n[... ${value.length - limit} more characters were sent; the file on disk has the full text ...]`
+        : value;
+  }
+  return out;
+}
+
+function trimMessage(message: ModelMessage, toolChars: number, inputChars: number, dropImagesOnly: boolean): ModelMessage {
+  const content = (message as { content?: unknown }).content;
+  if (!Array.isArray(content)) return message;
+  let changed = false;
+  const next = (content as Part[]).map((part) => {
+    if (part.type === "tool-result") {
+      const { text, hadImage } = outputText(part.output);
+      if (dropImagesOnly && !hadImage) return part;
+      if (!hadImage && text.length <= toolChars) return part;
+      changed = true;
+      return { ...part, output: { type: "text", value: dropImagesOnly ? text : clip(text, toolChars) } };
+    }
+    if (part.type === "tool-call" && !dropImagesOnly) {
+      const clipped = clipInput(part.input, inputChars);
+      if (JSON.stringify(clipped) === JSON.stringify(part.input)) return part;
+      changed = true;
+      return { ...part, input: clipped };
+    }
+    if (isImagePart(part)) {
+      changed = true;
+      return { type: "text", text: IMAGE_GONE };
+    }
+    return part;
+  });
+  return changed ? ({ ...message, content: next } as ModelMessage) : message;
+}
+
+/**
+ * Shrinks the older part of a worker conversation.
+ * Why: every step resends everything before it. Long command output and file
+ * bodies from many steps ago are rarely needed again, and the worker can
+ * rerun a command to see them. Recent messages stay whole, and so does the
+ * first one, which carries the brief. Message count and order never change,
+ * so tool calls stay paired with their results.
+ * Input: the conversation and how much to keep. Output: a new array.
+ */
+export function compactTranscript(
+  messages: ModelMessage[],
+  options?: { keepRecent?: number; toolChars?: number; inputChars?: number },
+): ModelMessage[] {
+  const keepRecent = options?.keepRecent ?? 12;
+  const toolChars = options?.toolChars ?? 600;
+  const inputChars = options?.inputChars ?? 400;
+  const cut = Math.max(0, messages.length - keepRecent);
+  return messages.map((message, index) => {
+    if (index === 0 || index >= cut) return message;
+    return trimMessage(message, toolChars, inputChars, false);
+  });
+}
+
+/** Rough size of a conversation in model tokens (four characters each). */
+export function estimateTokens(messages: ModelMessage[]): number {
+  try {
+    return Math.ceil(JSON.stringify(messages).length / 4);
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * When the conversation should be shrunk, in tokens.
+ * Why: weak models lose the thread long before a large window is full, and a
+ * small window must keep room for the reply.
+ * Input: the model's context window, when known. Output: the threshold.
+ */
+export function compactionThreshold(contextWindow?: number | null): number {
+  const window = contextWindow && contextWindow > 0 ? contextWindow : 128_000;
+  return Math.max(24_000, Math.min(Math.floor(window * 0.55), 90_000));
+}
+
+/**
+ * The conversation as it is stored for a later continuation.
+ * Why: pictures are megabytes of base64 and useless later, and the row must
+ * stay small. Shrinks harder until it fits.
+ * Input: the live conversation. Output: a storable copy.
+ */
+export function transcriptForStorage(messages: ModelMessage[], maxChars = TRANSCRIPT_STORE_CHARS): ModelMessage[] {
+  let stored = messages.map((message) => trimMessage(message, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, true));
+  const size = (list: ModelMessage[]): number => {
+    try {
+      return JSON.stringify(list).length;
+    } catch {
+      return Number.MAX_SAFE_INTEGER;
+    }
+  };
+  for (const pass of [
+    { keepRecent: 16, toolChars: 1_500, inputChars: 800 },
+    { keepRecent: 10, toolChars: 500, inputChars: 300 },
+    { keepRecent: 4, toolChars: 200, inputChars: 150 },
+    { keepRecent: 0, toolChars: 120, inputChars: 100 },
+  ]) {
+    if (size(stored) <= maxChars) return stored;
+    stored = compactTranscript(stored, pass);
+  }
+  return stored;
+}
+
+/**
+ * Makes a stored conversation safe to continue from.
+ * Why: a run can be cut off between a tool call and its result (a stop, a
+ * restart). Providers reject a call with no answer, so anything after the
+ * last complete exchange is dropped.
+ * Input: stored messages. Output: the longest prefix that ends cleanly.
+ */
+export function resumableTranscript(messages: unknown[]): ModelMessage[] {
+  const list = (Array.isArray(messages) ? messages : []).filter(
+    (message): message is ModelMessage =>
+      Boolean(message) && typeof message === "object" && typeof (message as { role?: unknown }).role === "string",
+  );
+  const callIds = (message: ModelMessage): string[] => {
+    const content = (message as { content?: unknown }).content;
+    if (message.role !== "assistant" || !Array.isArray(content)) return [];
+    return (content as Part[]).filter((part) => part.type === "tool-call").map((part) => String(part.toolCallId ?? ""));
+  };
+  const resultIds = (message: ModelMessage | undefined): Set<string> => {
+    const content = (message as { content?: unknown } | undefined)?.content;
+    if (!message || message.role !== "tool" || !Array.isArray(content)) return new Set();
+    return new Set(
+      (content as Part[]).filter((part) => part.type === "tool-result").map((part) => String(part.toolCallId ?? "")),
+    );
+  };
+  let end = list.length;
+  for (let index = 0; index < list.length; index += 1) {
+    const calls = callIds(list[index]!);
+    if (calls.length === 0) continue;
+    const answered = resultIds(list[index + 1]);
+    if (!calls.every((id) => answered.has(id))) {
+      end = index;
+      break;
+    }
+  }
+  return list.slice(0, end);
+}

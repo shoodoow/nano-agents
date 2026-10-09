@@ -4,6 +4,7 @@
  * deletes wait on a card instead of running on the model's first try.
  */
 import { prompt } from "../prompt/prompts.js";
+import { accountHome } from "../linux/linux.js";
 import { createHash } from "node:crypto";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
@@ -50,17 +51,67 @@ export function hashToolInput(name: string, input: Record<string, unknown>): str
   return createHash("sha256").update(`${name}:${JSON.stringify(copy)}`).digest("hex");
 }
 
+const RM_PATTERNS = DESTRUCTIVE_BASH.slice(0, 4);
+
+/** A folder the agent may clear without asking: inside /tmp or inside its own home. */
+function isOwnPath(target: string, home: string): boolean {
+  const path = target.replace(/^(['"])(.*)\1$/, "$2");
+  if (!path || /[$`\\]/.test(path) || /(^|\/)\.\.(\/|$)/.test(path)) return false;
+  const inside = (root: string): boolean => path.startsWith(`${root}/`) && path.length > root.length + 1 && !/^[/*.]+$/.test(path.slice(root.length + 1));
+  if (path.startsWith("~/")) return path.length > 2 && !/^[/*.]+$/.test(path.slice(2));
+  if (path.startsWith("/")) return inside("/tmp") || (home.length > 1 && inside(home));
+  return false;
+}
+
+/**
+ * True when every recursive delete in a command stays inside the agent's own space.
+ * Why: clearing its own build folder or a scratch folder in /tmp is routine
+ * work. Asking the person each time stalled jobs for many minutes and taught
+ * them to approve without reading. Anything it cannot fully read stays risky.
+ * Input: the command and the agent's home folder. Output: whether no approval is needed.
+ */
+export function deletesOnlyOwnFiles(command: string, home: string): boolean {
+  if (!home || /\bsudo\b/.test(command)) return false;
+  const mentions = command.match(/\brm\b/g)?.length ?? 0;
+  let parsed = 0;
+  // The shell starts in the agent's home, so relative paths are its own until it leaves.
+  let cwdOwn = true;
+  for (const raw of command.split(/&&|\|\||[;|\n]/)) {
+    const words = raw.trim().split(/\s+/).filter(Boolean);
+    const head = words[0];
+    if (!head) continue;
+    if (head === "cd") {
+      const to = words[1] ?? "~";
+      cwdOwn = to === "~" || to === home || isOwnPath(to, home) || (cwdOwn && !to.startsWith("/") && !to.startsWith("~") && !/(^|\/)\.\.(\/|$)/.test(to) && !/[$`]/.test(to));
+      continue;
+    }
+    if (head !== "rm") continue;
+    parsed += 1;
+    const targets = words.slice(1).filter((word) => !word.startsWith("-") && !/^\d?>/.test(word) && word !== "2>&1");
+    if (targets.length === 0) return false;
+    for (const target of targets) {
+      const clean = target.replace(/^(['"])(.*)\1$/, "$2");
+      const relativeOwn =
+        cwdOwn && !clean.startsWith("/") && !clean.startsWith("~") && !/[$`\\]/.test(clean) && !/(^|\/)\.\.(\/|$)/.test(clean) && !/^[/*.]+$/.test(clean);
+      if (!isOwnPath(clean, home) && !relativeOwn) return false;
+    }
+  }
+  return parsed > 0 && parsed === mentions;
+}
+
 /**
  * Classifies whether this call is risky enough to wait on a person.
- * Input: tool name + args. Output: a one-line reason, or null when safe.
+ * Input: tool name + args, and the agent's home folder when known.
+ * Output: a one-line reason, or null when safe.
  */
-export function classifyRisk(name: string, input: Record<string, unknown>): string | null {
+export function classifyRisk(name: string, input: Record<string, unknown>, home?: string): string | null {
   if (name === "bash") {
     const command = String(input.command ?? "");
-    if (DESTRUCTIVE_BASH.some((pattern) => pattern.test(command))) {
-      return `Destructive shell: ${command.slice(0, 160)}`;
-    }
-    return null;
+    const risky = DESTRUCTIVE_BASH.filter((pattern) => pattern.test(command));
+    if (risky.length === 0) return null;
+    // Only the delete rules matched, and every delete is inside the agent's own space.
+    if (home && risky.every((pattern) => RM_PATTERNS.includes(pattern)) && deletesOnlyOwnFiles(command, home)) return null;
+    return `Destructive shell: ${command.slice(0, 160)}`;
   }
   if (name === "delete_group" && input.confirmed === true) {
     return `Delete group ${String(input.conversationId ?? "")}`.trim();
@@ -92,7 +143,8 @@ export async function reviewToolCall(
   name: string,
   input: Record<string, unknown>,
 ): Promise<AutoReviewDecision> {
-  const reason = classifyRisk(name, input);
+  const home = ctx.linuxProfile ? accountHome(ctx.accountId, ctx.linuxProfile) : undefined;
+  const reason = classifyRisk(name, input, home);
   if (!reason) return { allow: true };
 
   const [account] = await ctx.db
@@ -230,6 +282,58 @@ export async function reviewToolCall(
       `After they approve, retry the SAME call with requestApproval:true and approvalId:"${created.id}". ` +
       `Do not rewrite, encode, or route around it. Reason: ${reason}`,
   };
+}
+
+/** Approval cards a worker is waiting on in place, so deciding one does not also wake the agent. */
+const awaitedApprovals = new Set<string>();
+
+/** True while a worker is paused on this approval and will carry on by itself. */
+export function isApprovalAwaited(approvalId: string): boolean {
+  return awaitedApprovals.has(approvalId);
+}
+
+/** How long a paused worker waits for the person before it moves on without the action. */
+export const APPROVAL_WAIT_MS = 30 * 60 * 1000;
+
+/**
+ * Waits for the person to decide one approval card.
+ * Why: a blocked worker used to be stopped and restarted blank once the
+ * person tapped Approve, losing everything it had done. Now it simply pauses
+ * on the card and carries on with the same action.
+ * Input: db, account, approval id, and how long to wait.
+ * Output: the decision, or "timeout" when nobody answered.
+ */
+export async function waitForApproval(
+  db: Db,
+  accountId: string,
+  approvalId: string,
+  options?: { timeoutMs?: number; pollMs?: number; signal?: AbortSignal; onTick?: () => Promise<void> | void },
+): Promise<"approved" | "denied" | "timeout"> {
+  const deadline = Date.now() + (options?.timeoutMs ?? APPROVAL_WAIT_MS);
+  const pollMs = options?.pollMs ?? 2_000;
+  awaitedApprovals.add(approvalId);
+  try {
+    let ticks = 0;
+    while (Date.now() < deadline) {
+      if (options?.signal?.aborted) return "timeout";
+      const [row] = await db
+        .select({ status: toolApprovals.status })
+        .from(toolApprovals)
+        .where(and(eq(toolApprovals.id, approvalId), eq(toolApprovals.accountId, accountId)));
+      if (!row) return "timeout";
+      if (row.status === "approved") {
+        await db.update(toolApprovals).set({ usedAt: new Date() }).where(eq(toolApprovals.id, approvalId));
+        return "approved";
+      }
+      if (row.status === "denied") return "denied";
+      ticks += 1;
+      if (ticks % 10 === 0) await options?.onTick?.();
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
+    return "timeout";
+  } finally {
+    awaitedApprovals.delete(approvalId);
+  }
 }
 
 export async function getAutoReview(db: Db, accountId: string): Promise<boolean> {

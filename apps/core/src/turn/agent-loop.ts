@@ -13,6 +13,7 @@ import { shouldRetryStall, stallNudge } from "./narration-stall.js";
 import {
   CLOSING_TOOLS,
   FOLLOW_THROUGH_TOOLS,
+  claimsWorkInProgress,
   finalTextIsReply,
   promisesUnstartedWork,
   replyOnlyRestriction,
@@ -22,6 +23,9 @@ import { prompt } from "../prompt/prompts.js";
 import { activeDispatcherTools } from "./tools/tool-sets.js";
 import { MAX_MODEL_STEPS_DISPATCHER } from "./constants.js";
 import { randomUUID } from "node:crypto";
+import { and, eq, gt } from "drizzle-orm";
+import { agents, delegations } from "../db/schema.js";
+import { isWorkerLive } from "../rooms/subagents.js";
 import { buildFullToolSet } from "./tools/registry.js";
 import type { ToolContext } from "./tools/context.js";
 
@@ -163,15 +167,67 @@ export async function runAgentLoop(
     usage = addUsage(usage, follow.usage);
     cacheReadTokens = follow.cacheReadTokens ?? cacheReadTokens;
   }
+  // "It's still rendering" is only allowed to stand when something is running.
+  let corrected = false;
+  if (
+    mode === "dispatcher" &&
+    !toolCtx.endTurn &&
+    !toolCtx.handedOff &&
+    claimsWorkInProgress(said) &&
+    !(await hasWorkRunning(db, input))
+  ) {
+    const fix = await runModelHarness({
+      ...harnessInput,
+      maxSteps: 1,
+      shouldStop: () => true,
+      restrictStep: () => ({ activeTools: [...FOLLOW_THROUGH_TOOLS], note: "" }),
+      messages: [
+        ...input.messages,
+        ...responseMessages,
+        { role: "user", content: prompt("dispatcher", "nothing-running", { said: said.slice(0, 500) }) },
+      ] as never,
+    });
+    usage = addUsage(usage, fix.usage);
+    cacheReadTokens = fix.cacheReadTokens ?? cacheReadTokens;
+    // Work was started: what was said is now true. Otherwise the honest line replaces it.
+    if (!toolCtx.handedOff) {
+      const honest = fix.text.trim();
+      text = honest && !/^ok\.?$/i.test(honest) ? honest : prompt("dispatcher", "stopped-message");
+      corrected = true;
+    }
+  }
+  const handedOffNow = Boolean(toolCtx.handedOff);
   return {
     text,
     cacheReadTokens,
     usage,
     // Handing off ends the turn; text after that is never the answer.
     workLog: toolCtx.workEntries ?? [],
-    finalTextIsReply: !handedOffInTurn && finalTextIsReply(stepToolNames),
-    quiet: handedOffInTurn && Boolean(toolCtx.hiddenTurn),
+    finalTextIsReply: corrected || (!handedOffInTurn && !handedOffNow && finalTextIsReply(stepToolNames)),
+    quiet: !corrected && handedOffInTurn && Boolean(toolCtx.hiddenTurn),
   };
+}
+
+/**
+ * Whether anything is really running for this agent in this chat.
+ * A background worker counts only while its run is alive in this process; a
+ * teammate's request counts while it is recent.
+ */
+async function hasWorkRunning(db: Db, input: { accountId: string; conversationId: string; agentId: string }): Promise<boolean> {
+  const rows = await db
+    .select({ id: delegations.id, hidden: agents.hidden })
+    .from(delegations)
+    .innerJoin(agents, eq(agents.id, delegations.childAgentId))
+    .where(
+      and(
+        eq(delegations.accountId, input.accountId),
+        eq(delegations.parentAgentId, input.agentId),
+        eq(delegations.status, "running"),
+        gt(delegations.heartbeatAt, new Date(Date.now() - 4 * 60 * 60 * 1000)),
+      ),
+    )
+    .catch(() => []);
+  return rows.some((row) => (row.hidden ? isWorkerLive(row.id) : true));
 }
 
 function addUsage(left: HarnessUsage, right: HarnessUsage): HarnessUsage {

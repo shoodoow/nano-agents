@@ -22,6 +22,15 @@ The work is started. Tell the person in one short, plain sentence what you are d
 You just told the person: "{{said}}"
 Nothing is running for that yet. If it needs a tool call to become true (start a worker, stop one, or redirect one), make that call now. If work that is already running covers it, reply with the single word `ok`.
 
+# nothing-running
+You just told the person: "{{said}}"
+That says work is in progress, but nothing is running for you right now: no worker and no teammate request. The earlier work stopped or finished.
+Make it true if you can. To pick up a job a worker already started, continue that worker with `redirect_worker` and tell it what is still to do (its id is under "Recent work" or in the last result you received); for a new job use `spawn_worker`.
+If you cannot start it in this step, write one or two plain sentences for the person instead: that the work stopped before it finished, where it got to, and that you will carry on when they say so. Do not say it is still running.
+
+# stopped-message
+That stopped before it finished, and nothing is running right now. Tell me to continue and I'll pick it up from where it left off.
+
 # doom-loop
 Same call 3 times in a row. It will keep returning the same thing, so stop repeating it. Reply to the person with what you have and end the turn. Finished worker results arrive on their own; failed ones wake you.
 

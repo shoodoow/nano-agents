@@ -22,9 +22,10 @@ describe("validateWorkerTask", () => {
     expect(r.ok).toBe(false);
   });
 
-  it("rejects oversize mega-briefs with a splitting hint", () => {
-    const r = validateWorkerTask(`Build everything. ${"x".repeat(4100)}`);
+  it("accepts a long, complete brief and rejects only an absurdly long one", () => {
+    expect(validateWorkerTask(`Build everything. ${"x".repeat(4100)}`).ok).toBe(true);
+    const r = validateWorkerTask(`Build everything. ${"x".repeat(17000)}`);
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.hint).toMatch(/split|maxSteps/i);
+    if (!r.ok) expect(r.hint).toMatch(/too long/i);
   });
 });

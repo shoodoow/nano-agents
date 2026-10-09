@@ -20,7 +20,8 @@ import type { GenerateResult, TurnInput, TurnOptions } from "./types.js";
 type Db = ReturnType<typeof getDb>;
 
 let workerLifecycleReady = false;
-function ensureWorkerLifecycle(db: Db): void {
+/** Idempotent. Exported so boot can register it before any turn has run. */
+export function ensureWorkerLifecycle(db: Db): void {
   if (workerLifecycleReady) return;
   workerLifecycleReady = true;
   registerWorkerLifecycle(() => db, runTurn);

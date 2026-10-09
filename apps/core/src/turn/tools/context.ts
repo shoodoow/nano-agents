@@ -55,4 +55,10 @@ export type ToolContext = {
   hiddenTurn?: boolean;
   /** Agent id that should speak Auto-review cards (parent when a worker is blocked). */
   voiceAgentId?: string;
+  /** Worker runs: a blocked call pauses on the approval card instead of returning an error. */
+  waitOnApproval?: {
+    signal?: AbortSignal;
+    /** Called when the wait starts and ends, and now and then while waiting. */
+    onState?: (state: "waiting" | "resumed" | "tick") => Promise<void> | void;
+  };
 };

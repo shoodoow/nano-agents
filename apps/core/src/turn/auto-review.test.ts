@@ -142,3 +142,94 @@ describe("reviewToolCall and send_message guards", () => {
     expect(ctx.endTurn).toBe(true);
   });
 });
+
+describe("deletes inside the agent's own space", () => {
+  const home = "/home/u1";
+  it("need no approval", async () => {
+    const { classifyRisk, deletesOnlyOwnFiles } = await import("./auto-review.js");
+    for (const command of [
+      "rm -rf /tmp/scratch-hf/warm && cd /tmp/scratch-hf && npx --yes hyperframes init warm",
+      "rm -rf ~/.config/chromium 2>/dev/null; echo cleared",
+      "cd ~/work/a && rm -rf node_modules dist",
+      "rm -rf /home/u1/work/x",
+    ]) {
+      expect([command, deletesOnlyOwnFiles(command, home)]).toEqual([command, true]);
+      expect(classifyRisk("bash", { command }, home)).toBeNull();
+    }
+  });
+
+  it("still ask for anything wider, unreadable, or outside", async () => {
+    const { classifyRisk, deletesOnlyOwnFiles } = await import("./auto-review.js");
+    for (const command of [
+      "rm -rf /",
+      "rm -rf ~",
+      "rm -rf /tmp",
+      "rm -rf /home/u1",
+      "rm -rf /home/u2/x",
+      "rm -rf $HOME/x",
+      "cd / && rm -rf etc",
+      "sudo rm -rf /tmp/x",
+      "rm -rf ../x",
+      "find . -exec rm -rf {} +",
+      "rm -rf /shared/skills",
+      "rm -rf *",
+      "rm -rf /tmp/a /etc",
+    ]) {
+      expect([command, deletesOnlyOwnFiles(command, home)]).toEqual([command, false]);
+      expect(classifyRisk("bash", { command }, home)).not.toBeNull();
+    }
+    // Without a known home nothing is waved through, and other risks still count.
+    expect(classifyRisk("bash", { command: "rm -rf /tmp/x" })).not.toBeNull();
+    expect(classifyRisk("bash", { command: "rm -rf /tmp/x && git push --force" }, home)).not.toBeNull();
+  });
+});
+
+describe("waitForApproval", () => {
+  it("returns the person's decision once they tap the card, and gives up when nobody answers", async () => {
+    const { waitForApproval, isApprovalAwaited } = await import("./auto-review.js");
+    const { toolApprovals } = await import("../db/schema.js");
+    const { eq } = await import("drizzle-orm");
+    const db = getDb(process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/nano_agents");
+    const [account] = await db.insert(accounts).values({ name: "Approval wait" }).returning();
+    const [agent] = await db
+      .insert(agents)
+      .values({
+        accountId: account!.id,
+        name: `waiter-${Date.now()}`,
+        label: "Waiter",
+        role: "Teammate",
+        jobDescription: "Waits.",
+        provider: "openai",
+        modelId: "gpt-5",
+      })
+      .returning();
+    const [room] = await db
+      .insert(conversations)
+      .values({ accountId: account!.id, kind: "direct", ownerAgentId: agent!.id, title: "wait" })
+      .returning();
+    const make = async () => {
+      const [row] = await db
+        .insert(toolApprovals)
+        .values({ accountId: account!.id, agentId: agent!.id, conversationId: room!.id, tool: "bash", inputHash: "h", summary: "s" })
+        .returning();
+      return row!.id;
+    };
+    const approved = await make();
+    setTimeout(() => void decideToolApproval(db, account!.id, approved, "approved"), 150);
+    const waiting = waitForApproval(db, account!.id, approved, { pollMs: 50, timeoutMs: 5_000 });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // While a worker waits here, deciding the card must not also wake the agent.
+    expect(isApprovalAwaited(approved)).toBe(true);
+    expect(await waiting).toBe("approved");
+    expect(isApprovalAwaited(approved)).toBe(false);
+    const [used] = await db.select().from(toolApprovals).where(eq(toolApprovals.id, approved));
+    expect(used?.usedAt).not.toBeNull();
+
+    const denied = await make();
+    setTimeout(() => void decideToolApproval(db, account!.id, denied, "denied"), 100);
+    expect(await waitForApproval(db, account!.id, denied, { pollMs: 50, timeoutMs: 5_000 })).toBe("denied");
+
+    const ignored = await make();
+    expect(await waitForApproval(db, account!.id, ignored, { pollMs: 50, timeoutMs: 200 })).toBe("timeout");
+  });
+});

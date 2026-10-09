@@ -2,6 +2,7 @@
  * One agent speaks in a turn (context load → model loop → mention chain).
  * DB: reads messages/summary; writes messages via tools or stub path.
  */
+import { isWorkerLive } from "../rooms/subagents.js";
 import { and, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
 import { accounts, agents, conversations, delegations, jobs, messages, reactions, routines, summaryItems } from "../db/schema.js";
@@ -149,13 +150,16 @@ export async function speakOnce(
   // 1) Remains available to converse with the user while tasks run.
   // 2) Knows what's in-flight to report status.
   // 3) Can redirect or stop active workers rather than spawning duplicates.
-  const activeWorkers = await db
+  const runningRows = await db
     .select({
+      id: delegations.id,
+      hidden: agents.hidden,
       childAgentId: delegations.childAgentId,
       label: agents.label,
       task: delegations.task,
       progress: delegations.progress,
       createdAt: delegations.createdAt,
+      heartbeatAt: delegations.heartbeatAt,
     })
     .from(delegations)
     .innerJoin(agents, eq(agents.id, delegations.childAgentId))
@@ -169,12 +173,16 @@ export async function speakOnce(
     )
     .orderBy(desc(delegations.createdAt))
     .limit(5);
+  // A worker row can read "running" with nothing behind it (the system
+  // restarted mid-job). Listing it made the agent promise work that was dead.
+  const activeWorkers = runningRows.filter((row) => !row.hidden || isWorkerLive(row.id));
   const recentWorkers = await db
     .select({
       title: delegations.task,
       outcome: delegations.result,
       status: delegations.status,
       createdAt: delegations.createdAt,
+      workerId: delegations.childAgentId,
     })
     .from(delegations)
     .where(

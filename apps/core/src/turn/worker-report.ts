@@ -24,7 +24,7 @@ export function isEmptyWorkerReport(text: string): boolean {
 }
 
 /** Labeled report sections (prompt convention — not a hard pass/fail gate). */
-const REPORT_MARKERS = /(^|\n)\s*(\*{0,2}(findings|what i did|blockers)\*{0,2}\s*:)|NEEDS_PERSON:/i;
+export const REPORT_MARKERS = /(^|\n)\s*(\*{0,2}(findings|what i did|blockers)\*{0,2}\s*:)|NEEDS_PERSON:/i;
 
 /** Mid-task narration that promises a next step the worker never took. */
 export const NEXT_STEP_NARRATION = /\b(let me|i'?ll|i will|going to|about to|now i'?ll|let's)\b/i;

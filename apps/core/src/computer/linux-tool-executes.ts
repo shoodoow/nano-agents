@@ -15,7 +15,7 @@ import {
 import { globFiles, grepFiles } from "./find.js";
 import { webSearch } from "./search.js";
 import { webFetch } from "./web.js";
-import { runBrowserTool } from "./browser-bridge.js";
+import { openOnScreen, runBrowserTool } from "./browser-bridge.js";
 
 type Database = ReturnType<typeof getDb>;
 
@@ -156,6 +156,7 @@ export function linuxToolExecutes(
         include: typeof input.include === "string" ? input.include : undefined,
       });
     },
+    open_on_screen: (input) => openOnScreen(accountId, profile, String(input.url)),
     browser_list_pages: () => runBrowserTool(accountId, profile, "browser_list_pages", {}),
     browser_navigate: (input) => runBrowserTool(accountId, profile, "browser_navigate", input),
     browser_snapshot: () => runBrowserTool(accountId, profile, "browser_snapshot", {}),
@@ -175,7 +176,7 @@ export function linuxToolExecutes(
  */
 /** True for a path inside an installed skill folder. */
 export function isSkillPath(path: string): boolean {
-  return /\/(\.agents|\.claude)\/skills(\/|$|\s)/.test(path);
+  return /\/(\.agents|\.claude)\/skills(\/|$|\s)/.test(path) || /^\/shared\/skills(\/|$|\s)/.test(path.trim());
 }
 
 function conciseOutput(text: string, limit = WORKER_OUTPUT_CHARS): string {

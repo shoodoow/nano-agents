@@ -1,10 +1,57 @@
 import { readFile } from "../computer/computer.js";
-import { accountHome, exec } from "../linux/linux.js";
+import { accountHome, accountShared, exec } from "../linux/linux.js";
 import { parseSkillFrontmatter, type SkillSummary } from "./skills.js";
 
 /** Canonical path used by `npx skills add -g` for universal agents. */
 const LOCAL_SKILLS_SEGMENT = ".agents/skills";
 const MAX_LOCAL_SKILLS = 100;
+/** How often installs in agents' homes are copied to the shared folder. */
+const PUBLISH_EVERY_MS = 2 * 60 * 1000;
+const lastPublished = new Map<string, number>();
+
+/**
+ * The account-wide skills folder inside the account computer.
+ * Input: account id. Output: `/shared/skills`.
+ */
+export function sharedSkillsRoot(accountId: string): string {
+  return `${accountShared(accountId)}/skills`;
+}
+
+/**
+ * Copies skills installed in any agent's home into the shared skills folder.
+ * Why: `npx skills add -g` installs into one agent's private home, which no
+ * other agent can read. A skill the person had installed through one agent
+ * was "not found" for the next, which then worked without it. One computer
+ * per account means one set of skills: every agent sees what any agent installed.
+ * Runs as root (homes are private), at most every two minutes per account.
+ * Input: account id; `force` skips the wait after an install. Output: nothing.
+ */
+export async function publishLocalSkills(accountId: string, force = false): Promise<void> {
+  const last = lastPublished.get(accountId) ?? 0;
+  if (!force && Date.now() - last < PUBLISH_EVERY_MS) return;
+  lastPublished.set(accountId, Date.now());
+  const shared = shellQuote(sharedSkillsRoot(accountId));
+  const script = [
+    `mkdir -p ${shared}`,
+    `for dir in /home/*/${LOCAL_SKILLS_SEGMENT}/*/; do`,
+    `  [ -f "$dir/SKILL.md" ] || continue`,
+    `  name="$(basename "$dir")"`,
+    `  dest=${shared}/"$name"`,
+    // Copy when it is new, or when the installed copy was updated since.
+    `  if [ ! -f "$dest/SKILL.md" ] || [ "$dir/SKILL.md" -nt "$dest/SKILL.md" ]; then`,
+    `    rm -rf "$dest.new" && cp -rL "$dir" "$dest.new" 2>/dev/null && rm -rf "$dest" && mv "$dest.new" "$dest"`,
+    `  fi`,
+    `done`,
+    `chmod -R a+rX ${shared} 2>/dev/null`,
+    `exit 0`,
+  ].join("\n");
+  try {
+    await exec(accountId, ["bash", "-c", script]);
+  } catch {
+    // The account computer is not reachable: the agent still has host skills.
+    lastPublished.delete(accountId);
+  }
+}
 
 /**
  * Absolute skills directory inside one agent's Linux home.
@@ -21,7 +68,9 @@ export function agentLocalSkillsRoot(accountId: string, profile: string): string
  * onto the host skills tree. A missing container or empty folder is an empty list.
  */
 export async function localSkillCatalog(accountId: string, profile: string): Promise<SkillSummary[]> {
-  const paths = await listLocalSkillPaths(accountId, profile);
+  await publishLocalSkills(accountId);
+  // Shared first, so the agent's own install of the same skill wins.
+  const paths = [...(await listSkillPaths(accountId, profile, sharedSkillsRoot(accountId))), ...(await listLocalSkillPaths(accountId, profile))];
   const byName = new Map<string, SkillSummary>();
   for (const path of paths) {
     try {
@@ -40,19 +89,27 @@ export async function localSkillCatalog(accountId: string, profile: string): Pro
  */
 export async function readLocalSkill(accountId: string, profile: string, name: string): Promise<string | null> {
   assertSafeProfile(profile);
-  const direct = `${agentLocalSkillsRoot(accountId, profile)}/${name}/SKILL.md`;
-  try {
-    const parsed = parseSkillFrontmatter(await readFile(accountId, profile, direct));
-    if (parsed.name === name) return withSkillDirectory(direct, parsed.body);
-  } catch {
-    // Fall through to a scan — folder name may differ from frontmatter name.
+  await publishLocalSkills(accountId);
+  const roots = [agentLocalSkillsRoot(accountId, profile), sharedSkillsRoot(accountId)];
+  if (/^[A-Za-z0-9._-]+$/.test(name)) {
+    for (const root of roots) {
+      const direct = `${root}/${name}/SKILL.md`;
+      try {
+        const parsed = parseSkillFrontmatter(await readFile(accountId, profile, direct));
+        if (parsed.name === name) return withSkillDirectory(direct, parsed.body);
+      } catch {
+        // Not here, or the folder name differs from the skill's name: scan below.
+      }
+    }
   }
-  for (const path of await listLocalSkillPaths(accountId, profile)) {
-    try {
-      const parsed = parseSkillFrontmatter(await readFile(accountId, profile, path));
-      if (parsed.name === name) return withSkillDirectory(path, parsed.body);
-    } catch {
-      // Skip unreadable entries.
+  for (const root of roots) {
+    for (const path of await listSkillPaths(accountId, profile, root)) {
+      try {
+        const parsed = parseSkillFrontmatter(await readFile(accountId, profile, path));
+        if (parsed.name === name) return withSkillDirectory(path, parsed.body);
+      } catch {
+        // Skip unreadable entries.
+      }
     }
   }
   return null;
@@ -69,8 +126,12 @@ function withSkillDirectory(skillFile: string, body: string): string {
 }
 
 async function listLocalSkillPaths(accountId: string, profile: string): Promise<string[]> {
+  return listSkillPaths(accountId, profile, agentLocalSkillsRoot(accountId, profile));
+}
+
+/** SKILL.md files one level under a skills folder, read as the agent. */
+async function listSkillPaths(accountId: string, profile: string, root: string): Promise<string[]> {
   assertSafeProfile(profile);
-  const root = agentLocalSkillsRoot(accountId, profile);
   const quoted = shellQuote(root);
   try {
     const result = await exec(

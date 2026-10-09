@@ -102,3 +102,30 @@ describe("finalTextIsReply", () => {
     expect(finalTextIsReply([["read"], ["send_message"], []])).toBe(false);
   });
 });
+
+describe("claimsWorkInProgress", () => {
+  it("spots a reply that says work is going on", async () => {
+    const { claimsWorkInProgress } = await import("./loop-control.js");
+    for (const text of [
+      "Still in progress — the fix-and-render job is running now.",
+      "🚀 Thanks — render's chugging along, I'll ping you the MP4 when it's verified.",
+      "I've restarted the render with a tighter task and it's running now.",
+      "Yes, still going. I'm fixing that and re-rendering now.",
+      "Creator is on it — they acknowledged the full brief.",
+    ]) {
+      expect([text, claimsWorkInProgress(text)]).toEqual([text, true]);
+    }
+  });
+
+  it("leaves finished results and plain answers alone", async () => {
+    const { claimsWorkInProgress } = await import("./loop-control.js");
+    for (const text of [
+      "The video is done, here it is.",
+      "It stopped before it finished. Tell me to continue.",
+      "Pretty good, you?",
+      "",
+    ]) {
+      expect([text, claimsWorkInProgress(text)]).toEqual([text, false]);
+    }
+  });
+});

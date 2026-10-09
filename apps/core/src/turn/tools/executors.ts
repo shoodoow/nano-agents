@@ -32,7 +32,7 @@ import { resolveMention } from "../../rooms/mentions.js";
 import { recentWorkLogs } from "../work-log.js";
 import { accountHome } from "../../linux/linux.js";
 import { and, desc, eq, gt, isNull } from "drizzle-orm";
-import { agents, conversations, delegations, members, messages } from "../../db/schema.js";
+import { agents, conversations, delegations, members, messages, workerTranscripts } from "../../db/schema.js";
 import { correct, readHistory, remember } from "../../memory/memory.js";
 import { embedSummaryBacklog } from "../../memory/recall.js";
 import { todoList, todoWrite } from "../../memory/todos.js";
@@ -51,10 +51,14 @@ import {
   spawnWorker,
   stopWorker,
   WorkerCapacityError,
+  continueWorker,
+  messageRunningWorker,
+  workerStatuses,
 } from "../../rooms/subagents.js";
 import { updateAgentFlags } from "../../roster/roster.js";
 import { catalogTextForAgent, readSkillForAgent, skillCatalogForAgent } from "../../skills/agent-skills.js";
 import { bumpAccountPromptVersions } from "../../skills/install.js";
+import { publishLocalSkills } from "../../skills/local.js";
 import {
   createOwnRoutine,
   deleteOwnRoutine,
@@ -249,6 +253,8 @@ export async function executeRefreshSkills(
   ctx: Pick<ToolContext, "db" | "skillsRoot" | "accountId" | "linuxProfile">,
 ) {
   if (!ctx.skillsRoot && !ctx.linuxProfile) return "No skills directory configured.";
+  // A skill just installed in this agent's home becomes available to every agent on the account.
+  await publishLocalSkills(ctx.accountId, true);
   const bumped = await bumpAccountPromptVersions(ctx.db, ctx.accountId);
   return { refreshed: true, agents: bumped, catalog: await catalogTextForAgent(skillCtx(ctx)) };
 }
@@ -872,6 +878,45 @@ export async function executeSpawnWorker(ctx: ToolContext, input: Record<string,
     }
   }
   const parsed = spawnWorkerToolInputSchema.parse({ ...input, task: valid.task });
+  // A follow-up to work that just ran goes back to the worker that did it,
+  // with its conversation intact, instead of to a blank one that has to
+  // rediscover the project before it can change a line.
+  const earlier = (ctx.spawnCount ?? 0) === 0 ? await workerToContinue(ctx, parsed.kind) : null;
+  if (earlier) {
+    try {
+      const continued = await continueWorker(ctx.store, {
+        accountId: ctx.accountId,
+        conversationId: ctx.conversationId,
+        parentAgentId: ctx.agentId,
+        workerId: earlier,
+        task: parsed.task,
+      });
+      if (continued.resumeFrom) {
+        ctx.spawnCount = (ctx.spawnCount ?? 0) + 1;
+        launchDetachedWorker(ctx, continued, parsed.task, undefined, {
+          skills: await workerSkills(ctx, parsed.task, parsed.skills ?? []),
+          context: await workerContext(ctx),
+          resumeFrom: continued.resumeFrom,
+        });
+        return {
+          workerId: continued.workerId,
+          delegationId: continued.delegationId,
+          status: continued.status,
+          continued: true,
+          note: "The worker that did the earlier part of this job is continuing it and still knows what it did.",
+        };
+      }
+      // Nothing saved to continue from: the delegation just made runs as a fresh job.
+      ctx.spawnCount = (ctx.spawnCount ?? 0) + 1;
+      launchDetachedWorker(ctx, continued, parsed.task, undefined, {
+        skills: await workerSkills(ctx, parsed.task, parsed.skills ?? []),
+        context: await workerContext(ctx),
+      });
+      return { workerId: continued.workerId, delegationId: continued.delegationId, status: continued.status };
+    } catch {
+      // Could not continue that worker (gone, or busy again): start a fresh one below.
+    }
+  }
   let spawned: Awaited<ReturnType<typeof spawnWorker>>;
   try {
     spawned = await spawnWorker(ctx.store, {
@@ -900,6 +945,58 @@ export async function executeSpawnWorker(ctx: ToolContext, input: Record<string,
     context: await workerContext(ctx),
   });
   return spawned;
+}
+
+/** How long after a clean finish a new job still goes to the same worker. */
+const CONTINUE_FINISHED_MS = 30 * 60 * 1000;
+/** How long unfinished work stays open for the same worker to pick up. */
+const CONTINUE_UNFINISHED_MS = 6 * 60 * 60 * 1000;
+
+/** True when a worker's report says the job is not complete. */
+export function reportLooksUnfinished(status: string, result: string | null): boolean {
+  if (status === "failed") return true;
+  const text = result ?? "";
+  return /\[This worker was stopped|\bnot finished\b|\bunfinished\b|\bnot (yet )?(rendered|completed|done)\b|\bcould not\b|\bcouldn['’]t\b|\bNEEDS_PERSON\b/i.test(text);
+}
+
+/**
+ * The worker a new job in this chat should continue, if any.
+ * Why: "fix the blank frames" or "try again" is the same job. The worker that
+ * built it knows the files and what was tried.
+ * Output: a free worker id whose last job here was recent and of the same kind, or null.
+ */
+async function workerToContinue(ctx: ToolContext, kind: string): Promise<string | null> {
+  const [last] = await ctx.store
+    .select({
+      childAgentId: delegations.childAgentId,
+      status: delegations.status,
+      result: delegations.result,
+      heartbeatAt: delegations.heartbeatAt,
+      jobDescription: agents.jobDescription,
+    })
+    .from(delegations)
+    .innerJoin(agents, eq(agents.id, delegations.childAgentId))
+    .where(
+      and(
+        eq(delegations.accountId, ctx.accountId),
+        eq(delegations.conversationId, ctx.conversationId),
+        eq(delegations.parentAgentId, ctx.agentId),
+        eq(agents.hidden, true),
+      ),
+    )
+    .orderBy(desc(delegations.createdAt))
+    .limit(1);
+  if (!last || last.status === "running") return null;
+  if (unpackWorkerJobDescription(last.jobDescription).kind !== kind) return null;
+  const age = Date.now() - last.heartbeatAt.getTime();
+  const window = reportLooksUnfinished(last.status, last.result) ? CONTINUE_UNFINISHED_MS : CONTINUE_FINISHED_MS;
+  if (age > window) return null;
+  const [saved] = await ctx.store
+    .select({ delegationId: workerTranscripts.delegationId })
+    .from(workerTranscripts)
+    .where(eq(workerTranscripts.childAgentId, last.childAgentId))
+    .limit(1);
+  return saved ? last.childAgentId : null;
 }
 
 /** Most skills one worker carries in its prompt. */
@@ -960,18 +1057,27 @@ export function workerLabel(task: string): string {
  */
 async function workerContext(ctx: ToolContext): Promise<string> {
   const lines: string[] = [];
-  if (!ctx.hiddenTurn) {
-    const [latest] = await ctx.db
-      .select({ body: messages.body })
-      .from(messages)
-      .where(
-        and(eq(messages.accountId, ctx.accountId), eq(messages.conversationId, ctx.conversationId), isNull(messages.agentId)),
-      )
-      .orderBy(desc(messages.createdAt))
-      .limit(1);
-    const said = latest?.body.replace(/\s+/g, " ").trim().slice(0, 1500);
-    if (said) lines.push(prompt("worker-rules", "context-person", { message: said }));
-  }
+  // The person often gives a job over several messages ("make a video", then
+  // "15 seconds, 480p"). The worker gets all of the recent ones, oldest first.
+  const said = await ctx.db
+    .select({ body: messages.body, createdAt: messages.createdAt })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.accountId, ctx.accountId),
+        eq(messages.conversationId, ctx.conversationId),
+        isNull(messages.agentId),
+        gt(messages.createdAt, new Date(Date.now() - 3 * 60 * 60 * 1000)),
+      ),
+    )
+    .orderBy(desc(messages.createdAt))
+    .limit(4);
+  const quoted = said
+    .reverse()
+    .map((row) => row.body.replace(/\s+/g, " ").trim().slice(0, 1200))
+    .filter(Boolean)
+    .map((body) => `- "${body}"`);
+  if (quoted.length > 0) lines.push(prompt("worker-rules", "context-person", { messages: quoted.join("\n") }));
   // A worker started from a team chat needs the team's goal as much as the teammate does.
   const [here] = await ctx.db
     .select({ kind: conversations.kind, brief: conversations.brief })
@@ -990,11 +1096,12 @@ function launchDetachedWorker(
   spawned: { workerId: string; delegationId: string },
   task: string,
   maxSteps?: number,
-  extra?: { skills?: string[]; context?: string },
+  extra?: { skills?: string[]; context?: string; resumeFrom?: string },
 ): void {
   void runWorker(ctx.db, {
     skills: extra?.skills,
     context: extra?.context,
+    resumeFrom: extra?.resumeFrom,
     accountId: ctx.accountId,
     conversationId: ctx.conversationId,
     parentAgentId: ctx.agentId,
@@ -1021,92 +1128,86 @@ function launchDetachedWorker(
 }
 
 /**
- * Steers a running worker without losing its context (pragmatic
- * MessageSubagent). Stops the current attempt and restarts the same hidden
- * worker row with the original brief plus the new instruction — no fresh
- * worker, no re-explaining the job. Finished workers report instead.
+ * Talks to one of this agent's workers without losing what it knows.
+ * Running: the note is handed to it and read before its next step.
+ * Finished or stopped: the same worker starts again from its saved
+ * conversation with the note as its new instruction.
  */
 export async function executeRedirectWorker(ctx: ToolContext, input: Record<string, unknown>) {
   const parsed = workerRedirectInputSchema.parse(input);
-  const [running] = await ctx.store
+  const [latest] = await ctx.store
     .select()
     .from(delegations)
-    .where(
-      and(
-        eq(delegations.childAgentId, parsed.workerId),
-        eq(delegations.accountId, ctx.accountId),
-        eq(delegations.status, "running"),
-      ),
-    )
+    .where(and(eq(delegations.childAgentId, parsed.workerId), eq(delegations.accountId, ctx.accountId)))
     .orderBy(desc(delegations.createdAt))
     .limit(1);
-  if (!running) {
-    const [latest] = await ctx.store
-      .select({ status: delegations.status, result: delegations.result })
-      .from(delegations)
-      .where(and(eq(delegations.childAgentId, parsed.workerId), eq(delegations.accountId, ctx.accountId)))
-      .orderBy(desc(delegations.createdAt))
-      .limit(1);
-    if (!latest) throw new Error("No work found for that worker id.");
-    return {
-      workerId: parsed.workerId,
-      status: latest.status,
-      result: typeof latest.result === "string" ? latest.result.slice(0, 800) : null,
-      note: "That worker already finished — use what it returned instead of redirecting.",
-    };
-  }
-  if (running.parentAgentId !== ctx.agentId) {
-    throw new Error("That worker does not belong to you.");
+  if (!latest) return { error: "No work found for that worker id. Use check_worker to list your workers." };
+  if (latest.parentAgentId !== ctx.agentId) return { error: "That worker does not belong to you." };
+  if (latest.status === "running") {
+    if (messageRunningWorker(latest.id, parsed.instruction)) {
+      return {
+        workerId: parsed.workerId,
+        delegationId: latest.id,
+        status: "running",
+        delivered: true,
+        note: "The worker reads this before its next step and keeps everything it has done. Its result still arrives on its own.",
+      };
+    }
+    // Marked running with nothing behind it (the system restarted): close it, then continue below.
+    await stopWorker(ctx.store, ctx.accountId, parsed.workerId);
   }
   ctx.spawnCount = (ctx.spawnCount ?? 0) + 1;
   if (ctx.spawnCount > MAX_SPAWNS_PER_TURN) {
     return {
-      error: "Already spawned several workers this turn. send_message what you started, then stop — results arrive on their own.",
+      error: "Already started several workers this turn. Tell the person what you started, then stop — results arrive on their own.",
     };
   }
-  const failed = await failuresSinceLastUser(
-    ctx.store,
-    ctx.accountId,
-    ctx.conversationId,
-    ctx.agentId,
-    running.task,
-  );
-  if (failed >= 2) {
-    return {
-      error:
-        "Two workers already failed on this same task since the person's last message. A different task can still start. send_message what failed, in plain words, then stop.",
-    };
+  let continued: Awaited<ReturnType<typeof continueWorker>>;
+  try {
+    continued = await continueWorker(ctx.store, {
+      accountId: ctx.accountId,
+      conversationId: ctx.conversationId,
+      parentAgentId: ctx.agentId,
+      workerId: parsed.workerId,
+      task: parsed.instruction,
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "That worker could not be continued." };
   }
-  const [worker] = await ctx.store
-    .select({
-      label: agents.label,
-      role: agents.role,
-      personality: agents.personality,
-      jobDescription: agents.jobDescription,
-    })
-    .from(agents)
-    .where(and(eq(agents.id, parsed.workerId), eq(agents.accountId, ctx.accountId)));
-  if (!worker) throw new Error("Worker agent is gone.");
-  const brief =
-    `${running.task}\n\nRedirect from parent (previous attempt stopped — continue from here, do not restart what is already done): ${parsed.instruction}`;
-  await stopWorker(ctx.store, ctx.accountId, parsed.workerId);
-  // Stopping frees the same hidden row, so the redirect continues as the same
-  // worker id — context preserved via the carried-over brief.
-  const kindMeta = unpackWorkerJobDescription(worker.jobDescription);
-  const spawned = await spawnWorker(ctx.store, {
+  launchDetachedWorker(ctx, continued, parsed.instruction, undefined, {
+    context: await workerContext(ctx),
+    resumeFrom: continued.resumeFrom ?? undefined,
+  });
+  return {
+    workerId: continued.workerId,
+    delegationId: continued.delegationId,
+    status: continued.status,
+    continued: true,
+    note: "The same worker is continuing with what it already knows. Its result arrives on its own.",
+  };
+}
+
+/**
+ * Looks at this agent's workers: what is running, for how long, what each did last.
+ * Why: the honest answer to "is it still going?" comes from looking, not from memory.
+ */
+export async function executeCheckWorker(ctx: ToolContext, input: Record<string, unknown>) {
+  const workerId = typeof input.workerId === "string" && input.workerId.trim() ? input.workerId.trim() : undefined;
+  const workers = await workerStatuses(ctx.store, {
     accountId: ctx.accountId,
     conversationId: ctx.conversationId,
     parentAgentId: ctx.agentId,
-    label: worker.label,
-    role: worker.role,
-    personality: worker.personality,
-    jobDescription: kindMeta.jobDescription,
-    kind: kindMeta.kind,
-    instructions: kindMeta.instructions,
-    task: brief,
+    workerId,
   });
-  launchDetachedWorker(ctx, spawned, brief);
-  return { ...spawned, redirected: true };
+  const running = workers.filter((worker) => worker.status === "running").length;
+  return {
+    running,
+    summary:
+      running > 0
+        ? `${running} worker${running === 1 ? " is" : "s are"} running right now.`
+        : "Nothing is running right now. If the person is waiting on work, it has to be started or continued.",
+    workers,
+  };
 }
 
 /**
@@ -1216,6 +1317,7 @@ export const dispatcherExecutors: Record<string, ToolExecutor> = {
   },
   spawn_worker: executeSpawnWorker,
   redirect_worker: executeRedirectWorker,
+  check_worker: executeCheckWorker,
   stop_worker: (ctx, input) => stopWorker(ctx.store, ctx.accountId, String(input.workerId)),
   create_routine: async (ctx, input) => {
     const routine = await createOwnRoutine(ctx.store, {

@@ -12,19 +12,29 @@ Add one emoji tapback to a message when a reaction is the whole reply. Rare.
 Ping the person when you are blocked on them or something is urgent. Not for routine progress.
 
 # spawn_worker
-Start a background worker for anything you cannot do with a few quick lookups: shell commands and installs, writing or building files, rendering, a live or login-gated web page, the desktop, or research across several sources. It returns at once and your turn ends; the finished report is delivered to you on its own, so there is nothing to poll.
-The worker sees only `task` (the person's latest message is attached for you). Put the whole brief in `task`: what to produce, every requirement the person gave (size, length, style, things to leave out), the URLs or paths to use, and what to report back. Give a worker the whole job, including checking its own result. A worker sent only to look around, or to read files or skills back to you, wastes the person's time: the worker that does the job reads what it needs. Start independent jobs side by side; when one job needs another's output, start it after that result arrives.
-`kind`: `executor` general work (default) · `shell` commands and installs · `explore` find and read files · `browser` live web pages, and opening a page on your screen for the person · `computer` desktop GUI apps · `docs` read public documentation · `debug` evidence-based debugging · `vm_setup` set up a project · `watch_video` / `video_review` media.
-`skills`: a list of skill names the worker should follow, for example `["docx"]`. Their full text is loaded for it, so you do not read them first. `maxSteps` (3-40) only for an unusually long build.
+Start a background worker for anything you cannot do with a few quick lookups: shell commands and installs, writing or building files, rendering, a live or login-gated web page, the desktop, or research across several sources. It returns at once and your turn ends; the finished report is delivered to you on its own.
+The worker sees only `task`, plus the person's recent messages, which are attached for you. Write the brief as the problem and the outcome: what to produce, every requirement the person gave (size, length, style, things to leave out), the exact URLs or paths you know, what done looks like, and what to report back. Leave the method to the worker: no step-by-step commands, no version numbers you are not sure of, no diagnosis you have not verified. The worker keeps going until the job is finished and checks its own result, so give it the whole job in one brief.
+A new job that follows on from work just done in this chat is given to the worker that did it, which still knows the files and what was tried; the result says `continued` when that happened.
+`kind`: `executor` general work (default) · `shell` commands and installs · `explore` find and read files · `browser` live web pages that need clicking or reading · `computer` desktop GUI apps · `docs` read public documentation · `debug` evidence-based debugging · `vm_setup` set up a project · `watch_video` / `video_review` media.
+`skills`: a list of skill names the worker should follow, for example `["docx"]`. Their full text is loaded for it, so you do not read them first.
 
 # stop_worker
-Stop a worker that is wedged, wrong, or no longer needed, by its worker id. It reads as failed and frees the slot.
+Stop a worker that is wedged, wrong, or no longer needed, by its worker id. What it did is kept, so `redirect_worker` can continue it later.
 
 # redirect_worker
-Steer a running worker: it restarts with your new instruction added to its original brief. Use when it is looping, drifting, or the situation changed (the person signed in, a new constraint). Say what to do differently. If it already finished you get its result instead.
+Talk to one of your workers by its id. It keeps everything it has read, built and learned, so say only what is new.
+If it is running, it reads your note before its next step and carries on: use this when the person changes direction, adds a requirement, or the worker is drifting.
+If it has finished or stopped, it starts again from where it left off with your note as its instruction: use this to fix something in its result, finish what it left undone, or try again. This is the right tool for any follow-up on the same job.
+
+# check_worker
+Look at your workers: which are running right now, for how long, the last things each one did, and the result of the ones that finished. Pass `workerId` for one worker or nothing for all of them in this chat. Call it before you tell the person that something is still in progress, and whenever a worker has been quiet for a long time. It only looks; results still arrive on their own.
+
+# open_on_screen
+Open a web page in the browser on your own desktop, where the person can watch and take over. It starts the desktop and the browser if they are not running, goes to the URL, and tells you whether the window is really on screen. Use it for "open X" and "open X and hand it over"; follow it with a `desktop-handover` widget.
 
 # enable_tools
 Turn on an extra tool set for the rest of this turn. `team`: create groups, hire lasting teammates, delegate to them. `routines`: schedule, change or delete your recurring jobs. `admin`: list or rescan skills, read your saved worklist. The result explains how to use the set.
+
 
 # read_skill
 See what one skill is for, by name. You get its opening section, enough to decide whether it fits and to brief a worker. The full procedure is loaded for a worker when you pass the name in `spawn_worker.skills`.
@@ -33,7 +43,7 @@ See what one skill is for, by name. You get its opening section, enough to decid
 Load one skill's full steps by name when the task needs that procedure and it was not already given to you.
 
 # list_skills
-List the skills you can load, with descriptions: shared ones plus those installed in your home under `~/.agents/skills`.
+List the skills you can load, with descriptions. Skills are shared across the account: one installed by any agent is available to all of them.
 
 # refresh_skills
 Rescan skills after an install so the next turn's skill list includes the new ones.

@@ -56,6 +56,7 @@ import {
 import { approve, listProposals, reject } from "../skills/proposals.js";
 import {
   approvalDecisionCue,
+  isApprovalAwaited,
   decideToolApproval,
   getAccountSettings,
   isTimeZone,
@@ -954,6 +955,9 @@ async function decideToolApprovalHttp(
     publish(accountId, updated.conversationId, { type: "message", message: marked as never });
   }
   res.json(updated);
+  // A worker paused on this card carries on by itself; waking the agent too
+  // made it restart that worker from nothing.
+  if (isApprovalAwaited(updated.id)) return;
   const [room] = await ctx.db
     .select({ ownerAgentId: conversationsTable.ownerAgentId })
     .from(conversationsTable)

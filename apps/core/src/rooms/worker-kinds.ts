@@ -45,16 +45,16 @@ function readKindPrompt(kind: Exclude<WorkerKind, "custom">): string {
 const earlyExitRule = (): string => prompt("worker-rules", "early-exit");
 const artifactRule = (): string => prompt("worker-rules", "return-compactly");
 const verifyRule = (): string => prompt("worker-rules", "verify");
-const budgetRule = (maxSteps: number): string => prompt("worker-rules", "step-budget", { maxSteps });
+const methodRule = (): string => prompt("worker-rules", "working-method");
 
 /**
  * Standing method for one worker run.
  * Built-ins load prompts/workers/<kind>.md; custom uses the parent-supplied instructions
  * (with a thin safety wrapper so the worker still cannot contact the user).
- * maxSteps injects the budget rule so the worker stops tooling in time to report.
+ * The method rule replaces the old step budget: a worker runs until the job is done.
  */
-export function workerPreambleFor(kind: WorkerKind, customInstructions?: string, maxSteps?: number): string {
-  const rules = [budgetRule(maxSteps ?? 16), "", earlyExitRule(), "", verifyRule(), "", artifactRule()];
+export function workerPreambleFor(kind: WorkerKind, customInstructions?: string): string {
+  const rules = [methodRule(), "", earlyExitRule(), "", verifyRule(), "", artifactRule()];
   if (kind === "custom") {
     const body = (customInstructions ?? "").trim();
     if (!body) throw new Error("custom worker kind requires instructions.");
