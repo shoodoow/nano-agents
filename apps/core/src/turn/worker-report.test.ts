@@ -5,6 +5,7 @@ import {
   collectWorkerFallback,
   collectWorkerText,
   isEmptyWorkerReport,
+  isToolDigestFallback,
   resolveWorkerEnding,
 } from "./worker-report.js";
 
@@ -154,5 +155,29 @@ describe("resolveWorkerEnding", () => {
 
   it("still stalls when nothing ran and the model only narrated", () => {
     expect(resolveWorkerEnding({ text: "Let me open Chromium next.", steps: [] }).kind).toBe("stall");
+  });
+});
+
+describe("isToolDigestFallback", () => {
+  it("is true when tools ran but no text was ever written", () => {
+    expect(
+      isToolDigestFallback({
+        text: "",
+        steps: [{ text: "", toolResults: [{ toolName: "read", output: "file contents" }], toolCalls: [{}] }],
+      }),
+    ).toBe(true);
+  });
+
+  it("is false when a Findings report exists", () => {
+    expect(
+      isToolDigestFallback({
+        text: "Findings: done.",
+        steps: [{ text: "Findings: done.", toolResults: [{ toolName: "read", output: "x" }] }],
+      }),
+    ).toBe(false);
+  });
+
+  it("is false when nothing ran at all", () => {
+    expect(isToolDigestFallback({ text: "", steps: [] })).toBe(false);
   });
 });

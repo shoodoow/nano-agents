@@ -608,6 +608,7 @@ export async function executeSpawnWorker(ctx: ToolContext, input: Record<string,
       task: parsed.task,
       kind: parsed.kind,
       instructions: parsed.instructions,
+      maxSteps: parsed.maxSteps,
     });
   } catch (error) {
     if (error instanceof WorkerCapacityError) {
@@ -615,7 +616,7 @@ export async function executeSpawnWorker(ctx: ToolContext, input: Record<string,
     }
     throw error;
   }
-  launchDetachedWorker(ctx, spawned, parsed.task);
+  launchDetachedWorker(ctx, spawned, parsed.task, parsed.maxSteps);
   return spawned;
 }
 
@@ -624,6 +625,7 @@ function launchDetachedWorker(
   ctx: ToolContext,
   spawned: { workerId: string; delegationId: string },
   task: string,
+  maxSteps?: number,
 ): void {
   void runWorker(ctx.db, {
     accountId: ctx.accountId,
@@ -632,6 +634,7 @@ function launchDetachedWorker(
     childId: spawned.workerId,
     delegationId: spawned.delegationId,
     task,
+    maxSteps,
     skillsRoot: ctx.skillsRoot,
     onSettled: (settled) => {
       void emitTurnBus({

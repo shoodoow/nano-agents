@@ -29,6 +29,15 @@ export function validateWorkerTask(task: string): { ok: true; task: string } | {
     };
   }
 
+  // One worker = one deliverable. Huge mega-briefs never fit the step budget
+  // and end with no report. Chain narrow workers instead.
+  if (trimmed.length > 4000) {
+    return {
+      ok: false,
+      hint: `Task is too long (${trimmed.length} chars) for one worker step budget. Split into chained narrow workers: first worker produces the plan/file, then spawn the build worker with that file as Input. One deliverable per spawn; raise maxSteps (3-30) only for multi-stage builds that cannot be split.`,
+    };
+  }
+
   const cleaned = trimmed
     .replace(/\bpkill\b[^\n.]*chrom[^\n.]*/gi, "")
     .replace(/\bkillall\s+chromium\b/gi, "")

@@ -299,6 +299,9 @@ const WORKER_RESULT_MAX = 20_000;
 /** Default step budget. Browser/computer audits need more than a short shell install. */
 const WORKER_STEPS = 10;
 const WORKER_STEPS_LONG = 18;
+/** One cheap text-only pass when a worker spent its budget on tools and wrote nothing. No tools attached. */
+const workerReportRetryInstructions =
+  "Write the final worker report from the tool outputs above. No more tool calls. Format: **Findings:** (what you learned, with exact numbers/paths) **What I did:** (steps taken) **Blockers:** (what is still missing). Partial evidence beats silence.";
 export const WORKER_STALE_MS = 4 * 60 * 60 * 1000;
 
 async function latestDelegationStatus(
@@ -437,6 +440,7 @@ export async function spawnWorker(
     task: string;
     kind?: WorkerKind;
     instructions?: string;
+    maxSteps?: number;
     provider?: string;
     modelId?: string;
   },
@@ -449,6 +453,7 @@ export async function spawnWorker(
     task: input.task,
     kind: input.kind,
     instructions: input.instructions,
+    maxSteps: input.maxSteps,
     provider: input.provider,
     modelId: input.modelId,
   });
@@ -769,6 +774,8 @@ export async function runWorker(
     delegationId: string;
     task: string;
     skillsRoot?: string;
+    /** Step budget override (3-30). Defaults to 10, or 18 for browser/computer kinds. */
+    maxSteps?: number;
     generate?: WorkerGenerate;
     onSettled?: (settled: WorkerSettled) => void;
   },
@@ -888,7 +895,16 @@ export async function runWorker(
     }
     const roleLine = `You are ${child.label} — ${child.role}.`;
     const kindMeta = unpackWorkerJobDescription(child.jobDescription);
-    const standing = workerPreambleFor(kindMeta.kind, kindMeta.instructions);
+    // Shell: short installs. Browser/computer: long UI loops need headroom to write Findings.
+    // The parent may override via spawn_worker maxSteps (clamped) for multi-stage builds.
+    const defaultMaxSteps =
+      kindMeta.kind === "shell"
+        ? 5
+        : kindMeta.kind === "browser" || kindMeta.kind === "computer"
+          ? WORKER_STEPS_LONG
+          : WORKER_STEPS;
+    const maxSteps = Math.min(Math.max(Math.round(input.maxSteps ?? defaultMaxSteps), 3), 30);
+    const standing = workerPreambleFor(kindMeta.kind, kindMeta.instructions, maxSteps);
     // Worker runs were a black box: dispatcher steps land in the trace log but
     // worker steps never did. Emit a worker session so failures and loops are
     // debuggable the same way (and a future transcript view can read them).
@@ -925,13 +941,6 @@ export async function runWorker(
     let shouldEarlyStop = false;
     let lastToolCallSignature = "";
     let duplicateCallCount = 0;
-    // Shell: short installs. Browser/computer: long UI loops need headroom to write Findings.
-    const maxSteps =
-      kindMeta.kind === "shell"
-        ? 5
-        : kindMeta.kind === "browser" || kindMeta.kind === "computer"
-          ? WORKER_STEPS_LONG
-          : WORKER_STEPS;
     const result = await generateText({
       model: getModel(child.provider, child.modelId, credential.apiKey, credential.baseUrl),
       abortSignal: controller.signal,
@@ -1013,7 +1022,9 @@ export async function runWorker(
       },
       steps: workerSteps,
     });
-    const { claimedWrittenPaths, resolveWorkerEnding } = await import("../turn/worker-report.js");
+    const { claimedWrittenPaths, collectWorkerFallback, isToolDigestFallback, resolveWorkerEnding } = await import(
+      "../turn/worker-report.js"
+    );
     // Billable usage for this worker (AI SDK 7: result.usage already sums all
     // steps, screenshots included) — persisted on the delegation row so the
     // per-chat display matches the provider dashboard.
@@ -1035,6 +1046,39 @@ export async function runWorker(
       await finish(
         "failed",
         "The task was not completed — the worker stopped before acting. No findings were returned.",
+        usage,
+      );
+      return;
+    }
+    if (ending.kind === "report" && isToolDigestFallback(result)) {
+      // Tools ran but the model never wrote a report (usually cut off at the
+      // step cap). One cheap text-only pass first — no tools, so it costs a
+      // fraction of a full retry. Still empty → fail loudly so the parent
+      // narrows the task instead of re-spawning the same mega-brief.
+      const digest = collectWorkerFallback(result);
+      let recovered = "";
+      try {
+        const retry = await generateText({
+          model: getModel(child.provider, child.modelId, credential.apiKey, credential.baseUrl),
+          abortSignal: controller.signal,
+          instructions: [{ role: "system" as const, content: workerReportRetryInstructions }],
+          messages: [
+            { role: "user" as const, content: `Task: ${input.task}\n\nTool work finished with these last outputs:\n${digest}\n\nWrite the report now.` },
+          ],
+          tools: {},
+          stopWhen: [isStepCount(1)],
+        });
+        recovered = (retry.text ?? "").trim();
+      } catch {
+        recovered = "";
+      }
+      if (recovered) {
+        await finish("done", recovered.slice(0, WORKER_RESULT_MAX), usage);
+        return;
+      }
+      await finish(
+        "failed",
+        `Worker used all ${maxSteps} steps on tools and wrote no report. Split the task into smaller chained workers (one file or one finding per worker) or raise maxSteps for this build. Last tool outputs:\n${digest}`,
         usage,
       );
       return;

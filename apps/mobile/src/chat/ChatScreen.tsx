@@ -57,6 +57,9 @@ export type ComposerAttachment = {
 };
 
 const INPUT_MAX_HEIGHT = 120;
+/** Vertical padding inside the composer box — added to content height. */
+const INPUT_PADDING_Y = 11;
+const INPUT_MIN_HEIGHT = 44;
 
 /**
  * Wraps a bubble with pull-right-to-reply, Telegram style.
@@ -229,6 +232,10 @@ export function ChatScreen({
   useResolvedScheme();
   const insets = useSafeAreaInsets();
   const [attachOpen, setAttachOpen] = useState(false);
+  // Telegram-style composer: the box grows line by line until the cap, then
+  // the text scrolls inside it. flex:1 kept the box stuck at one line because
+  // flexBasis 0 made it contribute nothing to the parent's auto height.
+  const [inputHeight, setInputHeight] = useState(INPUT_MIN_HEIGHT);
   const listRef = useRef<FlatList<Bubble>>(null);
   const composerBottom = Math.max(8, insets.bottom) + 52;
   const canSend = (draft.trim().length > 0 || attachments.length > 0) && !sending;
@@ -250,6 +257,7 @@ export function ChatScreen({
     setHighlightId(null);
     setAttachOpen(false);
     setRelaySheet(null);
+    setInputHeight(INPUT_MIN_HEIGHT);
   }, [conversationId]);
 
   /** Scrolls the inverted thread to the parent of a swipe-reply. */
@@ -554,12 +562,22 @@ export function ChatScreen({
             placeholder={`Message ${title}`}
             placeholderTextColor={colors.muted}
             keyboardAppearance="dark"
-            style={[styles.input, contextRing ? styles.inputWithRing : null]}
+            style={[
+              styles.input,
+              { height: inputHeight },
+              contextRing ? styles.inputWithRing : null,
+            ]}
             multiline
             maxLength={20000}
             editable={!sending}
             scrollEnabled
             textAlignVertical="top"
+            onContentSizeChange={(event) => {
+              const contentHeight = event.nativeEvent.contentSize.height;
+              setInputHeight(
+                Math.max(INPUT_MIN_HEIGHT, Math.min(INPUT_MAX_HEIGHT, Math.ceil(contentHeight) + INPUT_PADDING_Y * 2)),
+              );
+            }}
           />
           {contextRing ? (
             <View style={styles.inputRing} pointerEvents="box-none">
@@ -690,7 +708,7 @@ function createStyles(colors: ColorPalette) {
   inputSurface: { flex: 1, borderRadius: 22, borderCurve: "continuous" },
   inputWrap: {
     flex: 1,
-    minHeight: 44,
+    minHeight: INPUT_MIN_HEIGHT,
     maxHeight: INPUT_MAX_HEIGHT,
     borderRadius: 22,
     position: "relative",
@@ -703,13 +721,12 @@ function createStyles(colors: ColorPalette) {
     justifyContent: "center",
   },
   input: {
-    flex: 1,
-    minHeight: 44,
+    minHeight: INPUT_MIN_HEIGHT,
     maxHeight: INPUT_MAX_HEIGHT,
     color: colors.text,
     paddingHorizontal: 16,
-    paddingTop: 11,
-    paddingBottom: 11,
+    paddingTop: INPUT_PADDING_Y,
+    paddingBottom: INPUT_PADDING_Y,
     fontSize: 16,
     backgroundColor: "transparent",
   },

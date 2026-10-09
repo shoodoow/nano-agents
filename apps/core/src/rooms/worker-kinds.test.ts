@@ -18,6 +18,13 @@ describe("worker kinds", () => {
     }
   });
 
+  test("preamble carries a step budget so workers stop in time to report", () => {
+    const text = workerPreambleFor("executor");
+    expect(text).toContain("Step budget: 10 steps");
+    expect(workerPreambleFor("executor", undefined, 25)).toContain("Step budget: 25 steps");
+    expect(workerPreambleFor("browser")).toContain("Step budget: 10 steps");
+  });
+
   test("custom requires instructions", () => {
     expect(() => workerPreambleFor("custom")).toThrow(/instructions/);
     expect(workerPreambleFor("custom", "Only list open ports.")).toContain("Only list open ports.");

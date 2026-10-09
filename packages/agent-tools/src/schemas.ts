@@ -174,6 +174,8 @@ const spawnWorkerFields = {
   kind: z.enum(workerKindNames).optional().default("computer"),
   /** Required when kind is custom: the standing method the worker follows. */
   instructions: z.string().trim().min(1).max(20_000).optional(),
+  /** Step budget override (3-30). Default is 10 (18 for browser/computer). Raise only for multi-stage builds. */
+  maxSteps: z.number().int().min(3).max(30).optional(),
   provider: z.enum(providerNames).optional(),
   modelId: z.string().trim().min(1).max(200).optional(),
 };
@@ -203,6 +205,7 @@ export const spawnWorkerToolInputSchema = z
     task: spawnWorkerFields.task,
     kind: spawnWorkerFields.kind,
     instructions: spawnWorkerFields.instructions,
+    maxSteps: spawnWorkerFields.maxSteps,
   })
   .superRefine(refineCustomWorkerKind);
 

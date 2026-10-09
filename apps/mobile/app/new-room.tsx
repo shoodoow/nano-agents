@@ -8,9 +8,9 @@ export default function NewRoomRoute() {
       agents={session.agents}
       providers={session.providers}
       onCreateChat={(name, role, jobDescription, provider, modelId) =>
-        void session.createChat(name, role, jobDescription, provider, modelId).catch(session.show)
+        session.createChat(name, role, jobDescription, provider, modelId)
       }
-      onCreateGroup={(title, agentIds) => void session.createGroup(title, agentIds).catch(session.show)}
+      onCreateGroup={(title, agentIds) => session.createGroup(title, agentIds)}
     />
   );
 }

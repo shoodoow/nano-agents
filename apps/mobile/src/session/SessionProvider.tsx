@@ -386,6 +386,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     provider: ProviderSetting["provider"],
     modelId: string,
   ): Promise<void> {
+    if (!accountId.trim()) {
+      throw new Error("Sign in first, then create a chat.");
+    }
     const hired = await core.hireAgent(accountId, { name, role, jobDescription, provider, modelId });
     const room = await core.openChat(accountId, hired);
     const rows = await core.listAgents(accountId);
@@ -401,6 +404,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
    * Output: nothing. The chat screen opens on that group.
    */
   async function createGroup(title: string, agentIds: string[]): Promise<void> {
+    if (!accountId.trim()) {
+      throw new Error("Sign in first, then create a group.");
+    }
     const room = await core.createGroup(accountId, title, agentIds);
     const rows = await core.listAgents(accountId);
     setAgents(rows);
@@ -584,7 +590,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const id = accountId.trim();
     const owner = roster.find((row) => row.id === room.ownerAgentId);
     if (!owner) {
-      return;
+      throw new Error("The new agent did not appear in the roster. Try again in a few seconds.");
     }
     const [memberRows, history, taps] = await Promise.all([
       core.listMembers(id, room.id).catch(() => [{ agentId: owner.id }]),
@@ -678,7 +684,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const [rooms, rows] = await Promise.all([core.listConversations(id), core.listAgents(id)]);
     const room = rooms.find((row) => row.id === roomId);
     if (!room) {
-      return;
+      throw new Error("That group no longer exists. Pull down on Chats to refresh.");
     }
     setAgents(rows);
     await enterRoom(room, rows);

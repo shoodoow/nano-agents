@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import type { ProviderSetting, RosterAgent } from "../api";
 import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
@@ -28,8 +28,8 @@ export function NewRoomSheet({
     jobDescription: string,
     provider: ProviderSetting["provider"],
     modelId: string,
-  ) => void;
-  onCreateGroup: (title: string, agentIds: string[]) => void;
+  ) => Promise<void>;
+  onCreateGroup: (title: string, agentIds: string[]) => Promise<void>;
 }) {
   const [kind, setKind] = useState<"chat" | "group">("chat");
   const [name, setName] = useState("");
@@ -39,7 +39,18 @@ export function NewRoomSheet({
   const [modelId, setModelId] = useState("gpt-5");
   const [title, setTitle] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const configured = providers.filter((row) => row.configured);
+  // Why: the default is openai, but a fresh account may only have e.g.
+  // anthropic or local configured — the button stayed disabled forever and
+  // looked broken. Sync to the first configured provider when ours is missing.
+  useEffect(() => {
+    const available = providers.filter((row) => row.configured);
+    if (available.length > 0 && !available.some((row) => row.provider === provider)) {
+      setProvider(available[0]!.provider);
+    }
+  }, [providers, provider]);
   const chatReady =
     name.trim().length > 0 &&
     role.trim().length > 0 &&
@@ -60,7 +71,7 @@ export function NewRoomSheet({
 
   return (
       <ScrollView
-        style={process.env.EXPO_OS === "ios" ? { backgroundColor: colors.sheet } : { flex: 1, backgroundColor: colors.sheet }}
+        style={{ flex: 1, backgroundColor: colors.sheet }}
         nestedScrollEnabled
         contentInsetAdjustmentBehavior="automatic"
         keyboardShouldPersistTaps="handled"
@@ -131,8 +142,21 @@ export function NewRoomSheet({
               <PrimaryButton
                 label="Create chat"
                 disabled={!chatReady}
-                onPress={() => onCreateChat(name.trim(), role.trim(), job.trim(), provider, modelId.trim())}
+                busy={busy}
+                onPress={() => {
+                  console.log("[new-room] Create chat pressed", { name, role, job, provider, modelId, busy });
+                  setBusy(true);
+                  setError(null);
+                  void onCreateChat(name.trim(), role.trim(), job.trim(), provider, modelId.trim())
+                    .catch((failure: unknown) => {
+                      const message = failure instanceof Error ? failure.message : "Could not create the chat.";
+                      console.warn("[new-room] Create chat failed:", message);
+                      setError(message);
+                    })
+                    .finally(() => setBusy(false));
+                }}
               />
+              {error && kind === "chat" ? <Text style={styles.error}>{error}</Text> : null}
             </>
           ) : (
             <>
@@ -149,7 +173,24 @@ export function NewRoomSheet({
                   {picked.includes(agent.id) ? <IconCheck /> : null}
                 </Pressable>
               ))}
-              <PrimaryButton label="Create group" disabled={!groupReady} onPress={() => onCreateGroup(title.trim(), picked)} />
+              <PrimaryButton
+                label="Create group"
+                disabled={!groupReady}
+                busy={busy}
+                onPress={() => {
+                  console.log("[new-room] Create group pressed", { title, picked, busy });
+                  setBusy(true);
+                  setError(null);
+                  void onCreateGroup(title.trim(), picked)
+                    .catch((failure: unknown) => {
+                      const message = failure instanceof Error ? failure.message : "Could not create the group.";
+                      console.warn("[new-room] Create group failed:", message);
+                      setError(message);
+                    })
+                    .finally(() => setBusy(false));
+                }}
+              />
+              {error && kind === "group" ? <Text style={styles.error}>{error}</Text> : null}
             </>
           )}
       </ScrollView>
@@ -166,6 +207,7 @@ function createStyles(colors: ColorPalette) {
   kindTextOn: { color: colors.bg },
   input: { backgroundColor: colors.card, color: colors.text, borderRadius: 14, height: 48, paddingHorizontal: 14, fontSize: 16 },
   hint: { color: colors.muted, fontSize: 14 },
+  error: { color: colors.danger, fontSize: 14 },
   agent: { flexDirection: "row", alignItems: "center", backgroundColor: colors.card, borderRadius: 14, paddingHorizontal: 14, height: 48 },
   agentName: { color: colors.text, fontSize: 16, flex: 1 },
 });

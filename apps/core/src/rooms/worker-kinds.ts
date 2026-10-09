@@ -42,21 +42,18 @@ function readKindPrompt(kind: Exclude<WorkerKind, "custom">): string {
 }
 
 const EARLY_EXIT_RULE = `
-## Early exit on unrecoverable blocker
-If an action or command fails with a clear, unrecoverable blocker (e.g. permission denied, sudo requires password, command not found with no install path, missing credentials, unreachable network):
-- Stop immediately. Do NOT run futile diagnostic loops, endless searches, or repeat the failed action.
-- One empty web_search is a retry with different words, then stop. Do not loop the same query.
-- Write long output to /shared/worker-results/ as you go, then say the path only after you have checked the file exists.
-- Write your final report with Findings and Blockers explaining what failed and what is needed from the user or parent agent.
+## Stop early on unrecoverable blockers
+Permission denied, missing credentials, unreachable network: stop at once, no diagnostic loops. One empty web_search is a retry with different words, then stop.
 `.trim();
 
 const ARTIFACT_RULE = `
 ## Return compactly
-Your final report is private evidence for the parent agent, never a chat message.
-- Keep it under 1,200 characters whenever possible: decision-ready findings, artifact paths, and blockers only.
-- If the useful output is a table, CSV, dataset, long document, or verbose log, write the full result under \`/shared/worker-results/\` (or the exact output path requested), verify the file, and return its absolute path plus a short summary.
-- Do not paste bulk rows, raw HTML, command transcripts, or long logs into the final report.
-- You have no voice in any room. Never address the person or teammates; the parent decides what to say or attach.
+Your final report is private evidence for the parent agent, never a chat message. Keep it under 1,200 characters: decision-ready findings, artifact paths, blockers. Long output goes under \`/shared/worker-results/\` (or the exact path requested) — verify the file, return its path plus a short summary. No bulk rows, raw HTML, or long logs in the report. You have no voice in any room.
+`.trim();
+
+const BUDGET_RULE = (maxSteps: number) => `
+## Step budget: ${maxSteps} steps
+You have max ${maxSteps} tool steps. After step ${Math.max(maxSteps - 2, 1)}, stop calling tools and write your Findings report with what you have, even if partial. Partial evidence beats silence.
 `.trim();
 
 
@@ -64,8 +61,10 @@ Your final report is private evidence for the parent agent, never a chat message
  * Standing method for one worker run.
  * Built-ins load prompts/workers/<kind>.md; custom uses the parent-supplied instructions
  * (with a thin safety wrapper so the worker still cannot contact the user).
+ * maxSteps injects the budget rule so the worker stops tooling in time to report.
  */
-export function workerPreambleFor(kind: WorkerKind, customInstructions?: string): string {
+export function workerPreambleFor(kind: WorkerKind, customInstructions?: string, maxSteps?: number): string {
+  const budget = BUDGET_RULE(maxSteps ?? 10);
   if (kind === "custom") {
     const body = (customInstructions ?? "").trim();
     if (!body) throw new Error("custom worker kind requires instructions.");
@@ -83,14 +82,15 @@ export function workerPreambleFor(kind: WorkerKind, customInstructions?: string)
       "## Standing method (from parent)",
       "",
       body,
-     
+      "",
+      budget,
       "",
       EARLY_EXIT_RULE,
       "",
       ARTIFACT_RULE,
     ].join("\n");
   }
-  return [readKindPrompt(kind), "", EARLY_EXIT_RULE, "", ARTIFACT_RULE].join("\n");
+  return [readKindPrompt(kind), "", budget, "", EARLY_EXIT_RULE, "", ARTIFACT_RULE].join("\n");
 }
 
 /** Persist kind (+ optional custom prompt) inside job_description without a schema migration. */

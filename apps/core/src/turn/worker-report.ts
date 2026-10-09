@@ -111,6 +111,16 @@ export function collectWorkerText(result: WorkerModelResult): string {
   return "";
 }
 
+/**
+ * True when the model ran tools but never wrote any text — the case that used
+ * to ship as a "done" tool digest and trigger parent retry loops. Callers use
+ * this to attempt one cheap report-only pass, then fail loudly instead of
+ * delivering a digest the parent mistakes for success.
+ */
+export function isToolDigestFallback(result: WorkerModelResult): boolean {
+  return collectWorkerText(result).trim().length === 0 && workerRanTools(result);
+}
+
 /** Short tool digest for the parent when the model never wrote a report. */
 export function collectWorkerFallback(result: WorkerModelResult): string {
   const steps = result.steps ?? [];

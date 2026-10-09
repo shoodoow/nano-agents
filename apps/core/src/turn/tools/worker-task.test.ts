@@ -57,4 +57,14 @@ describe("validateWorkerTask", () => {
     const r = validateWorkerTask("Go check my instagram page and tell me what you think about it overall today.");
     expect(r.ok).toBe(false);
   });
+
+  it("rejects oversize mega-briefs with a chaining hint", () => {
+    const r = validateWorkerTask(
+      ["Goal: Build everything.", "Inputs: repo.", "Method: read a lot.", "Success: done.", "Return: Findings.", "x".repeat(4100)].join(
+        "\n",
+      ),
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.hint).toMatch(/chain|narrow|maxSteps/i);
+  });
 });
