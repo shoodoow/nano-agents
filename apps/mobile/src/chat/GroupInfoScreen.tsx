@@ -18,12 +18,15 @@ type Tab = "info" | "links" | "media" | "files";
  */
 export function GroupInfoScreen({
   title,
+  brief,
   members,
   messages,
   onOpenMember,
   onFetchBlob,
 }: {
   title: string;
+  /** The team's shared brief, written by the lead agent. */
+  brief?: string | null;
   members: RosterAgent[];
   messages: { conversationId?: string; body: string; blocks?: MessageBlock[] | null }[];
   onBack: () => void;
@@ -72,6 +75,13 @@ export function GroupInfoScreen({
         ) : null}
         {tab === "info" ? (
           <View style={styles.body}>
+            <Text style={styles.sectionLabel}>Team brief</Text>
+            <View style={[styles.card, styles.briefCard]}>
+              <Text style={brief ? styles.briefText : styles.briefEmpty} selectable>
+                {brief || "No brief yet. Ask the lead to write one: the goal, who does what, and how work moves between teammates."}
+              </Text>
+            </View>
+            <Text style={styles.sectionLabel}>Members</Text>
             <View style={styles.card}>
               {members.map((member) => (
                 <Pressable key={member.id} accessibilityRole="button" onPress={() => onOpenMember(member)} style={styles.member}>
@@ -147,6 +157,10 @@ function createStyles(colors: ColorPalette) {
   header: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 12, paddingTop: 4 },
   page: { paddingTop: 12, paddingBottom: 32 },
   cluster: { alignItems: "center", marginTop: 8 },
+  sectionLabel: { color: colors.muted, fontSize: 13, fontWeight: "600", marginLeft: 4, marginBottom: 6, marginTop: 4 },
+  briefCard: { paddingHorizontal: 14, paddingVertical: 12, marginBottom: 14 },
+  briefText: { color: colors.text, fontSize: 15, lineHeight: 21 },
+  briefEmpty: { color: colors.muted, fontSize: 14, lineHeight: 20 },
   nameCard: { marginHorizontal: 16, marginTop: 10, backgroundColor: colors.bubble, borderRadius: 14, borderCurve: "continuous" },
   name: { color: colors.text, fontSize: 17, fontWeight: "600", textAlign: "center", paddingVertical: 12 },
   tabs: { flexDirection: "row", marginTop: 14, marginHorizontal: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },

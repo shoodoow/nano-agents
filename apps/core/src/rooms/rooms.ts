@@ -273,6 +273,8 @@ export async function listConversations(db: Database, accountId: string) {
       kind: conversations.kind,
       title: conversations.title,
       ownerAgentId: conversations.ownerAgentId,
+      // Group rooms: the team's shared brief, shown on the group's profile.
+      brief: conversations.brief,
     })
     .from(conversations)
     .where(eq(conversations.accountId, accountId));

@@ -246,7 +246,7 @@ export type CoreClient = {
     accountId: string,
     input: { provider: ProviderSetting["provider"]; secret: string; baseUrl: string | null },
   ) => Promise<ProviderSetting>;
-  listConversations: (accountId: string) => Promise<{ id: string; kind: string; title: string; ownerAgentId: string }[]>;
+  listConversations: (accountId: string) => Promise<{ id: string; kind: string; title: string; ownerAgentId: string; brief?: string | null }[]>;
   listMembers: (accountId: string, conversationId: string) => Promise<{ agentId: string }[]>;
   chatContext: (accountId: string, conversationId: string) => Promise<ChatContextInfo>;
   listMessages: (accountId: string, conversationId: string) => Promise<RichMessage[]>;
@@ -494,7 +494,7 @@ async function listConversations(
   baseUrl: string,
   accountId: string,
   fetchImpl: typeof fetch,
-): Promise<{ id: string; kind: string; title: string; ownerAgentId: string }[]> {
+): Promise<{ id: string; kind: string; title: string; ownerAgentId: string; brief?: string | null }[]> {
   return readJson(fetchImpl, `${baseUrl}/accounts/${accountId}/conversations`);
 }
 

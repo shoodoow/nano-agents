@@ -1,4 +1,5 @@
 import { router, useLocalSearchParams } from "expo-router";
+import { useEffect, useState } from "react";
 import { Text, View } from "react-native";
 import { createCore } from "../../src/api";
 import { GroupInfoScreen } from "../../src/chat/GroupInfoScreen";
@@ -12,6 +13,21 @@ export default function GroupRoute() {
   const { conversationId } = useLocalSearchParams<{ conversationId: string }>();
   const session = useSession();
   const chat = session.lastChat?.conversationId === conversationId ? session.lastChat : null;
+  // The team's brief is written by the lead agent; load it fresh each time the profile opens.
+  const [brief, setBrief] = useState<string | null>(null);
+  const accountId = session.accountId.trim();
+  useEffect(() => {
+    let active = true;
+    void core
+      .listConversations(accountId)
+      .then((rooms) => {
+        if (active) setBrief(rooms.find((room) => room.id === conversationId)?.brief?.trim() || null);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [accountId, conversationId]);
 
   if (!chat) {
     return (
@@ -28,6 +44,7 @@ export default function GroupRoute() {
   return (
     <GroupInfoScreen
       title={chat.title}
+      brief={brief}
       members={members}
       messages={session.groupFeed}
       onBack={() => router.back()}

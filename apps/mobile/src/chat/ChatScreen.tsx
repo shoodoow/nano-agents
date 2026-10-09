@@ -254,9 +254,13 @@ export function ChatScreen({
   const insets = useSafeAreaInsets();
   const [attachOpen, setAttachOpen] = useState(false);
   // Telegram-style composer: the box grows line by line until the cap, then
-  // the text scrolls inside it. flex:1 kept the box stuck at one line because
-  // flexBasis 0 made it contribute nothing to the parent's auto height.
+  // the text scrolls inside it. The measured height sizes the wrapper as well
+  // as the field, so the rounded box always encloses the text.
   const [inputHeight, setInputHeight] = useState(INPUT_MIN_HEIGHT);
+  // Sending clears the draft; shrink back even if no size event follows.
+  useEffect(() => {
+    if (draft.length === 0) setInputHeight(INPUT_MIN_HEIGHT);
+  }, [draft]);
   const listRef = useRef<FlatList<Bubble>>(null);
   const composerBottom = Math.max(8, insets.bottom) + 52;
   const canSend = (draft.trim().length > 0 || attachments.length > 0) && !sending;
@@ -612,7 +616,7 @@ export function ChatScreen({
           <IconPlus />
         </CircleButton>
         <AdaptiveSurface style={styles.inputSurface}>
-        <View style={styles.inputWrap}>
+        <View style={[styles.inputWrap, { height: inputHeight }]}>
           <TextInput
             value={draft}
             onChangeText={onDraft}
@@ -769,13 +773,17 @@ function createStyles(colors: ColorPalette) {
   attachBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)" },
   attachAnchor: { position: "absolute", left: 10 },
   composer: { flexDirection: "row", alignItems: "flex-end", paddingHorizontal: 8, paddingBottom: 8, gap: 2 },
-  inputSurface: { flex: 1, borderRadius: 22, borderCurve: "continuous" },
+  // The surface takes its height from the wrap, and the wrap from the text.
+  // With flex:1 here the wrap contributed no height, so the box stayed one
+  // line tall while the text grew out of it.
+  inputSurface: { flex: 1, borderRadius: 22, borderCurve: "continuous", overflow: "hidden" },
   inputWrap: {
-    flex: 1,
+    alignSelf: "stretch",
     minHeight: INPUT_MIN_HEIGHT,
     maxHeight: INPUT_MAX_HEIGHT,
     borderRadius: 22,
     position: "relative",
+    overflow: "hidden",
   },
   inputRing: {
     position: "absolute",
