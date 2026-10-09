@@ -1,4 +1,5 @@
 import { routineSchema } from "@nano-agents/shared";
+import { prompt } from "../prompt/prompts.js";
 import { routineCreateInputSchema, routineIdSchema, routineUpdateInputSchema } from "@nano-agents/agent-tools";
 import { and, asc, desc, eq, inArray, lte } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
@@ -190,13 +191,17 @@ export async function runDue(
       .orderBy(desc(jobs.runAt))
       .limit(1);
     const continuity = previous
-      ? `\nPrevious run (${previous.runAt.toISOString()}, ${previous.status}): ${previous.result?.slice(0, 1200) || "No visible outcome was recorded."}\n`
+      ? `\n${prompt("cues", "routine-previous-run", {
+          runAt: previous.runAt.toISOString(),
+          status: previous.status,
+          result: previous.result?.slice(0, 1200) || "No visible outcome was recorded.",
+        })}\n`
       : "";
-    const cue =
-      `[routine] Standing order for you (${routine.title}):\n${routine.instructions}\n\n` +
-      continuity +
-      `Act on this now. send_message only when the person should see something. ` +
-      `Do not quote or answer this wake as if they wrote it. Stay quiet if nothing changed.`;
+    const cue = prompt("cues", "routine-wake", {
+      title: routine.title,
+      instructions: routine.instructions,
+      continuity,
+    });
     const replies = await runTurn(db, routine.accountId, routine.conversationId, cue, opts.generate as never, opts.skillsRoot, {
       existingRunId: runId,
       kind: "routine",

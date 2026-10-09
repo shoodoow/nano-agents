@@ -6,10 +6,14 @@ const promptUrl = new URL("../../../../prompts/system.md", import.meta.url);
 const systemPrompt = readFileSync(promptUrl, "utf8").trim();
 
 describe("buildInstructions", () => {
-  it("does not tell the model that plain text is a private monologue", () => {
+  it("tells the model its plain text is the reply and to use the clock it is given", () => {
     expect(systemPrompt).not.toContain("inner monologue the person never sees");
-    expect(systemPrompt).toContain("Plain text is not a message.");
-    expect(systemPrompt).toContain("use that timezone and local time");
+    expect(systemPrompt).toContain("Your final plain text is shown to the person as your reply.");
+    expect(systemPrompt).toContain("timezone and local time");
+  });
+
+  it("stays small, because it is resent on every model step", () => {
+    expect(systemPrompt.length).toBeLessThan(9_000);
   });
 
   it("places the system prompt and the composed identity after it", () => {

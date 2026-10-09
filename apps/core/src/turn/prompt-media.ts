@@ -14,6 +14,7 @@ export type TurnMessageContent = string | Array<{ type: "text"; text: string } |
 
 export type HistoryRow = {
   id?: string;
+  createdAt?: Date;
   agentId: string | null;
   body: string;
   payload: unknown;
@@ -61,14 +62,58 @@ export function formatReplyBody(body: string, parent: ReplyParent | null | undef
   return `(Replying to ${who}: "${quote}")\n${body}`;
 }
 
+/** A pause this long between two messages gets a date line, so the model sees time passing. */
+const DATE_MARKER_GAP_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Date line for a message that follows a long pause (or opens the window).
+ * Why: a years-long thread reads as one continuous chat unless the dates are
+ * visible; "last week" and "yesterday" only make sense against them.
+ * Input: previous and current message times, the person's timezone.
+ * Output: a bracketed date, or null when no marker is due.
+ */
+export function dateMarker(previous: Date | undefined, current: Date | undefined, timezone?: string): string | null {
+  if (!current) return null;
+  if (previous && current.getTime() - previous.getTime() < DATE_MARKER_GAP_MS) return null;
+  try {
+    const day = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone?.trim() || "UTC",
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    }).format(current);
+    return `[${day}]`;
+  } catch {
+    return `[${current.toISOString().slice(0, 10)}]`;
+  }
+}
+
 /**
  * Builds model chat messages from recent history, with images and reply context.
  * Input: history rows (+ optional parent map for replyTo outside the window).
  * Output: role/content pairs for the model.
  */
+/** Notes the person's reactions to agent messages since their previous message. */
+function reactionNote(history: HistoryRow[], index: number, reactions?: Map<string, string[]>): string {
+  if (!reactions || reactions.size === 0) return "";
+  const notes: string[] = [];
+  for (let at = index - 1; at >= 0 && history[at]!.agentId; at -= 1) {
+    const row = history[at]!;
+    const emojis = row.id ? reactions.get(row.id) : undefined;
+    if (!emojis || emojis.length === 0) continue;
+    const snippet = row.body.replace(/\s+/g, " ").trim().slice(0, 80);
+    notes.unshift(`[they reacted ${emojis.join(" ")} to your message "${snippet}"]`);
+  }
+  return notes.join("\n");
+}
+
 export function toModelMessages(
   history: HistoryRow[],
   parents?: Map<string, ReplyParent>,
+  timezone?: string,
+  /** The person's emoji reactions, by the id of the message they reacted to. */
+  reactions?: Map<string, string[]>,
 ): { role: "user" | "assistant"; content: TurnMessageContent }[] {
   const byId = new Map<string, ReplyParent>();
   for (const row of history) {
@@ -101,7 +146,11 @@ export function toModelMessages(
     const role = row.agentId ? "assistant" : "user";
     const body = tailSlice(row.body);
     const linked = row.replyTo ? formatReplyBody(body, byId.get(row.replyTo) ?? null) : body;
-    const text = linked;
+    const marker = dateMarker(history[index - 1]?.createdAt, row.createdAt, timezone);
+    // A reaction is feedback on what the agent said. It rides on the person's
+    // next message, so the agent sees it even when the tap did not wake it.
+    const reacted = role === "user" ? reactionNote(history, index, reactions) : "";
+    const text = [marker, reacted, linked].filter(Boolean).join("\n");
     const parts = wanted.get(index);
     if (!parts || parts.length === 0) return { role, content: text };
     return {

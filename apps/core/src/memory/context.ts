@@ -1,20 +1,24 @@
 import { createHash } from "node:crypto";
 import { buildAgentIdentity, buildInstructions, type AgentIdentity } from "../prompt/build-instructions.js";
+import { prompt } from "../prompt/prompts.js";
+import { isToolSetName, toolSetGuidance } from "../turn/tools/tool-sets.js";
 
 const keyOrder = ["decisions", "actions", "open", "entities", "corrections", "topics"];
 
 /**
- * The only turn rule, placed last in the prefix so a small model still sees it.
- * Why: skill names and the long system prompt sit in the middle, which cheap models drop.
+ * Memory budget for one prompt. These caps are what keep the prompt the same
+ * size in year three as in week one: storage grows, the prompt does not.
  */
-export const TOOL_CONTRACT = [
-  "Tool contract (hard):",
-  "On a person-opened turn, tool call #1 MUST be send_message — a short ack or answer the person can see.",
-  "Never call spawn_worker, web_search, read_skill, glob, hire_subagent, or any other tool before that first send_message.",
-  "Plain assistant text is invisible and does not count as a reply.",
-  "After send_message lands: at most one next work tool (usually spawn_worker), then stop.",
-  'Example first call: send_message { "blocks": [{ "kind": "text", "markdown": "On it — pulling the numbers now." }] }.',
-].join("\n");
+const PROFILE_CHARS = 1_500;
+const MEMORY_LINES = 24;
+const SUMMARY_DIGESTS = 6;
+const SUMMARY_LINES = 12;
+
+/**
+ * How a turn ends, placed last in the prefix so it is the freshest standing
+ * rule the model reads. Text: prompts/dispatcher.md.
+ */
+export const turnRule = (): string => prompt("dispatcher", "turn-rule");
 
 export type PersonContext = {
   name: string;
@@ -52,11 +56,15 @@ export function buildContext(input: {
   agentId: string;
   promptVersion: number;
   identity: AgentIdentity;
-  summary: { key: string; body: string; messageId?: string }[];
+  summary: { key: string; body: string; messageId?: string; level?: number }[];
   messages: { body: string }[];
-  memories?: { body: string }[];
+  memories?: { body: string; subject?: string | null }[];
+  /** Pinned standing description of the person and their world. */
+  profile?: string | null;
   recall?: string[];
   catalog?: string;
+  /** Optional tool sets on from the start of this turn; their guidance joins the prefix. */
+  toolSets?: string[];
   room?: { title: string; kind: string; members: string[]; selfName: string };
   person?: PersonContext;
   activeWorkers?: {
@@ -68,7 +76,11 @@ export function buildContext(input: {
   }[];
   workHistory?: { kind: "worker" | "routine"; title: string; outcome: string; status: string; createdAt: Date }[];
 }): BuiltContext {
-  const extras = [...(input.catalog ? [input.catalog] : []), TOOL_CONTRACT];
+  const extras = [
+    ...(input.toolSets ?? []).filter(isToolSetName).map((set) => toolSetGuidance(set)),
+    ...(input.catalog ? [`${prompt("dispatcher", "skills-heading")}\n${input.catalog}`] : []),
+    turnRule(),
+  ];
   const prefix = [buildInstructions(input.identity), ...extras].join("\n\n");
   const summaryLines = [...input.summary].sort(
     (left, right) => keyOrder.indexOf(left.key) - keyOrder.indexOf(right.key) || left.body.localeCompare(right.body),
@@ -78,14 +90,19 @@ export function buildContext(input: {
   const workersBlock = activeWorkersSection(input.activeWorkers ?? []);
   const workBlock = workHistorySection(input.workHistory ?? []);
   const summaryBlock = summarySection(summaryLines);
+  // Slow-changing blocks first, per-turn blocks last: a provider that caches
+  // by prefix can then reuse the stable part of the tail too. The clock,
+  // which changes every minute, sits at the very end.
   const tail = [
     ...(input.room ? [`## Room\n${roomLine(input.room)}`] : []),
     ...(input.person ? [`## Person\n${personBlock(input.person)}`] : []),
+    ...(input.profile?.trim() ? [`## Profile\n${input.profile.trim().slice(0, PROFILE_CHARS)}`] : []),
     ...(memoryBlock ? [`## Memory\n${memoryBlock}`] : []),
+    ...(summaryBlock ? [`## Summary\n${summaryBlock}`] : []),
     ...(recallBlock ? [`## Recall\n${recallBlock}`] : []),
     ...(workersBlock ? [`## Active workers\n${workersBlock}`] : []),
     ...(workBlock ? [`## Recent work\n${workBlock}`] : []),
-    ...(summaryBlock ? [`## Summary\n${summaryBlock}`] : []),
+    ...(input.person ? [`## Now\n${clockLine(input.person)}`] : []),
   ].join("\n\n");
   return {
     prefix,
@@ -148,16 +165,12 @@ export function roomLine(room: { title: string; kind: string; members: string[];
  * Output: one tail block.
  */
 export function personLine(person: PersonContext): string {
-  return personBlock(person);
+  return `${personBlock(person)}\n${clockLine(person)}`;
 }
 
 /** Person + account roster as one block; buildContext splits it under ## headers. */
 function personBlock(person: PersonContext): string {
   const name = person.name.trim() || "the person";
-  const local = formatLocalTime(person.now, person.timezone);
-  const clock = local
-    ? `Timezone: ${person.timezone.trim()}. Local time now: ${local}.`
-    : "Timezone: unknown. Do not invent one.";
   const teammates =
     person.teammates.length === 0
       ? "Team: none."
@@ -171,7 +184,15 @@ function personBlock(person: PersonContext): string {
             .slice(0, 10)
             .map((group) => `- "${group.title.replace(/\s+/g, " ").trim().slice(0, 60)}" (id:${group.id}${typeof group.memberCount === "number" ? `, ${group.memberCount} members` : ""})`)
             .join("\n")}${person.groups.length > 10 ? `\n+${person.groups.length - 10} more` : ""}`;
-  return `Person: ${name}. You speak to them. They are not a teammate.\n${clock}\n${teammates}${groups}`;
+  return `Person: ${name}. You speak to them. They are not a teammate.\n${teammates}${groups}`;
+}
+
+/** The person's clock. Kept apart from the roster because it changes every minute. */
+function clockLine(person: PersonContext): string {
+  const local = formatLocalTime(person.now, person.timezone);
+  return local
+    ? `Timezone: ${person.timezone.trim()}. Local time now: ${local}.`
+    : "Timezone: unknown. Do not invent one.";
 }
 
 function formatTeammate(mate: { id?: string; label: string; role: string; mention: string }): string {
@@ -207,13 +228,16 @@ function formatLocalTime(now: Date, timezone: string): string | null {
  * agent learns and corrects. Empty input renders nothing.
  * Input: the facts to surface. Output: a labeled block, or empty string.
  */
-function memorySection(memories: { body: string }[]): string {
+function memorySection(memories: { body: string; subject?: string | null }[]): string {
   if (memories.length === 0) {
     return "";
   }
   return memories
-    .slice(0, 24)
-    .map((memory) => `- ${memory.body.replace(/\s+/g, " ").trim().slice(0, 300)}`)
+    .slice(0, MEMORY_LINES)
+    .map((memory) => {
+      const body = memory.body.replace(/\s+/g, " ").trim().slice(0, 300);
+      return `- ${memory.subject?.trim() ? `${memory.subject.trim()}: ` : ""}${body}`;
+    })
     .join("\n");
 }
 
@@ -229,7 +253,7 @@ function recallSection(recall: string[]): string {
   }
   return recall
     .slice(0, 8)
-    .map((line) => `- ${line.replace(/\s+/g, " ").trim().slice(0, 300)}`)
+    .map((line) => `- ${line.replace(/\s+/g, " ").trim().slice(0, 420)}`)
     .join("\n");
 }
 
@@ -282,15 +306,22 @@ function cleanOutcome(outcome: string): string {
   return text.slice(0, 200);
 }
 
-/** Folded summary items: capped bodies, message ids kept for read_history. */
-function summarySection(summary: { key: string; body: string; messageId?: string }[]): string {
+/**
+ * Folded history, long arc first: year and month digests, then recent slice lines.
+ * Message ids are kept so read_history can open the exact wording.
+ */
+function summarySection(summary: { key: string; body: string; messageId?: string; level?: number }[]): string {
   if (summary.length === 0) return "";
-  return summary
-    .slice(0, 24)
-    .map((item) => `- ${item.key}: ${item.body.replace(/\s+/g, " ").trim().slice(0, 300)}${item.messageId ? ` [msg:${item.messageId}]` : ""}`)
-    .join("\n");
+  const digests = summary.filter((item) => (item.level ?? 0) > 0).slice(-SUMMARY_DIGESTS);
+  const slices = summary.filter((item) => (item.level ?? 0) === 0).slice(0, SUMMARY_LINES);
+  return [
+    ...digests.map((item) => `- ${item.body.replace(/\s+/g, " ").trim().slice(0, 900)}`),
+    ...slices.map(
+      (item) =>
+        `- ${item.key}: ${item.body.replace(/\s+/g, " ").trim().slice(0, 300)}${item.messageId ? ` [msg:${item.messageId}]` : ""}`,
+    ),
+  ].join("\n");
 }
-
 
 function cacheKey(accountId: string, agentId: string, promptVersion: number): string {
   const raw = `${accountId}:${agentId}:${promptVersion}`;

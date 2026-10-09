@@ -100,7 +100,7 @@ describe("reviewToolCall and send_message guards", () => {
     expect(reused.allow).toBe(false);
   });
 
-  it("hints when a text bubble is huge and ends the turn on a secret widget", async () => {
+  it("delivers a long text bubble and ends the turn on a secret widget", async () => {
     const [account] = await db.insert(accounts).values({ name: "Send Guards" }).returning();
     const [agent] = await db
       .insert(agents)
@@ -131,8 +131,9 @@ describe("reviewToolCall and send_message guards", () => {
       emit: async () => {},
     };
 
+    // A long bubble is delivered: rejecting it cost a full model step to retype.
     const long = await executeSendMessage(ctx, { blocks: [{ kind: "text", markdown: "x".repeat(1201) }] });
-    expect(long).toMatchObject({ error: expect.stringMatching(/too long/) });
+    expect(long).toMatchObject({ messageId: expect.any(String) });
 
     const secret = (await executeSendMessage(ctx, {
       blocks: [{ kind: "widget", widget: "secret", props: { envName: "API_KEY", title: "Key" } }],

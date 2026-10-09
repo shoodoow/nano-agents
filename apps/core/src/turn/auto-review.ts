@@ -3,6 +3,7 @@
  * Why: destructive shell and irreversible room/schedule
  * deletes wait on a card instead of running on the model's first try.
  */
+import { prompt } from "../prompt/prompts.js";
 import { createHash } from "node:crypto";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
@@ -360,14 +361,9 @@ export function approvalDecisionCue(
   row: { id: string; tool: string; summary: string },
   decision: "approved" | "denied",
 ): string {
-  if (decision === "approved") {
-    return (
-      `The person approved "${row.summary}" (tool:${row.tool}, approvalId:${row.id}). ` +
-      `Retry that SAME tool call now with requestApproval:true and approvalId:"${row.id}". Do not change the arguments.`
-    );
-  }
-  return (
-    `The person denied "${row.summary}" (tool:${row.tool}, approvalId:${row.id}). ` +
-    `Do not retry it. Tell them briefly and continue with a safer path.`
-  );
+  return prompt("cues", decision === "approved" ? "approval-approved" : "approval-denied", {
+    summary: row.summary,
+    tool: row.tool,
+    approvalId: row.id,
+  });
 }

@@ -65,6 +65,9 @@ export const conversations = pgTable(
       .notNull()
       .references(() => agents.id),
     title: text("title").notNull(),
+    // Fold watermark: creation time of the newest message already folded into
+    // summary items, so a fold reads only what is new. Null until the first fold.
+    foldedThrough: timestamp("folded_through", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [check("conversations_kind_check", sql`${table.kind} in ('direct', 'group')`)],
@@ -195,6 +198,9 @@ export const delegations = pgTable(
   (table) => [check("delegations_status_check", sql`${table.status} in ('running', 'done', 'failed')`)],
 );
 
+export const memoryKinds = ["fact", "person", "org", "project", "preference", "decision", "commitment", "profile"] as const;
+export type MemoryKind = (typeof memoryKinds)[number];
+
 export const summaryKeys = ["decisions", "actions", "open", "entities", "corrections", "topics"] as const;
 
 export const summaryItems = pgTable(
@@ -216,6 +222,11 @@ export const summaryItems = pgTable(
     // back by relevance instead of dumping the whole summary every turn. Null
     // until the backfill embeds it (or when no embedding provider is configured).
     embedding: vector("embedding", { dimensions: EMBEDDING_DIMS }),
+    // 0 = one folded slice, 1 = month digest, 2 = year digest. Digests carry
+    // the period they cover; slices leave it null.
+    level: integer("level").notNull().default(0),
+    periodStart: timestamp("period_start", { withTimezone: true }),
+    periodEnd: timestamp("period_end", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -239,6 +250,14 @@ export const memories = pgTable(
       .references(() => messages.id),
     // Semantic recall over durable facts (see summary_items.embedding).
     embedding: vector("embedding", { dimensions: EMBEDDING_DIMS }),
+    // What the fact is about. `subject` names the person, organization or
+    // project so every current fact about it can be pulled by name.
+    kind: text("kind").notNull().default("fact"),
+    subject: text("subject"),
+    // A changed fact points at its replacement and is skipped by recall; the
+    // old row stays as history.
+    supersededBy: uuid("superseded_by"),
+    validFrom: timestamp("valid_from", { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -393,6 +412,35 @@ export const runs = pgTable(
 // Durable event log (Phase 13): every turn event persisted in the same short
 // tx as its source row. SSE replays from a cursor, then tails live fanout.
 // Same shape on replay and live so Redis Streams can slot in later unchanged.
+/**
+ * What an agent did during one run: its tool calls (clipped) and the private
+ * note that woke it, if any. Why: only visible bubbles used to carry over
+ * between turns, so the agent forgot its own work and redid it. One row per
+ * agent per run; rows are replayed, clipped, beside recent messages.
+ */
+export type WorkLogEntry = { tool: string; input: string; output: string; failed?: boolean };
+
+export const workLog = pgTable(
+  "work_log",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    runId: uuid("run_id").references(() => runs.id, { onDelete: "cascade" }),
+    cue: text("cue"),
+    entries: jsonb("entries").$type<WorkLogEntry[]>().notNull().default([]),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("work_log_room_agent_index").on(table.conversationId, table.agentId, table.createdAt)],
+);
+
 export const events = pgTable(
   "events",
   {

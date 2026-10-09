@@ -5,6 +5,7 @@
  */
 import type { StreamEvent } from "../rooms/stream.js";
 import type { TurnMessageContent } from "./prompt-media.js";
+import type { WorkLogEntry } from "../db/schema.js";
 
 export type { TurnImagePart, TurnMessageContent } from "./prompt-media.js";
 
@@ -46,6 +47,12 @@ export type GenerateResult =
       text: string;
       cacheReadTokens?: number | null;
       usage?: GenerateUsage;
+      /** Hidden wake that started background work: ending without a bubble is fine. */
+      quiet?: boolean;
+      /** Finished tool calls this turn, clipped, for the agent's work log. */
+      workLog?: WorkLogEntry[];
+      /** Plain text that follows work done after the last bubble: post it as well. */
+      finalTextIsReply?: boolean;
       proposal?: { kind: "memory" | "skill" | "prompt"; body: string; messageIds: string[] };
     };
 

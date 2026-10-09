@@ -18,8 +18,10 @@ import { resolveGatewayContextWindow } from "../model/gateway-models.js";
 import { buildWorkerToolSet } from "../turn/tools/build-tools.js";
 import type { ToolContext } from "../turn/tools/context.js";
 import { appendEvent } from "./events.js";
+import { readSkillForAgent } from "../skills/agent-skills.js";
+import { prompt } from "../prompt/prompts.js";
 import { publish } from "./stream.js";
-import { createProfile, exec, execStdin } from "../linux/linux.js";
+import { accountHome, createProfile, exec, execStdin } from "../linux/linux.js";
 import { appendMcpTools } from "../mcp/tools.js";
 import { wrapToolExecute } from "../turn/tools/wrap-tool-execute.js";
 import { agents, conversations, delegations, members, messages } from "../db/schema.js";
@@ -297,11 +299,16 @@ export async function addGroupMember(
 
 const WORKER_RESULT_MAX = 20_000;
 /** Default step budget. Browser/computer audits need more than a short shell install. */
-const WORKER_STEPS = 10;
-const WORKER_STEPS_LONG = 18;
+const WORKER_STEPS = 16;
+// Five steps ended installs mid-way: look, run, check, fix, verify needs more.
+const WORKER_STEPS_SHELL = 12;
+const WORKER_STEPS_LONG = 24;
+/** Cap per preloaded skill body so one long playbook cannot dominate every worker step. */
+const PRELOADED_SKILL_CHARS = 12_000;
+// All preloaded skills together; every worker step resends them.
+const PRELOADED_SKILLS_TOTAL_CHARS = 36_000;
 /** One cheap text-only pass when a worker spent its budget on tools and wrote nothing. No tools attached. */
-const workerReportRetryInstructions =
-  "Write the final worker report from the tool outputs above. No more tool calls. Format: **Findings:** (what you learned, with exact numbers/paths) **What I did:** (steps taken) **Blockers:** (what is still missing). Partial evidence beats silence.";
+const workerReportRetryInstructions = (): string => prompt("worker-rules", "report-retry");
 export const WORKER_STALE_MS = 4 * 60 * 60 * 1000;
 
 async function latestDelegationStatus(
@@ -682,21 +689,21 @@ export function workerFollowupCue(input: {
 }): string {
   if (input.settled && input.settled.length > 1) {
     const list = input.settled
-      .map((s) => `Worker ${s.workerId} did not finish "${s.task.slice(0, 200)}". Result: ${s.result.slice(0, 400)}.`)
+      .map((s) =>
+        prompt("cues", "worker-failed-item", {
+          workerId: s.workerId,
+          task: s.task.slice(0, 200),
+          result: s.result.slice(0, 400),
+        }),
+      )
       .join("\n");
-    if (input.retry) {
-      return `${list}\n\nsend_message one short sentence about what happened and the next step you are taking, then spawn_worker once with a narrower task. Do not stop after the failure, and never send an internal line like "The worker finished with no output."`;
-    }
-    return `${list}\n\nsend_message what went wrong and what the person can do next. Do not spawn another worker. Never send an internal status line.`;
+    return prompt("cues", input.retry ? "worker-failed-many-retry" : "worker-failed-many-final", { list });
   }
-  const workerId = input.workerId ?? input.settled?.[0]?.workerId ?? "worker";
-  const task = input.task ?? input.settled?.[0]?.task ?? "task";
-  const result = input.result ?? input.settled?.[0]?.result ?? "failed";
-  const head = `Worker ${workerId} did not finish "${task.slice(0, 500)}". Result: ${result.slice(0, 1000)}.`;
-  if (input.retry) {
-    return `${head} send_message one short sentence about what happened and the next step you are taking, then spawn_worker once with a narrower task. Do not stop after the failure, and never send an internal line like "The worker finished with no output."`;
-  }
-  return `${head} send_message what went wrong and the one thing the person can do next. Do not spawn another worker. Never send an internal status line.`;
+  return prompt("cues", input.retry ? "worker-failed-retry" : "worker-failed-final", {
+    workerId: input.workerId ?? input.settled?.[0]?.workerId ?? "worker",
+    task: (input.task ?? input.settled?.[0]?.task ?? "task").slice(0, 500),
+    result: (input.result ?? input.settled?.[0]?.result ?? "failed").slice(0, 1000),
+  });
 }
 
 /**
@@ -776,6 +783,10 @@ export async function runWorker(
     skillsRoot?: string;
     /** Step budget override (3-30). Defaults to 10, or 18 for browser/computer kinds. */
     maxSteps?: number;
+    /** Skill names whose bodies are placed in the worker's prompt up front. */
+    skills?: string[];
+    /** Background lines appended to the task the worker reads (not stored as the task). */
+    context?: string;
     generate?: WorkerGenerate;
     onSettled?: (settled: WorkerSettled) => void;
   },
@@ -893,18 +904,24 @@ export async function runWorker(
         wrapToolExecute(review, "worker", name, execute),
       );
     }
-    const roleLine = `You are ${child.label} — ${child.role}.`;
+    const roleLine = prompt("worker-rules", "role-line", { label: child.label, role: child.role });
     const kindMeta = unpackWorkerJobDescription(child.jobDescription);
     // Shell: short installs. Browser/computer: long UI loops need headroom to write Findings.
     // The parent may override via spawn_worker maxSteps (clamped) for multi-stage builds.
     const defaultMaxSteps =
       kindMeta.kind === "shell"
-        ? 5
+        ? WORKER_STEPS_SHELL
         : kindMeta.kind === "browser" || kindMeta.kind === "computer"
           ? WORKER_STEPS_LONG
           : WORKER_STEPS;
-    const maxSteps = Math.min(Math.max(Math.round(input.maxSteps ?? defaultMaxSteps), 3), 30);
-    const standing = workerPreambleFor(kindMeta.kind, kindMeta.instructions, maxSteps);
+    const maxSteps = Math.min(Math.max(Math.round(input.maxSteps ?? defaultMaxSteps), 3), 40);
+    const home = profile ? accountHome(input.accountId, profile) : "";
+    const standing = [
+      workerPreambleFor(kindMeta.kind, kindMeta.instructions, maxSteps),
+      home ? prompt("worker-rules", "workspace", { home }) : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
     // Worker runs were a black box: dispatcher steps land in the trace log but
     // worker steps never did. Emit a worker session so failures and loops are
     // debuggable the same way (and a future transcript view can read them).
@@ -923,7 +940,30 @@ export async function runWorker(
       modelId: child.modelId,
       delegationId: input.delegationId,
     });
-    const workerInstructions = `${standing}\n\n${roleLine}\n\nTask: ${input.task}`;
+    // Named skills ride in the prompt: the parent no longer reads them first,
+    // and the worker does not spend a step (and a full resend) fetching them.
+    const preloaded: string[] = [];
+    let preloadBudget = PRELOADED_SKILLS_TOTAL_CHARS;
+    for (const name of (input.skills ?? []).slice(0, 5)) {
+      if (preloadBudget < 1_000) break;
+      try {
+        const body = await readSkillForAgent(
+          { skillsRoot: input.skillsRoot, accountId: input.accountId, linuxProfile: profile },
+          name,
+        );
+        const clipped = body.slice(0, Math.min(PRELOADED_SKILL_CHARS, preloadBudget));
+        preloadBudget -= clipped.length;
+        preloaded.push(prompt("worker-rules", "preloaded-skill", { name, body: clipped }));
+      } catch {
+        // Unknown skill name: the worker can still look it up with read_skill.
+      }
+    }
+    // The task is sent once, as the user message; the system text is standing method only.
+    const workerInstructions = [standing, roleLine, ...preloaded].join("\n\n");
+    const taskMessage = prompt("worker-rules", "task-message", {
+      task: input.task,
+      context: input.context?.trim() ? `\n${input.context.trim()}` : "",
+    }).trim();
     await db
       .update(delegations)
       .set({ progress: "Working.", heartbeatAt: new Date() })
@@ -935,7 +975,7 @@ export async function runWorker(
       promptCacheKey: `${input.accountId}:${input.childId}`,
       toolNames: Object.keys(tools).sort(),
       instructions: [{ role: "system" as const, content: workerInstructions }],
-      modelMessages: [{ role: "user", content: input.task }],
+      modelMessages: [{ role: "user", content: taskMessage }],
     });
     let workerSteps = 0;
     let shouldEarlyStop = false;
@@ -945,12 +985,21 @@ export async function runWorker(
       model: getModel(child.provider, child.modelId, credential.apiKey, credential.baseUrl),
       abortSignal: controller.signal,
       instructions: [{ role: "system" as const, content: workerInstructions }],
-      messages: [{ role: "user", content: input.task }],
+      messages: [{ role: "user", content: taskMessage }],
       tools,
       stopWhen: [
         isStepCount(maxSteps),
         () => shouldEarlyStop,
       ],
+      // The last step is for the report. Asking nicely in the prompt was not
+      // enough: workers spent every step on tools and returned nothing.
+      prepareStep: ({ steps, messages }) =>
+        steps.length >= maxSteps - 1
+          ? {
+              activeTools: [] as never,
+              messages: [...messages, { role: "user" as const, content: prompt("worker-rules", "last-step") }],
+            }
+          : undefined,
       onStepEnd: async (step) => {
         workerSteps += 1;
         // Loop detection: if identical tool call repeats consecutively
@@ -1061,9 +1110,9 @@ export async function runWorker(
         const retry = await generateText({
           model: getModel(child.provider, child.modelId, credential.apiKey, credential.baseUrl),
           abortSignal: controller.signal,
-          instructions: [{ role: "system" as const, content: workerReportRetryInstructions }],
+          instructions: [{ role: "system" as const, content: workerReportRetryInstructions() }],
           messages: [
-            { role: "user" as const, content: `Task: ${input.task}\n\nTool work finished with these last outputs:\n${digest}\n\nWrite the report now.` },
+            { role: "user" as const, content: prompt("worker-rules", "report-retry-user", { task: input.task, digest }) },
           ],
           tools: {},
           stopWhen: [isStepCount(1)],
@@ -1073,7 +1122,8 @@ export async function runWorker(
         recovered = "";
       }
       if (recovered) {
-        await finish("done", recovered.slice(0, WORKER_RESULT_MAX), usage);
+        // The work may be half done; saying "done" made the parent announce success.
+        await finish("done", `${prompt("worker-rules", "out-of-steps", { maxSteps })}\n\n${recovered}`.slice(0, WORKER_RESULT_MAX), usage);
         return;
       }
       await finish(

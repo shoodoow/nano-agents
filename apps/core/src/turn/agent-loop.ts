@@ -9,7 +9,18 @@ import type { AgentMode, GenerateResult, TurnInput } from "./types.js";
 import { ensureTracePlugins } from "./trace/bootstrap.js";
 import { createTraceSession } from "./trace/plugins.js";
 import { runModelHarness, type HarnessUsage } from "./trace/harness.js";
-import { shouldRetryStall, STALL_NUDGE } from "./narration-stall.js";
+import { shouldRetryStall, stallNudge } from "./narration-stall.js";
+import {
+  CLOSING_TOOLS,
+  FOLLOW_THROUGH_TOOLS,
+  finalTextIsReply,
+  promisesUnstartedWork,
+  replyOnlyRestriction,
+  shouldEndTurn,
+} from "./loop-control.js";
+import { prompt } from "../prompt/prompts.js";
+import { activeDispatcherTools } from "./tools/tool-sets.js";
+import { MAX_MODEL_STEPS_DISPATCHER } from "./constants.js";
 import { randomUUID } from "node:crypto";
 import { buildFullToolSet } from "./tools/registry.js";
 import type { ToolContext } from "./tools/context.js";
@@ -29,6 +40,10 @@ export async function runAgentLoop(
     viaAgentId?: string | null;
     delegationDepth?: number;
     mode?: AgentMode;
+    /** Optional tool sets that start on for this turn. */
+    toolSets?: string[];
+    /** Hidden wake (worker result, routine): no ack owed, silence allowed. */
+    hiddenTurn?: boolean;
     generate?: (input: TurnInput) => Promise<GenerateResult>;
   },
 ): Promise<GenerateResult> {
@@ -61,6 +76,8 @@ export async function runAgentLoop(
     traceSession,
     linuxProfile: input.linuxProfile,
     voiceAgentId: input.agentId,
+    hiddenTurn: input.hiddenTurn ?? false,
+    enabledToolSets: new Set(input.toolSets ?? []),
   };
   const tools = await buildFullToolSet(mode, toolCtx);
   const harnessInput = {
@@ -69,27 +86,88 @@ export async function runAgentLoop(
     mode,
     tools,
     traceSession,
-    shouldStop: () => Boolean(toolCtx.endTurn),
+    shouldStop: (stepToolNames: string[][]) =>
+      Boolean(toolCtx.endTurn) ||
+      (mode === "dispatcher" &&
+        shouldEndTurn({
+          stepToolNames,
+          handedOff: Boolean(toolCtx.handedOff),
+          sentMessage: input.emittedMessages.length > 0,
+          hiddenTurn: Boolean(toolCtx.hiddenTurn),
+        })),
+    activeTools: () => activeDispatcherTools(Object.keys(tools), toolCtx.enabledToolSets ?? new Set()),
+    restrictStep:
+      mode === "dispatcher"
+        ? (finishedSteps: number, maxSteps: number) =>
+            replyOnlyRestriction({
+              finishedSteps,
+              maxSteps,
+              handedOff: Boolean(toolCtx.handedOff),
+              sentMessage: input.emittedMessages.length > 0,
+              hiddenTurn: Boolean(toolCtx.hiddenTurn),
+            })
+        : undefined,
   };
-  let { text, cacheReadTokens, usage } = await runModelHarness(harnessInput);
+  const first = await runModelHarness(harnessInput);
+  let { text, cacheReadTokens, usage } = first;
+  let stepToolNames = first.stepToolNames;
+  let responseMessages: unknown[] = [...first.responseMessages];
   if (
     mode === "dispatcher" &&
     shouldRetryStall({
       attempt: 0,
       text,
       sentMessage: input.emittedMessages.length > 0,
-      ended: Boolean(toolCtx.endTurn),
+      ended: Boolean(toolCtx.endTurn) || (Boolean(toolCtx.handedOff) && Boolean(toolCtx.hiddenTurn)),
     })
   ) {
+    // Continue the same transcript: tool work already done stays visible, so
+    // the retry costs one short reply instead of redoing the whole turn.
     const retry = await runModelHarness({
       ...harnessInput,
-      messages: [...input.messages, { role: "user", content: STALL_NUDGE }],
+      maxSteps: Math.min(2, MAX_MODEL_STEPS_DISPATCHER),
+      // The nudge says to stop working; without this the retry went back to
+      // reading files and searching, then blamed its tools.
+      restrictStep: () => ({ activeTools: [...CLOSING_TOOLS], note: "" }),
+      messages: [...input.messages, ...first.responseMessages, { role: "user", content: stallNudge() }] as never,
     });
     text = retry.text;
+    stepToolNames = [...stepToolNames, ...retry.stepToolNames];
     cacheReadTokens = retry.cacheReadTokens;
     usage = addUsage(usage, retry.usage);
+    responseMessages = [...responseMessages, { role: "user", content: stallNudge() }, ...retry.responseMessages];
   }
-  return { text, cacheReadTokens, usage };
+  const handedOffInTurn = Boolean(toolCtx.handedOff);
+  const said = text.trim() || (input.emittedMessages.at(-1)?.body ?? "");
+  if (
+    mode === "dispatcher" &&
+    !toolCtx.endTurn &&
+    promisesUnstartedWork({ text: said, handedOff: Boolean(toolCtx.handedOff), hiddenTurn: Boolean(toolCtx.hiddenTurn) })
+  ) {
+    // The reply stands as written. This step only makes the promise true.
+    const follow = await runModelHarness({
+      ...harnessInput,
+      maxSteps: 1,
+      shouldStop: () => true,
+      restrictStep: () => ({ activeTools: [...FOLLOW_THROUGH_TOOLS], note: "" }),
+      messages: [
+        ...input.messages,
+        ...responseMessages,
+        { role: "user", content: prompt("dispatcher", "follow-through", { said: said.slice(0, 500) }) },
+      ] as never,
+    });
+    usage = addUsage(usage, follow.usage);
+    cacheReadTokens = follow.cacheReadTokens ?? cacheReadTokens;
+  }
+  return {
+    text,
+    cacheReadTokens,
+    usage,
+    // Handing off ends the turn; text after that is never the answer.
+    workLog: toolCtx.workEntries ?? [],
+    finalTextIsReply: !handedOffInTurn && finalTextIsReply(stepToolNames),
+    quiet: handedOffInTurn && Boolean(toolCtx.hiddenTurn),
+  };
 }
 
 function addUsage(left: HarnessUsage, right: HarnessUsage): HarnessUsage {

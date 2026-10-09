@@ -43,19 +43,29 @@ export async function readLocalSkill(accountId: string, profile: string, name: s
   const direct = `${agentLocalSkillsRoot(accountId, profile)}/${name}/SKILL.md`;
   try {
     const parsed = parseSkillFrontmatter(await readFile(accountId, profile, direct));
-    if (parsed.name === name) return parsed.body;
+    if (parsed.name === name) return withSkillDirectory(direct, parsed.body);
   } catch {
     // Fall through to a scan — folder name may differ from frontmatter name.
   }
   for (const path of await listLocalSkillPaths(accountId, profile)) {
     try {
       const parsed = parseSkillFrontmatter(await readFile(accountId, profile, path));
-      if (parsed.name === name) return parsed.body;
+      if (parsed.name === name) return withSkillDirectory(path, parsed.body);
     } catch {
       // Skip unreadable entries.
     }
   }
   return null;
+}
+
+/**
+ * Tells the reader where an installed skill lives on the computer.
+ * Why: skill bodies link to sibling files with relative paths; without the
+ * directory the model guesses an absolute path and the read fails.
+ */
+function withSkillDirectory(skillFile: string, body: string): string {
+  const directory = skillFile.replace(/\/[^/]+$/, "");
+  return `Skill directory: ${directory} (relative links in this skill resolve from here; sibling skills sit next to it)\n\n${body}`;
 }
 
 async function listLocalSkillPaths(accountId: string, profile: string): Promise<string[]> {

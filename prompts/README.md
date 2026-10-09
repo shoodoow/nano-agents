@@ -1,0 +1,24 @@
+# Prompts
+
+Every instruction a model reads lives in this folder. Edit a file and the next turn uses it; no restart is needed.
+
+| File | What it holds | Loaded by |
+|------|---------------|-----------|
+| `system.md` | The chat agent's standing prompt. The agent's identity block is appended after it. | `apps/core/src/prompt/build-instructions.ts` |
+| `dispatcher.md` | Short texts the chat agent's loop injects: the turn rule, the reply-now and ack notes, the stall nudge, the work-log note, the delegated-task line. | `apps/core/src/turn/` , `memory/context.ts` |
+| `tools.md` | The description of every tool, one section per tool. `name.worker` sections are the worker's variant. | `turn/tools/build-tools.ts` |
+| `tool-sets.md` | Guidance for the optional tool sets (`team`, `routines`, `admin`), shown when a set is on or when `enable_tools` turns it on. | `turn/tools/tool-sets.ts` |
+| `cues.md` | Hidden notes that wake the agent: worker results and failures, a routine firing, an approval decision, a reaction. | `turn/parent-wake.ts`, `rooms/subagents.ts`, `routines/routines.ts`, `turn/auto-review.ts`, `http/server.ts` |
+| `workers/<kind>.md` | The standing method for each kind of background worker. | `rooms/worker-kinds.ts` |
+| `worker-rules.md` | Rules added to every worker prompt (step budget, early exit, report size), the custom-worker wrapper, and the context lines attached to a brief. | `rooms/worker-kinds.ts`, `rooms/subagents.ts`, `turn/tools/executors.ts` |
+| `memory.md` | The background passes that build long-term memory: folding old chat into summaries and facts, month/year roll-ups, the pinned profile. | `apps/core/src/memory/` |
+
+## Format
+
+Apart from `system.md` and `workers/*.md` (one prompt per file), a file holds several prompts. Each starts at a level-1 heading, `# key`, and runs to the next one. Text before the first heading is a note for people and is never sent to a model. Inside a prompt use `##` or lower for headings.
+
+`{{name}}` is a placeholder the code fills in. The loader (`apps/core/src/prompt/prompts.ts`) throws if a key is missing or a placeholder has no value, so a typo fails loudly instead of sending a broken prompt.
+
+## What is not here
+
+Error messages returned by tools (for example "Path is outside the home and /shared") stay next to the code that produces them, because they describe what that code just did. Tool names and input schemas are in `packages/agent-tools/src/`.

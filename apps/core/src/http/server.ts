@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { prompt } from "../prompt/prompts.js";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { fromNodeHeaders, toNodeHandler } from "better-auth/node";
@@ -428,7 +429,7 @@ function mountRoutes(app: Express, ctx: AppContext): void {
     // Why: reactions never became chat text, so without a cue turn the model never sees them.
     if (created && target.agentId) {
       const snippet = target.body.replace(/\s+/g, " ").trim().slice(0, 240);
-      const cue = `[system] The user reacted ${parsed.emoji} to this message: "${snippet}"`;
+      const cue = prompt("cues", "reaction", { emoji: parsed.emoji, snippet });
       const onEvent = (event: StreamEvent) => publish(accountId, conversationId, event);
       try {
         const run = await acquireRun(ctx.db, accountId, conversationId, "turn", 0);
@@ -441,7 +442,11 @@ function mountRoutes(app: Express, ctx: AppContext): void {
           logger.error({ err: error, conversationId }, "reaction turn failed");
         });
       } catch (error: unknown) {
-        logger.error({ err: error, conversationId }, "reaction turn acquire failed");
+        // A reaction while the agent is mid-turn is saved and shown; it just
+        // does not start a second turn. The agent sees it in history next time.
+        if (!(error instanceof Error && /busy/.test(error.message))) {
+          logger.error({ err: error, conversationId }, "reaction turn acquire failed");
+        }
       }
     }
     res.status(201).json(reaction);

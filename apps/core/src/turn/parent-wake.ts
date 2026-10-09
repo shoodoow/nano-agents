@@ -9,6 +9,7 @@ import { publish } from "../rooms/stream.js";
 import { claimDelivery, failuresSinceLastUser, workerFollowupCue } from "../rooms/subagents.js";
 import type { GenerateResult, TurnInput } from "./types.js";
 import { and, eq } from "drizzle-orm";
+import { prompt } from "../prompt/prompts.js";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -74,19 +75,14 @@ function workerCompletionCue(
   settled: Array<{ task: string; result: string; status: "done" | "failed" }>,
 ): string {
   const reports = settled
-    .map(
-      (item, index) =>
-        `Result ${index + 1} (${item.status}) for "${item.task.slice(0, 200)}":\n${cleanReport(item.result).slice(0, 2_000)}`,
+    .map((item, index) =>
+      prompt("cues", "worker-result-item", {
+        index: index + 1,
+        status: item.status,
+        task: item.task.slice(0, 200),
+        report: cleanReport(item.result).slice(0, 2_000),
+      }),
     )
     .join("\n\n");
-  return (
-    `[worker results — private to manager]\n${reports}\n\n` +
-    "Review these reports and call send_message with a short human update — do not end silent. " +
-    "The worker has no voice and must not be quoted raw. " +
-    "If evidence is thin or the worker wrote no report, say what ran and what is still missing (or spawn one narrower worker). " +
-    "Do not tell the person a file or install finished unless the report proves the path exists. " +
-    "When you relay a number, quote the single source the report actually cited — do not blend two different figures. " +
-    "If a report names a /shared artifact the person asked for, attach it as a file block. " +
-    "Never expose Findings/What I did/Blockers labels, [msg:…] ids, worker ids, tool logs, or implementation details."
-  );
+  return prompt("cues", "worker-results", { reports });
 }

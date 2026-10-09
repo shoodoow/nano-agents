@@ -142,3 +142,14 @@ describe("materializeBlocks", () => {
     expect(file.savedPath).toBe("/shared/scan.csv");
   });
 });
+
+describe("fileBlocksFromText", () => {
+  it("turns copied file placeholders into attachments", async () => {
+    const { fileBlocksFromText, mimeForName } = await import("./uploads.js");
+    const parsed = fileBlocksFromText("Here's your video:\n\n[file: intro.mp4 (saved at /home/u1/work/intro/out.mp4)]");
+    expect(parsed.text).toBe("Here's your video:");
+    expect(parsed.files).toEqual([{ url: "/home/u1/work/intro/out.mp4", name: "intro.mp4" }]);
+    expect(mimeForName("intro.mp4")).toBe("video/mp4");
+    expect(fileBlocksFromText("No files here.").files).toEqual([]);
+  });
+});

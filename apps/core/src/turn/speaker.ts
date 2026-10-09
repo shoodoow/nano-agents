@@ -2,19 +2,23 @@
  * One agent speaks in a turn (context load → model loop → mention chain).
  * DB: reads messages/summary; writes messages via tools or stub path.
  */
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
-import { accounts, agents, delegations, jobs, messages, routines, summaryItems } from "../db/schema.js";
+import { accounts, agents, delegations, jobs, messages, reactions, routines, summaryItems } from "../db/schema.js";
 import { buildContext, type PersonContext } from "../memory/context.js";
-import { isNarrationStall, STALL_MESSAGE } from "./narration-stall.js";
-import { memoriesFor } from "../memory/memory.js";
-import { recallRelevant } from "../memory/recall.js";
-import { createProfile } from "../linux/linux.js";
+import { stallMessage } from "./narration-stall.js";
+import { factsAboutMentioned, memoriesFor, profileFor } from "../memory/memory.js";
+import { recallHits } from "../memory/recall.js";
+import { hitLine } from "../memory/search.js";
+import { accountHome, createProfile } from "../linux/linux.js";
+import { fileBlocksFromText, inlineSharedOutputBlocks } from "../rooms/uploads.js";
 import { RECENT_WINDOW, SUMMARY_WINDOW } from "./constants.js";
 import { propose } from "../skills/proposals.js";
 import { skillCatalogForAgent } from "../skills/agent-skills.js";
-import type { TurnEvent } from "../rooms/send-message.js";
+import { blocksToText, type TurnEvent } from "../rooms/send-message.js";
 import { runAgentLoop } from "./agent-loop.js";
+import { initialToolSets } from "./tools/tool-sets.js";
+import { recentWorkLogs, saveWorkLog, weaveWorkLogs } from "./work-log.js";
 import { mentionedAgents } from "./mentions.js";
 import { toModelMessages, type ReplyParent } from "./prompt-media.js";
 import type { GenerateResult, TurnInput } from "./types.js";
@@ -41,6 +45,8 @@ export async function speakOnce(
     queue: (string | undefined)[];
     spoken: Set<string>;
     cue?: string;
+    /** "routine" when a schedule woke the agent; turns the routines tool set on. */
+    runKind?: "turn" | "routine";
     /**
      * Per-run usage accumulator (mutated). Survives years-long threads:
      * each speaker adds its harness usage; orchestrator persists the sum.
@@ -75,24 +81,58 @@ export async function speakOnce(
       .orderBy(desc(messages.createdAt))
       .limit(RECENT_WINDOW)
   ).reverse();
-  const summary = (
+  // Folded history: the newest slice lines plus the month/year digests that
+  // carry the long arc. Everything else is reached by recall or search.
+  const sliceSummary = (
     await db
       .select()
       .from(summaryItems)
-      .where(and(eq(summaryItems.conversationId, conversationId), eq(summaryItems.accountId, accountId)))
+      .where(
+        and(
+          eq(summaryItems.conversationId, conversationId),
+          eq(summaryItems.accountId, accountId),
+          eq(summaryItems.level, 0),
+        ),
+      )
       .orderBy(desc(summaryItems.createdAt))
       .limit(SUMMARY_WINDOW)
   ).reverse();
-  const facts = await memoriesFor(db, accountId, agentId);
-  // Pull back the slice of older context most relevant to the latest message.
-  // No-ops (returns []) unless an embedding key is configured.
+  const digests = (
+    await db
+      .select()
+      .from(summaryItems)
+      .where(
+        and(
+          eq(summaryItems.conversationId, conversationId),
+          eq(summaryItems.accountId, accountId),
+          gt(summaryItems.level, 0),
+        ),
+      )
+      .orderBy(desc(summaryItems.level), desc(summaryItems.periodStart))
+      .limit(6)
+  ).reverse();
+  const summary = [...digests, ...sliceSummary];
+  // The query is the latest exchange, not just the last message: "yes, do it"
+  // carries no signal on its own.
   const lastUserMessage = [...recent].reverse().find((message) => !message.agentId)?.body ?? cue ?? "";
-  const recall = await recallRelevant(db, {
-    accountId,
-    agentId,
-    conversationId,
-    query: lastUserMessage,
-  }).catch(() => [] as string[]);
+  const recallQuery = [
+    ...recent.slice(-3).map((message) => message.body.slice(0, 600)),
+    ...(cue ? [cue.slice(0, 600)] : []),
+  ].join("\n");
+  const [standing, mentioned, profile] = await Promise.all([
+    memoriesFor(db, accountId, agentId),
+    factsAboutMentioned(db, accountId, agentId, `${lastUserMessage}\n${recallQuery}`).catch(() => []),
+    profileFor(db, accountId).catch(() => null),
+  ]);
+  // Facts about whoever was just named come first; then the newest standing facts.
+  const factIds = new Set<string>();
+  const facts = [...mentioned, ...standing].filter((fact) => (factIds.has(fact.id) ? false : (factIds.add(fact.id), true)));
+  const factBodies = new Set(facts.map((fact) => fact.body));
+  const recall = (
+    await recallHits(db, { accountId, agentId, conversationId, query: recallQuery || lastUserMessage }).catch(() => [])
+  )
+    .filter((hit) => !factBodies.has(hit.body) && !facts.some((fact) => hit.body.endsWith(fact.body)))
+    .map((hit) => hitLine(hit));
   const catalog = (
     await skillCatalogForAgent({
       skillsRoot,
@@ -100,7 +140,7 @@ export async function speakOnce(
       linuxProfile: agent.linuxProfile,
     })
   )
-    .map((skill) => skill.name)
+    .map((skill) => catalogLine(skill))
     .join("\n");
   // Query active background workers running for this parent agent in this room.
   // This gives the dispatcher full visibility over background tasks so it:
@@ -177,6 +217,17 @@ export async function speakOnce(
     })
     .slice(0, 3);
 
+  const person = await loadPerson(db, accountId, agentId);
+  const [routineCount] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(routines)
+    .where(and(eq(routines.accountId, accountId), eq(routines.agentId, agentId)));
+  const toolSets = initialToolSets({
+    roomKind: room.kind,
+    hasTeam: person.teammates.length > 0 || (person.groups?.length ?? 0) > 0,
+    hasRoutines: (routineCount?.count ?? 0) > 0,
+    routineWake: input.runKind === "routine",
+  });
   const context = buildContext({
     accountId,
     agentId: agent.id,
@@ -187,9 +238,10 @@ export async function speakOnce(
       personality: agent.personality,
       job: agent.jobDescription,
     },
-    summary: summary.map((item) => ({ key: item.key, body: item.body, messageId: item.messageId })),
+    summary: summary.map((item) => ({ key: item.key, body: item.body, messageId: item.messageId, level: item.level })),
     messages: recent.map((message) => ({ body: tailSlice(message.body) })),
-    memories: facts.map((fact) => ({ body: fact.body })),
+    memories: facts.map((fact) => ({ body: fact.body, subject: fact.subject })),
+    profile,
     recall,
     catalog,
     room: {
@@ -198,13 +250,43 @@ export async function speakOnce(
       members: memberRows.map((member) => member.name),
       selfName: agent.name,
     },
-    person: await loadPerson(db, accountId, agentId),
+    person,
+    toolSets,
     activeWorkers,
     workHistory,
   });
   const emittedMessages: (typeof messages.$inferSelect)[] = [];
   const replyParents = await loadReplyParents(db, accountId, conversationId, recent);
-  const modelMessages = toModelMessages(recent, replyParents);
+  // Earlier turns' tool work rides along as private notes, so this turn
+  // continues from what was already done instead of rediscovering it.
+  const workLogs = recent[0]
+    ? await recentWorkLogs(db, { accountId, conversationId, agentId, since: recent[0].createdAt }).catch(() => [])
+    : [];
+  const reactionRows =
+    recent.length > 0
+      ? await db
+          .select({ messageId: reactions.messageId, emoji: reactions.emoji })
+          .from(reactions)
+          .where(
+            and(
+              eq(reactions.accountId, accountId),
+              eq(reactions.userKey, "owner"),
+              inArray(
+                reactions.messageId,
+                recent.map((row) => row.id),
+              ),
+            ),
+          )
+      : [];
+  const personReactions = new Map<string, string[]>();
+  for (const row of reactionRows) {
+    personReactions.set(row.messageId, [...(personReactions.get(row.messageId) ?? []), row.emoji]);
+  }
+  const modelMessages = weaveWorkLogs(
+    recent,
+    toModelMessages(recent, replyParents, person.timezone, personReactions),
+    workLogs,
+  );
   if (cue) modelMessages.push({ role: "user", content: cue });
   const useStub = typeof generate === "function";
   const traceSession = createTraceSession({
@@ -249,11 +331,16 @@ export async function speakOnce(
           emittedMessages,
           emit,
           messages: modelMessages,
+          hiddenTurn: Boolean(cue),
+          toolSets,
           generate,
         });
   let result: ReturnType<typeof unwrapGenerateResult>;
   try {
     result = unwrapGenerateResult(await generateWithStore());
+    await saveWorkLog(db, { accountId, conversationId, agentId, runId, cue, entries: result.workLog ?? [] }).catch(
+      () => {},
+    );
     if (usage && result.usage) {
       usage.input += result.usage.inputTokens ?? 0;
       usage.output += result.usage.outputTokens ?? 0;
@@ -273,7 +360,13 @@ export async function speakOnce(
       cacheReadTokens: null,
     };
   }
-  if (emittedMessages.length > 0) {
+  // Bubbles already sent stand on their own unless the model went on to do
+  // more work and answered in plain text afterwards; then that text is posted too.
+  const answerAfterBubbles = emittedMessages.length > 0 && Boolean(result.finalTextIsReply) && result.text.trim().length > 0;
+  if (emittedMessages.length > 0 && answerAfterBubbles) {
+    for (const row of emittedMessages) saved.push(row);
+  }
+  if (emittedMessages.length > 0 && !answerAfterBubbles) {
     for (const row of emittedMessages) {
       saved.push(row);
     }
@@ -294,10 +387,28 @@ export async function speakOnce(
     }
     return;
   }
-  const text = result.text.trim();
-  // Empty or narration after tools means the model never called send_message.
-  // Prefer a clean stall line over the old "tools finished…" apology.
-  const bodyText = !text || isNarrationStall(text) ? STALL_MESSAGE : text;
+  // A hidden wake that started background work has nothing to tell the
+  // person yet; text beside that handoff is the agent thinking out loud.
+  if (result.quiet) return;
+  const raw = result.text.trim();
+  // Models copy the "[file: name (saved at /path)]" form history shows them.
+  // Deliver those as real attachments instead of a line of text.
+  const parsedReply = fileBlocksFromText(raw);
+  let attachments: Awaited<ReturnType<typeof inlineSharedOutputBlocks>> = [];
+  if (parsedReply.files.length > 0) {
+    attachments = await inlineSharedOutputBlocks(
+      accountId,
+      parsedReply.files.map((file) => ({ kind: "file" as const, url: file.url, name: file.name })) as never,
+      agent.linuxProfile ? accountHome(accountId, agent.linuxProfile) : undefined,
+    ).catch(() => []);
+  }
+  const text = attachments.length > 0 ? parsedReply.text : raw;
+  // Plain text is a reply. Only a truly empty ending gets the stall line.
+  const bodyText = text || (attachments.length > 0 ? "" : stallMessage());
+  const payload = [
+    ...(bodyText ? [{ kind: "text" as const, markdown: bodyText }] : []),
+    ...attachments.filter((block) => block.kind === "file" && block.url.startsWith("data:")),
+  ];
   const [wrapped] = await db
     .insert(messages)
     .values({
@@ -305,9 +416,9 @@ export async function speakOnce(
       conversationId,
       agentId,
       runId,
-      body: bodyText,
+      body: blocksToText(payload as never),
       kind: "rich",
-      payload: [{ kind: "text", markdown: bodyText }],
+      payload: payload as never,
       cacheReadTokens: result.cacheReadTokens,
       createdAt: nextTime(),
     })
@@ -325,6 +436,24 @@ export async function speakOnce(
   for (const next of mentionedAgents(bodyText, memberRows, true)) {
     if (!spoken.has(next)) queue.push(next);
   }
+}
+
+/** Longest skill description shown in the prompt's skill list. */
+const CATALOG_DESCRIPTION_CHARS = 110;
+
+/**
+ * One skill as a prompt line.
+ * Why: a bare name told the model nothing, so it loaded skills just to learn
+ * what they were for. A short description lets it pick without reading.
+ */
+function catalogLine(skill: { name: string; description?: string }): string {
+  const description = (skill.description ?? "").replace(/\s+/g, " ").trim();
+  if (!description) return `- ${skill.name}`;
+  const short =
+    description.length > CATALOG_DESCRIPTION_CHARS
+      ? `${description.slice(0, CATALOG_DESCRIPTION_CHARS).replace(/\s+\S*$/, "")}…`
+      : description;
+  return `- ${skill.name}: ${short}`;
 }
 
 /**

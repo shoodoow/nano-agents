@@ -232,6 +232,20 @@
       "when": 1790719000000,
       "tag": "0032_message-relay",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1790720000000,
+      "tag": "0033_work-log",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1790721000000,
+      "tag": "0034_long-memory",
+      "breakpoints": true
     }
   ]
 }

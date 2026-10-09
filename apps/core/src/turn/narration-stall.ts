@@ -1,33 +1,18 @@
-import { NEXT_STEP_NARRATION } from "./worker-report.js";
+import { prompt } from "../prompt/prompts.js";
 
-/** Dispatcher bubbles longer than this are a planning loop, not a reply. */
-export const STALL_CHAR_CAP = 1_200;
+/** Shown after one retry still produced no reply. Text: prompts/dispatcher.md. */
+export const stallMessage = (): string => prompt("dispatcher", "stall-message");
 
-/** Shown after one retry still produced no send_message. */
-export const STALL_MESSAGE = "I didn’t finish that. Tell me to try again.";
-
-/** One user nudge. The loop text is not sent back with it. */
-export const STALL_NUDGE =
-  "Call send_message now with a short update for the person. Do not describe the plan. Do not end with empty text.";
+/** One user nudge, appended to the same transcript so finished tool work is kept. */
+export const stallNudge = (): string => prompt("dispatcher", "stall-nudge");
 
 /**
- * True when assistant text is a plan instead of a reply.
- * Why: a cheap model writes "I'll list everything" and never calls a tool.
- * Input: the model's plain text. Output: whether that text is a stall.
- */
-export function isNarrationStall(text: string): boolean {
-  const trimmed = text.trim();
-  if (!trimmed) return false;
-  if (trimmed.length > STALL_CHAR_CAP) return true;
-  return NEXT_STEP_NARRATION.test(trimmed);
-}
-
-/**
- * Decides whether the dispatcher may try the tool call once more.
- * Why: empty replies (reasoning burned the budget) and narration stalls both
- * leave the person silent — one nudge recovers most of them.
- * Input: how many retries already ran, the text, whether send_message landed, and whether the turn ended.
- * Output: true only for the first stall.
+ * Decides whether the dispatcher gets one more chance to reply.
+ * Why: only a truly empty ending (reasoning burned the budget, or tools ran
+ * and no text followed) leaves the person silent. Plain text is a valid
+ * reply, so wording is never judged here.
+ * Input: retries so far, the text, whether a bubble landed, whether the turn ended.
+ * Output: true only for the first empty ending.
  */
 export function shouldRetryStall(input: {
   attempt: number;
@@ -36,6 +21,5 @@ export function shouldRetryStall(input: {
   ended: boolean;
 }): boolean {
   if (input.ended || input.sentMessage || input.attempt >= 1) return false;
-  if (!input.text.trim()) return true;
-  return isNarrationStall(input.text);
+  return !input.text.trim();
 }

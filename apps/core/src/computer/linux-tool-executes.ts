@@ -1,6 +1,17 @@
 import type { getDb } from "../db/client.js";
 import { toolKeyFor } from "../keys/tools.js";
-import { bash, clickAt, moveMouse, pressKeys, readFile, screenshotImage, typeText, writeFile } from "./computer.js";
+import {
+  bash,
+  clickAt,
+  isImagePath,
+  moveMouse,
+  pressKeys,
+  readFile,
+  readImage,
+  screenshotImage,
+  typeText,
+  writeFile,
+} from "./computer.js";
 import { globFiles, grepFiles } from "./find.js";
 import { webSearch } from "./search.js";
 import { webFetch } from "./web.js";
@@ -26,8 +37,16 @@ export function linuxToolExecutes(
   db: Database,
   accountId: string,
   profile: string,
-  opts?: { fetchChars?: number },
+  opts?: {
+    fetchChars?: number;
+    viewImages?: boolean;
+    /** Chat agent: skill files are answered with a pointer to hand the skill on. */
+    skillFilesNote?: (path: string) => string;
+  },
 ): Record<string, LinuxToolExecute> {
+  /** Pictures this run has looked at. Each one is resent on every later step. */
+  let imagesViewed = 0;
+  const IMAGE_BUDGET = 8;
   /** Screenshots this worker has taken. Reset per run by construction. */
   let screenshots = 0;
   const SCREENSHOT_BUDGET = 4;
@@ -37,7 +56,18 @@ export function linuxToolExecutes(
   const seenQueries = new Map<string, number>();
   let consecutiveEmpty = 0;
   return {
-    read: async (input) => conciseOutput(await readFile(accountId, profile, String(input.path))),
+    read: async (input) => {
+      const path = String(input.path);
+      if (opts?.skillFilesNote && isSkillPath(path)) return opts.skillFilesNote(path);
+      if (opts?.viewImages && isImagePath(path)) {
+        imagesViewed += 1;
+        if (imagesViewed > IMAGE_BUDGET) {
+          return `Image budget spent (${IMAGE_BUDGET} this run). Decide from the pictures you have already seen.`;
+        }
+        return readImage(accountId, profile, path);
+      }
+      return conciseOutput(await readFile(accountId, profile, path));
+    },
     write: async (input) => {
       await writeFile(accountId, profile, String(input.path), String(input.body));
       return "Wrote the file.";
@@ -112,12 +142,20 @@ export function linuxToolExecutes(
         ...searched.results.map((row, index) => `${index + 1}. ${row.title}\n   ${row.url}\n   ${row.snippet}`),
       ].join("\n");
     },
-    glob: async (input) => globFiles(accountId, profile, String(input.pattern), typeof input.path === "string" ? input.path : undefined),
-    grep: async (input) =>
-      grepFiles(accountId, profile, String(input.pattern), {
+    glob: async (input) => {
+      const where = `${typeof input.path === "string" ? input.path : ""} ${String(input.pattern)}`;
+      if (opts?.skillFilesNote && isSkillPath(`${where.trim()}/`)) return opts.skillFilesNote(where.trim());
+      return globFiles(accountId, profile, String(input.pattern), typeof input.path === "string" ? input.path : undefined);
+    },
+    grep: async (input) => {
+      if (opts?.skillFilesNote && typeof input.path === "string" && isSkillPath(`${input.path}/`)) {
+        return opts.skillFilesNote(input.path);
+      }
+      return grepFiles(accountId, profile, String(input.pattern), {
         path: typeof input.path === "string" ? input.path : undefined,
         include: typeof input.include === "string" ? input.include : undefined,
-      }),
+      });
+    },
     browser_list_pages: () => runBrowserTool(accountId, profile, "browser_list_pages", {}),
     browser_navigate: (input) => runBrowserTool(accountId, profile, "browser_navigate", input),
     browser_snapshot: () => runBrowserTool(accountId, profile, "browser_snapshot", {}),
@@ -135,6 +173,11 @@ export function linuxToolExecutes(
  * focused prefix and an explicit narrowing instruction keeps context useful
  * without ending the task or imposing a total-token cutoff.
  */
+/** True for a path inside an installed skill folder. */
+export function isSkillPath(path: string): boolean {
+  return /\/(\.agents|\.claude)\/skills(\/|$|\s)/.test(path);
+}
+
 function conciseOutput(text: string, limit = WORKER_OUTPUT_CHARS): string {
   if (text.length <= limit) return text;
   return `${text.slice(0, limit)}\n\n[truncated to ${limit} chars — rerun with a narrower command, range, or filter]`;

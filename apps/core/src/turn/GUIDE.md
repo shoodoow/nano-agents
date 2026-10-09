@@ -82,7 +82,7 @@ Core passes `process.env.SKILLS_DIR` from [`server.ts`](../../http/server.ts) in
 
 ### Adding a built-in tool (fully working)
 
-1. [`packages/agent-tools/src/definitions.ts`](../../../../packages/agent-tools/src/definitions.ts) — one row (`name`, `description`, `surfaces`, `inputSchema` Zod)
+1. [`packages/agent-tools/src/definitions.ts`](../../../../packages/agent-tools/src/definitions.ts) — one row (`name`, `surfaces`, `inputSchema` Zod); the description goes in `prompts/tools.md` as a `# name` section
 2. [`tools/executors.ts`](./tools/executors.ts) — dispatcher handler in `dispatcherExecutors` (or Linux execute in [`linux-tool-executes.ts`](../computer/linux-tool-executes.ts) for `surfaces: ["worker"]`, `requiresLinux: true`)
 
 ---
@@ -114,7 +114,7 @@ Event types: `run.start`, `model.step.finish`, `tool.call.start`, `tool.call.fin
 
 | Goal | Mechanism |
 |------|-----------|
-| Talk to user | `send_message` only (see `prompts/system.md`) |
+| Talk to user | Final plain text is the reply; `send_message` for an early ack or rich blocks (see `prompts/system.md`) |
 | Long work | `spawn_worker` with detailed `task` brief |
 | Procedure | Skill folder + `read_skill` |
 | Extra tool **execution** | `buildFullToolSet` (built-in catalog + MCP + in-process plugins) |

@@ -163,11 +163,11 @@ describe("runTurn", () => {
     const stored = await db.select().from(messages).where(eq(messages.conversationId, room!.id));
     expect(stored.filter((message) => message.agentId === null)).toHaveLength(1);
     expect(stored.find((message) => message.agentId === owner.id)?.body).toBe(
-      "The tools finished, but the model sent no message.",
+      "I didn’t finish that. Tell me to try again.",
     );
   });
 
-  it("saves a short line when the model only narrates a plan", async () => {
+  it("posts plain text as the reply, whatever its wording", async () => {
     const account = await createAccount(db, { name: "Stall" });
     const owner = await createAgent(db, account.id, agent("Stall"));
     const [room] = await db
@@ -177,12 +177,12 @@ describe("runTurn", () => {
     await db.insert(members).values({ conversationId: room!.id, accountId: account.id, agentId: owner.id });
 
     await runTurn(db, account.id, room!.id, "Ok do it", async () => ({
-      text: "Let me list the groups, routines, and team in parallel.",
+      text: "I'll keep an eye on it and let you know.",
     }));
 
     const stored = await db.select().from(messages).where(eq(messages.conversationId, room!.id));
     expect(stored.find((message) => message.agentId === owner.id)?.body).toBe(
-      "I didn’t finish that. Tell me to try again.",
+      "I'll keep an eye on it and let you know.",
     );
   });
 

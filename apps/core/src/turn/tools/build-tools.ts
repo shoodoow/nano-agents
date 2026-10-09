@@ -8,6 +8,7 @@ import type { AgentMode } from "../types.js";
 import type { ToolContext } from "./context.js";
 import { dispatcherExecutors, executeDelegate, executeListSkills, executeRefreshSkills } from "./executors.js";
 import { wrapToolExecute } from "./wrap-tool-execute.js";
+import { optionalPrompt, prompt } from "../../prompt/prompts.js";
 
 /** OpenAI-compatible empty tool input (avoids Zod→JSON Schema propertyNames warnings). */
 const NO_PARAMETERS_TOOLS = new Set([
@@ -43,16 +44,20 @@ export type WorkerToolBuildContext = {
   review?: ToolContext;
 };
 
+/** Wording lives in prompts/tools.md: `# name`, with an optional `# name.worker` variant. */
 function descriptionFor(def: ToolDefinition, surface: "dispatcher" | "worker"): string {
-  if (surface === "worker" && def.descriptionWorker) return def.descriptionWorker;
-  return def.description;
+  if (surface === "worker") {
+    const variant = optionalPrompt("tools", `${def.name}.worker`);
+    if (variant) return variant;
+  }
+  return prompt("tools", def.name);
 }
 
 function workerExecute(
   def: ToolDefinition,
   workerCtx: WorkerToolBuildContext,
 ): (input: Record<string, unknown>) => Promise<unknown> {
-  const linux = workerCtx.profile ? linuxToolExecutes(workerCtx.db, workerCtx.accountId, workerCtx.profile) : {};
+  const linux = workerCtx.profile ? linuxToolExecutes(workerCtx.db, workerCtx.accountId, workerCtx.profile, { viewImages: true }) : {};
   if (def.name === "read_history") {
     return async (input) => {
       const rows =
@@ -111,7 +116,12 @@ function dispatcherExecute(name: string, ctx: ToolContext): (input: Record<strin
 export function buildDispatcherToolSet(mode: AgentMode, ctx: ToolContext): ToolSet {
   const set: Record<string, unknown> = {};
   const linux = ctx.linuxProfile
-    ? linuxToolExecutes(ctx.db, ctx.accountId, ctx.linuxProfile, { fetchChars: DISPATCHER_FETCH_CHARS })
+    ? linuxToolExecutes(ctx.db, ctx.accountId, ctx.linuxProfile, {
+        fetchChars: DISPATCHER_FETCH_CHARS,
+        // Skill files are the worker's manual. Reading them here burned tens
+        // of thousands of tokens per turn and none of it reached the worker.
+        skillFilesNote: (path) => prompt("dispatcher", "skill-files", { path }),
+      })
     : {};
   for (const def of toolsForSurface("dispatcher")) {
     if (def.name === "spawn_worker" && mode !== "dispatcher") continue;
@@ -154,9 +164,31 @@ export function buildWorkerToolSet(workerCtx: WorkerToolBuildContext): ToolSet {
       });
       continue;
     }
+    if (def.name === "read") {
+      set[def.name] = tool({
+        ...base,
+        toModelOutput: ({ output }) => readToModelOutput(output),
+      });
+      continue;
+    }
     set[def.name] = tool(base);
   }
   return set as ToolSet;
+}
+
+/** A picture read from disk reaches the model as pixels; everything else stays text. */
+function readToModelOutput(output: unknown) {
+  const image = output as { path?: string; jpegBase64?: string } | null;
+  if (!image || typeof image !== "object" || !image.jpegBase64) {
+    return { type: "text" as const, value: typeof output === "string" ? output : JSON.stringify(output) };
+  }
+  return {
+    type: "content" as const,
+    value: [
+      { type: "text" as const, text: `Image ${image.path}. Look at it and say what is actually in the picture.` },
+      { type: "file" as const, mediaType: "image/jpeg", data: { type: "data" as const, data: image.jpegBase64 } },
+    ],
+  };
 }
 
 /** Worker sees the pixels; the model transcript keeps path text, not raw base64 JSON. */

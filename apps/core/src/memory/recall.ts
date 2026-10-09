@@ -1,10 +1,11 @@
 /**
- * Semantic recall over durable memory (pgvector).
- * Why: a years-long thread can accumulate thousands of folded summary items and
- * facts — far more than fits in a prompt. Instead of dumping them all, embed
- * each once and pull back only the few most relevant to what's happening now.
- * Everything degrades gracefully: with no embedding-capable provider key, embeds
- * are skipped (columns stay null) and recall returns nothing, so chat still runs.
+ * Recall over durable memory: the few lines of a years-long history that
+ * matter right now.
+ * Why: a long thread accumulates thousands of folded summary items and facts,
+ * far more than fits in a prompt. Each turn retrieves a handful instead.
+ * Full-text search (search.ts) always runs, so recall works for every account;
+ * when an embedding key is configured, vector similarity (pgvector) votes
+ * alongside it. With no key the embedding columns simply stay null.
  * DB: reads/writes summary_items.embedding and memories.embedding.
  */
 import { createOpenAI } from "@ai-sdk/openai";
@@ -15,6 +16,7 @@ import { members, memories, summaryItems } from "../db/schema.js";
 import { keyFor } from "../keys/keys.js";
 import { isOpenAiCompatibleProvider } from "../model/get-model.js";
 import { RECALL_K } from "../turn/constants.js";
+import { hitLine, mergeRanked, searchFacts, searchSummaries, searchTerms, type MemoryHit } from "./search.js";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -25,19 +27,22 @@ const MAX_DISTANCE = 0.6;
 
 /**
  * Resolves an embedding model from the account's keys, or null when none can
- * embed. Requires a real OpenAI key (official API or an OpenAI-compatible base
- * that actually serves embeddings). This stays dormant for accounts that only
- * configured a chat-only provider (e.g. a local deepseek endpoint), so recall
- * never fires a failing embedding call every turn — it simply no-ops until an
- * embedding key is added.
+ * embed. The key is looked up under EMBEDDING_PROVIDER (default `openai`), so
+ * an account whose only key is an OpenAI-compatible `local` endpoint that
+ * serves embeddings can use it. EMBEDDING_MODEL must produce 1536-dimension
+ * vectors (the column size). With no usable key this stays dormant and recall
+ * falls back to full-text search, so chat never depends on it.
  */
 async function accountEmbedder(db: Db, accountId: string): Promise<EmbeddingModel | null> {
-  const credential = await keyFor(db, accountId, "openai").catch(() => null);
-  if (!credential || !isOpenAiCompatibleProvider("openai")) return null;
+  const provider = (process.env.EMBEDDING_PROVIDER ?? "openai").trim() || "openai";
+  if (!isOpenAiCompatibleProvider(provider)) return null;
+  const credential = await keyFor(db, accountId, provider).catch(() => null);
+  if (!credential) return null;
   const key = credential.apiKey.trim();
   if (!key) return null;
   const base = credential.baseUrl?.trim();
-  return createOpenAI({ apiKey: key, ...(base ? { baseURL: base } : {}) }).textEmbeddingModel(EMBED_MODEL);
+  const model = (process.env.EMBEDDING_MODEL ?? EMBED_MODEL).trim() || EMBED_MODEL;
+  return createOpenAI({ apiKey: key, ...(base ? { baseURL: base } : {}) }).textEmbeddingModel(model);
 }
 
 function toVectorLiteral(vector: number[]): string {
@@ -80,26 +85,25 @@ async function embedRows(
   }
 }
 
-/**
- * Pulls the durable memory most relevant to the current moment.
- * Input: db, ids, the query text (usually the latest user message), and k.
- * Output: distinct bodies (folded summaries from rooms this employee belongs
- * to + this agent's facts), nearest first, or [] when embeddings are unavailable.
- */
-export async function recallRelevant(
+/** Nearest facts and summary lines by embedding, or [] when no embedder is configured. */
+async function vectorHits(
   db: Db,
-  input: { accountId: string; agentId: string; conversationId: string; query: string; k?: number },
-): Promise<string[]> {
-  const query = input.query.trim();
-  if (!query) return [];
+  input: { accountId: string; agentId: string; query: string; limit: number },
+): Promise<MemoryHit[][]> {
   const model = await accountEmbedder(db, input.accountId);
   if (!model) return [];
-  const { embedding } = await embed({ model, value: query }).catch(() => ({ embedding: null as number[] | null }));
+  const { embedding } = await embed({ model, value: input.query }).catch(() => ({ embedding: null as number[] | null }));
   if (!embedding) return [];
   const literal = toVectorLiteral(embedding);
-  const k = input.k ?? RECALL_K;
   const summaryHits = await db
-    .select({ body: summaryItems.body, distance: sql<number>`${summaryItems.embedding} <=> ${literal}::vector` })
+    .select({
+      id: summaryItems.id,
+      key: summaryItems.key,
+      body: summaryItems.body,
+      messageId: summaryItems.messageId,
+      at: summaryItems.createdAt,
+      distance: sql<number>`${summaryItems.embedding} <=> ${literal}::vector`,
+    })
     .from(summaryItems)
     .innerJoin(
       members,
@@ -109,31 +113,82 @@ export async function recallRelevant(
         eq(members.agentId, input.agentId),
       ),
     )
-    .where(
-      and(
-        eq(summaryItems.accountId, input.accountId),
-        sql`${summaryItems.embedding} is not null`,
-      ),
-    )
+    .where(and(eq(summaryItems.accountId, input.accountId), sql`${summaryItems.embedding} is not null`))
     .orderBy(sql`${summaryItems.embedding} <=> ${literal}::vector`)
-    .limit(k);
+    .limit(input.limit);
   const factHits = await db
-    .select({ body: memories.body, distance: sql<number>`${memories.embedding} <=> ${literal}::vector` })
+    .select({
+      id: memories.id,
+      subject: memories.subject,
+      body: memories.body,
+      messageId: memories.messageId,
+      at: memories.validFrom,
+      distance: sql<number>`${memories.embedding} <=> ${literal}::vector`,
+    })
     .from(memories)
     .where(
       and(
         eq(memories.accountId, input.accountId),
+        isNull(memories.supersededBy),
+        sql`${memories.kind} <> 'profile'`,
         sql`(${memories.scope} = 'user' or (${memories.scope} = 'agent' and ${memories.agentId} = ${input.agentId}))`,
         sql`${memories.embedding} is not null`,
       ),
     )
     .orderBy(sql`${memories.embedding} <=> ${literal}::vector`)
-    .limit(k);
-  const seen = new Set<string>();
-  return [...factHits, ...summaryHits]
-    .filter((hit) => hit.distance <= MAX_DISTANCE)
-    .sort((left, right) => left.distance - right.distance)
-    .map((hit) => hit.body)
-    .filter((body) => (seen.has(body) ? false : (seen.add(body), true)))
-    .slice(0, k);
+    .limit(input.limit);
+  return [
+    factHits
+      .filter((hit) => hit.distance <= MAX_DISTANCE)
+      .map((hit) => ({
+        source: "fact" as const,
+        id: hit.id,
+        body: hit.subject ? `${hit.subject}: ${hit.body}` : hit.body,
+        messageId: hit.messageId,
+        at: hit.at,
+      })),
+    summaryHits
+      .filter((hit) => hit.distance <= MAX_DISTANCE)
+      .map((hit) => ({
+        source: "summary" as const,
+        id: hit.id,
+        body: `${hit.key}: ${hit.body}`,
+        messageId: hit.messageId,
+        at: hit.at,
+      })),
+  ];
+}
+
+/**
+ * Pulls the durable memory most relevant to the current moment.
+ * Why: years of history cannot ride in the prompt, so each turn retrieves a
+ * few lines instead. Full-text search always runs; embeddings join in when a
+ * key exists. Replaced facts are never returned.
+ * Input: db, ids, the query text (the latest exchange), and k.
+ * Output: up to k hits (current facts + folded summaries from rooms this
+ * agent belongs to), best first.
+ */
+export async function recallHits(
+  db: Db,
+  input: { accountId: string; agentId: string; conversationId: string; query: string; k?: number },
+): Promise<MemoryHit[]> {
+  const query = input.query.trim();
+  if (!query) return [];
+  const k = input.k ?? RECALL_K;
+  const terms = searchTerms(query);
+  const scope = { accountId: input.accountId, agentId: input.agentId };
+  const [facts, summaries, vectors] = await Promise.all([
+    searchFacts(db, { ...scope, terms, limit: k }).catch(() => []),
+    searchSummaries(db, { ...scope, terms, limit: k }).catch(() => []),
+    vectorHits(db, { ...scope, query: query.slice(0, 2_000), limit: k }).catch(() => [] as MemoryHit[][]),
+  ]);
+  return mergeRanked([...vectors, facts, summaries], k);
+}
+
+/** Same as recallHits, rendered as dated prompt lines. */
+export async function recallRelevant(
+  db: Db,
+  input: { accountId: string; agentId: string; conversationId: string; query: string; k?: number },
+): Promise<string[]> {
+  return (await recallHits(db, input)).map((hit) => hitLine(hit));
 }

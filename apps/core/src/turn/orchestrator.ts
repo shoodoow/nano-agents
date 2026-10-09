@@ -115,6 +115,7 @@ export async function runTurn(
         queue,
         spoken,
         cue: options?.cue,
+        runKind: options?.kind,
         usage,
       });
       await heartbeatRun(db, runId).catch(() => {});

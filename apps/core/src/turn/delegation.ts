@@ -10,6 +10,7 @@ import { createProfile } from "../linux/linux.js";
 import { mirrorGroupSpeechToOwnerDm, type TurnEvent } from "../rooms/send-message.js";
 import { DELEGATION_HISTORY_SLICE } from "./constants.js";
 import { runAgentLoop } from "./agent-loop.js";
+import { prompt } from "../prompt/prompts.js";
 import type { GenerateResult, TurnInput } from "./types.js";
 import { tailSlice, unwrapGenerateResult } from "./util.js";
 
@@ -151,7 +152,7 @@ export async function runDelegatedTurn(
     modelId: child.modelId,
     system: context.prefix,
     prefix: context.prefix,
-    tail: `${context.tail}\n\nDelegated task (do this, do not fan out mentions): ${input.task}`,
+    tail: `${context.tail}\n\n${prompt("dispatcher", "delegated-task", { task: input.task })}`,
     promptCacheKey: context.openai.promptCacheKey,
     accountId: input.accountId,
     linuxProfile: profile,
@@ -165,6 +166,7 @@ export async function runDelegatedTurn(
     delegationDepth: input.delegationDepth,
     messages: [{ role: "user", content: input.task }],
     mode: "dispatcher",
+    toolSets: ["team"],
   });
   for (const row of local) input.emittedMessages.push(row);
   return local;

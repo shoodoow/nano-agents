@@ -13,16 +13,16 @@ describe("worker kinds", () => {
       const text = workerPreambleFor(kind);
       expect(text.length).toBeGreaterThan(40);
       expect(text).toContain("Findings:");
-      expect(text).toContain("/shared/worker-results/");
-      expect(text).toContain("no voice in any room");
+      expect(text).toContain("Check the result before you report");
+      expect(text).toContain("never a chat message");
     }
   });
 
   test("preamble carries a step budget so workers stop in time to report", () => {
     const text = workerPreambleFor("executor");
-    expect(text).toContain("Step budget: 10 steps");
+    expect(text).toContain("Step budget: 16 steps");
     expect(workerPreambleFor("executor", undefined, 25)).toContain("Step budget: 25 steps");
-    expect(workerPreambleFor("browser")).toContain("Step budget: 10 steps");
+    expect(workerPreambleFor("browser")).toContain("Step budget: 16 steps");
   });
 
   test("custom requires instructions", () => {

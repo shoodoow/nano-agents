@@ -36,35 +36,95 @@ export function parseDataUri(url: string): { mime: string; base64: string } | nu
   return { mime: match[1]!, base64: match[2]! };
 }
 
+const MIME_BY_EXTENSION: Record<string, string> = {
+  mp4: "video/mp4",
+  mov: "video/quicktime",
+  webm: "video/webm",
+  mp3: "audio/mpeg",
+  wav: "audio/wav",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  pdf: "application/pdf",
+  csv: "text/csv",
+  txt: "text/plain",
+  md: "text/markdown",
+  html: "text/html",
+  json: "application/json",
+  zip: "application/zip",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+};
+
+/** Guesses a mime type from a file name so the phone can open the attachment. */
+export function mimeForName(name: string): string {
+  const extension = name.split(".").pop()?.toLowerCase() ?? "";
+  return MIME_BY_EXTENSION[extension] ?? "application/octet-stream";
+}
+
+/** True when a file block's url is a path on the account computer the agent may send. */
+function isComputerPath(url: string, home?: string): boolean {
+  return url.startsWith("/shared/") || (Boolean(home) && url.startsWith(`${home}/`));
+}
+
 /**
- * Converts agent-created /shared files into real attachment bytes.
- * Why: /shared is a path inside the account computer, not a URL the phone can
- * open. Store a data URI; large payloads are stripped to blobRef on list and
- * fetched lazily by the client.
+ * Converts files on the account computer into real attachment bytes.
+ * Why: a path inside the computer is not a URL the phone can open. The agent
+ * may send from /shared or from its own home (where its work lives). Store a
+ * data URI; large payloads are stripped to blobRef on list and fetched lazily.
+ * Input: account id, blocks, and the sending agent's home directory.
  */
-export async function inlineSharedOutputBlocks(accountId: string, blocks: MessageBlock[]): Promise<MessageBlock[]> {
+export async function inlineSharedOutputBlocks(
+  accountId: string,
+  blocks: MessageBlock[],
+  home?: string,
+): Promise<MessageBlock[]> {
   const out: MessageBlock[] = [];
   for (const block of blocks) {
-    if (block.kind !== "file" || !block.url.startsWith("/shared/")) {
+    if (block.kind !== "file" || !isComputerPath(block.url, home)) {
       out.push(block);
       continue;
     }
     if (block.url.includes("\0") || block.url.split("/").includes("..")) {
-      throw new Error("Shared attachment path is invalid.");
+      throw new Error("Attachment path is invalid.");
     }
     const bytes = await execBytes(accountId, ["cat", "--", block.url]);
-    if (bytes.code !== 0) throw new Error(`Could not read attachment ${block.url}.`);
+    if (bytes.code !== 0) throw new Error(`Could not read attachment ${block.url}. Check the path exists.`);
     if (bytes.stdout.length > MAX_OUTBOUND_FILE_BYTES) {
       throw new Error(`Attachment ${block.name} is larger than 5 MB. Send a smaller export.`);
     }
-    const mime = block.mime || "application/octet-stream";
+    const mime = block.mime || mimeForName(block.name || block.url);
     out.push({
       ...block,
+      mime,
       url: `data:${mime};base64,${bytes.stdout.toString("base64")}`,
       savedPath: block.savedPath ?? block.url,
     });
   }
   return out;
+}
+
+const FILE_PLACEHOLDER = /\[file:\s*([^\]\n]*?)\s*\(saved at\s+(\/[^)\n]+?)\)\s*\]/g;
+
+/**
+ * Pulls "[file: name (saved at /path)]" placeholders out of reply text.
+ * Why: history shows sent files in that form, so models copy it into plain
+ * text instead of attaching the file, and the person gets a line of text
+ * where the file should be. Turning it back into a file block delivers it.
+ * Input: reply text. Output: the text without placeholders, plus file blocks.
+ */
+export function fileBlocksFromText(text: string): { text: string; files: { url: string; name: string }[] } {
+  const files: { url: string; name: string }[] = [];
+  const rest = text.replace(FILE_PLACEHOLDER, (_match, name: string, path: string) => {
+    const url = path.trim();
+    if (!files.some((file) => file.url === url)) {
+      files.push({ url, name: name.trim() || url.split("/").pop() || "file" });
+    }
+    return "";
+  });
+  return { text: rest.replace(/\n{3,}/g, "\n\n").trim(), files };
 }
 
 /**

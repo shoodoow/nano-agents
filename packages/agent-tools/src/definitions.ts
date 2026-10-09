@@ -1,6 +1,8 @@
 import type { z } from "zod";
 import {
   bashInputSchema,
+  searchMemoryInputSchema,
+  enableToolsInputSchema,
   delegateSchema,
   emptyToolInputSchema,
   globInputSchema,
@@ -19,7 +21,7 @@ import {
   routineCreateInputSchema,
   routineIdSchema,
   routineUpdateInputSchema,
-  sendMessageInputSchema,
+  sendMessageToolInputSchema,
   spawnWorkerToolInputSchema,
   subagentCreateSchema,
   teammateUpdateSchema,
@@ -40,354 +42,308 @@ import {
   browserWaitInputSchema,
 } from "./schemas.js";
 
-const WORKER_KIND_HINT =
-  "Pick kind by the work: executor (general), computer (desktop GUI — Method must include read_skill computer-use-linux), browser (live web — Method must include read_skill chrome-devtools + browser_snapshot/click; forbid bash HTML dumps), explore (files/code search), shell (commands), debug (evidence-based bugs), watch_video / video_review (media), vm_setup (project setup), docs (public documentation). If none fit, kind=custom and pass instructions with the standing method for this new specialist. Default kind is computer.";
-
-const WORKER_TASK_HINT =
-  `Act like the task owner, not a messenger: the worker starts blank, so the task must fully assign a finishable job. ${WORKER_KIND_HINT} You are the orchestrator: keep briefs narrow (one Goal finish-line — e.g. profile stats OR up to 3 posts, not a full growth plan) and chain dependent work across turns — never spawn plan + build in parallel when the build needs the plan's file; wait for the plan result, then spawn the build. Include Goal, Inputs (exact URLs/paths/quotes), Method, Deliverable (the exact file path to write, or Findings block when no file), Non-goals (what NOT to redo — files already read, searches already done), Success check, and Return format with proof. Never pass provider or modelId — the worker uses your model. maxSteps (3-30) overrides the default budget of 10 (18 for browser/computer) — raise it only for multi-stage builds like video; splitting into chained narrow workers is usually cheaper than one long worker. Proof is mandatory: demand exact numbers, URLs, and quotes observed — never estimates. Return format is always Findings / What I did / Blockers, and Method must say to write that report even if some fields are missing. Skill installs are kind shell with \`npx skills add <owner/repo@skill> -g -y\` into this agent's home — never a new teammate. Live pages: read_skill chrome-devtools, navigate to the deepest URL, browser_snapshot then browser_click/fill/press_key/handle_dialog — never bash-grep HTML or headless dump-dom. Desktop GUI: read_skill computer-use-linux. Never mention screenshots unless the person asked for visual proof. Reuse the existing Chromium window (do not pkill chromium). If the screen needs a password, 2FA, or payment, end with NEEDS_PERSON: plus one instruction. A popup ad is not a captcha — dismiss it. If a skill applies, name read_skill <name> in Method. Do not claim a file exists unless you wrote it and checked it.`;
-
 export type ToolSurface = "dispatcher" | "worker";
 
+/**
+ * Optional dispatcher tool sets. A tool with no set is always offered; a tool
+ * in a set is offered only when that set is on for the turn, which keeps the
+ * schemas resent on every model step small.
+ */
+export const toolSetNames = ["team", "routines", "admin"] as const;
+export type ToolSetName = (typeof toolSetNames)[number];
+
+/**
+ * One tool's name, where it is offered, and its input shape.
+ * The wording the model reads lives in `prompts/tools.md`, keyed by name.
+ */
 export type ToolDefinition = {
   name: string;
-  description: string;
   surfaces: ToolSurface[];
   requiresLinux?: boolean;
   inputSchema: z.ZodType;
-  descriptionWorker?: string;
+  /** Dispatcher-only gate; workers ignore it. */
+  set?: ToolSetName;
 };
 
 export const allToolDefinitions: ToolDefinition[] = [
   {
     name: "add_to_group",
-    description:
-      "Add an existing teammate to a group. Never after hire_subagent — hire already adds. Copy conversationId from Groups: in your prompt. Never adds to a private chat.",
+    set: "team",
     surfaces: ["dispatcher"],
     inputSchema: memberAddInputSchema,
   },
   {
     name: "create_group",
-    description:
-      "Open a group room you own (title only is fine). Reuse a matching title from Groups: in your prompt instead of duplicating it. Add teammates with hire_subagent using UUIDs from Team: — not names. Never changes a private chat.",
+    set: "team",
     surfaces: ["dispatcher"],
     inputSchema: groupCreateInputSchema,
   },
   {
     name: "create_routine",
-    description:
-      "Schedule your own recurring job in this room. Daily is M H * * *, weekly is M H * * D, in the person's IANA timezone. Does not run now. title is a short phone label; instructions is a standing order to your future self (goal, method, what to send_message, when to stay quiet) — not a fake user chat line. On fire you wake privately and act; the person only sees what you send_message.",
+    set: "routines",
     surfaces: ["dispatcher"],
     inputSchema: routineCreateInputSchema,
   },
   {
     name: "delegate",
-    description:
-      "Ask a lasting teammate to speak in a group. In a group omit conversationId; in a private chat copy it verbatim from Groups: in your prompt (teammate UUID from Team:). Runs in that group under their name; the private chat only gets a Message-from badge if they @mention you. Text @mentions never wake anyone. Hidden work uses spawn_worker.",
+    set: "team",
     surfaces: ["dispatcher"],
     inputSchema: delegateSchema,
   },
   {
     name: "delete_group",
-    description:
-      "Delete a group room you own. Use list_groups for ids. Cannot delete private 1:1 chats or the room you are chatting in right now. Teammates stay on the account; only the group and its chat history are removed. Irreversible: ask the person first, then re-call with confirmed:true.",
+    set: "team",
     surfaces: ["dispatcher"],
     inputSchema: groupConversationInputSchema,
   },
   {
     name: "delete_routine",
-    description:
-      "Delete one of your own routines and its pending runs. For clearing many or all, use delete_routines (one approval). Call list_routines first if you need the id.",
+    set: "routines",
     surfaces: ["dispatcher"],
     inputSchema: routineIdSchema,
   },
   {
     name: "delete_routines",
-    description:
-      "Delete many of your routines in one call — prefer this over looping delete_routine. Pass all:true to clear every routine, or routineIds:[...] for a set. One Auto-review approval covers the whole batch.",
+    set: "routines",
     surfaces: ["dispatcher"],
     inputSchema: deleteRoutinesInputSchema,
   },
   {
     name: "hire_subagent",
-    description:
-      "Create a lasting teammate in a group (max 10; hidden workers excluded). label is a first name, role is the job title, plus personality and jobDescription. One-off work uses spawn_worker. Private chat: create_group once, hire with that group id (already in Groups:), then delegate with the same id. Group room: omit conversationId. Hire already adds — no add_to_group after.",
+    set: "team",
     surfaces: ["dispatcher"],
     inputSchema: subagentCreateSchema,
   },
   {
     name: "update_teammate",
-    description:
-      "Change a teammate you hired. agentId comes from Team: in your prompt. label is their new first name (never the job). jobDescription replaces standing instructions. role and personality optional. Hidden workers cannot be updated.",
+    set: "team",
     surfaces: ["dispatcher"],
     inputSchema: teammateUpdateSchema,
   },
   {
     name: "list_groups",
-    description: "List group rooms you belong to (id, title, ownership). Rarely needed — Groups: in your prompt already covers it. Use before delete_group.",
+    set: "team",
     surfaces: ["dispatcher"],
     inputSchema: emptyToolInputSchema,
   },
   {
     name: "list_routines",
-    description:
-      "List your own routines with ids, titles, instructions, schedules, pause state, next run, last run, and up to 10 recent finished fires (done/failed). Use before update_routine or delete_routines.",
+    set: "routines",
     surfaces: ["dispatcher"],
     inputSchema: emptyToolInputSchema,
   },
   {
     name: "list_team",
-    description: "List team agents (id, name, label, role) for delegate and add_to_group. Rarely needed — Team: in your prompt already covers it. They speak in groups, not the private chat.",
+    set: "team",
     surfaces: ["dispatcher"],
     inputSchema: emptyToolInputSchema,
   },
   {
     name: "notify_user",
-    description:
-      "Ping the person when you are blocked on them or something is urgent. Not for routine progress. Open room shows a banner; closed room may push.",
     surfaces: ["dispatcher"],
     inputSchema: notifyInputSchema,
   },
   {
     name: "react_to_message",
-    description:
-      "One emoji tapback when a reaction is the whole reply. Use instead of send_message only for a bare acknowledgement. Rare.",
     surfaces: ["dispatcher"],
     inputSchema: reactionSchema,
   },
   {
     name: "read_history",
-    description:
-      "Read one cited message by id, or search a short slice (max 5). Use when a fact points at a message. Does not dump the transcript.",
     surfaces: ["dispatcher", "worker"],
     inputSchema: readHistoryToolInputSchema,
-    descriptionWorker:
-      "Read one cited message by id, or search a short slice (max 5), when the task depends on something said in the room.",
+  },
+  {
+    name: "search_memory",
+    surfaces: ["dispatcher"],
+    inputSchema: searchMemoryInputSchema,
   },
   {
     name: "remember_fact",
-    description:
-      "Save a durable sourced fact so it survives long chats. scope=agent for your work preferences/behavior/decisions; scope=user for account-wide facts. Cite the message id. Never store secrets, guesses, or temporary status.",
     surfaces: ["dispatcher"],
     inputSchema: rememberFactToolInputSchema,
   },
   {
     name: "correct_memory",
-    description:
-      "Replace one exact durable fact when the person corrects it. Supply the old text exactly, the replacement, its scope, and the correcting message id.",
     surfaces: ["dispatcher"],
     inputSchema: correctMemoryToolInputSchema,
   },
   {
     name: "read_skill",
-    description: "Load one skill's full instructions by name. Use only when this turn needs that procedure.",
     surfaces: ["dispatcher", "worker"],
     inputSchema: readSkillToolInputSchema,
-    descriptionWorker: "Load one skill's steps by name when the task needs that procedure. Skip it when the task is already clear.",
   },
   {
     name: "list_skills",
-    description:
-      "List skills this agent can load (name and description): shared host skills plus this agent's container installs under ~/.agents/skills. Call after a shell install or refresh_skills before telling the person a skill is available.",
+    set: "admin",
     surfaces: ["dispatcher", "worker"],
     inputSchema: emptyToolInputSchema,
   },
   {
     name: "refresh_skills",
-    description:
-      "Rescan shared and this agent's local container skills, then bump prompt versions so the next turn sees newly installed skills without a process restart.",
+    set: "admin",
     surfaces: ["dispatcher", "worker"],
     inputSchema: emptyToolInputSchema,
   },
   {
     name: "send_message",
-    description:
-      'The only channel the person sees. Call first on every user turn. blocks: array of typed objects — kind text (short markdown: 1–3 sentences, bold the answer, lists only when listing), image (url), code (code), file (url+name), widget. Widgets MUST be real blocks — never markdown like [widget:secret {…}]. Shape: { "kind": "widget", "widget": "question"|"secret"|…, "props": {…} }. question: single decision with prompt + 1–6 short options {label, value?} (skip long descriptions). poll: multi-select only. secret: envName required, never ask in plain text; ends the turn. desktop-handover: message required (what to do on the desktop), optional buttonLabel; use when login/2FA/payment or any step needs the person on your computer — ends the turn. Ask rarely; every question option must be a verified choice. Up to 10 blocks per send. Never bare strings. Plain assistant text is invisible.',
     surfaces: ["dispatcher"],
-    inputSchema: sendMessageInputSchema,
+    inputSchema: sendMessageToolInputSchema,
   },
   {
     name: "spawn_worker",
-    description: `Required for desktop, bash, long research, or anything that would keep this turn busy. Quick web_search / web_fetch / read / glob / grep you call yourself. Returns immediately with a worker id, then end your turn — the finished result is delivered to you automatically, never poll for it. Do not include provider or modelId. Finished workers become free and are reused on the next spawn (max 10 concurrent hidden worker rows). If the tool returns error with workers, use stop_worker on the wedged id to free it. ${WORKER_TASK_HINT}`,
     surfaces: ["dispatcher"],
     inputSchema: spawnWorkerToolInputSchema,
   },
   {
+    name: "enable_tools",
+    surfaces: ["dispatcher"],
+    inputSchema: enableToolsInputSchema,
+  },
+  {
     name: "stop_worker",
-    description:
-      "Stop a worker that is wedged, wrong, or no longer needed. Use the process id from spawn_worker. Stopped work reads as failed and frees that hidden worker for reuse.",
     surfaces: ["dispatcher"],
     inputSchema: workerRefInputSchema,
   },
   {
     name: "redirect_worker",
-    description:
-      "Steer a running worker without losing its context: stops its current attempt and restarts the same worker with your new instruction appended to its original brief. Use when it is looping, drifting, or the situation changed (user signed in, new constraint). The instruction must say what to do differently, not ask for status. If the worker already finished, you get its result instead.",
     surfaces: ["dispatcher"],
     inputSchema: workerRedirectInputSchema,
   },
   {
     name: "todo_list",
-    description:
-      "Read your worklist. Use after a restart, a routine wake, or when picking up a worker's job so you know what is still open.",
+    set: "admin",
     surfaces: ["dispatcher"],
     inputSchema: emptyToolInputSchema,
   },
   {
     name: "todo_write",
-    description:
-      "Replace your worklist for this job with pending, in_progress, and completed items. Use on multi-step work so a later turn can resume it.",
     surfaces: ["dispatcher"],
     inputSchema: todoWriteInputSchema,
   },
   {
     name: "update_routine",
-    description:
-      "Change your own routine: instructions, schedule, timezone, or paused. Use list_routines for the id. Pausing stops future runs; it does not run the job now.",
+    set: "routines",
     surfaces: ["dispatcher"],
     inputSchema: routineUpdateInputSchema,
   },
   // --- Linux (worker; parent gets read-only cheap tools when a profile exists) ---
   {
     name: "read",
-    description: "Read one file in the agent home or shared directory. Use for a single known path.",
     surfaces: ["dispatcher", "worker"],
     requiresLinux: true,
     inputSchema: pathInputSchema,
   },
   {
     name: "write",
-    description: "Write one file in the agent home or shared directory when you know the path and body.",
     surfaces: ["worker"],
     requiresLinux: true,
     inputSchema: readWriteInputSchema,
   },
   {
     name: "bash",
-    description:
-      "Run one shell command on your Linux computer. DISPLAY is already your 1280x800 desktop, so chromium and xterm open on the screen the person watches. Never start Xvfb/x11vnc or override DISPLAY.",
     surfaces: ["worker"],
     requiresLinux: true,
     inputSchema: bashInputSchema,
   },
   {
     name: "computer_screenshot",
-    description:
-      "PNG of your assigned 1280x800 desktop. Saves to /shared/screenshots/… and returns that path. Call before any click or type so coordinates match the screen. Cite the path in your report — do not send image bytes to the parent.",
     surfaces: ["worker"],
     requiresLinux: true,
     inputSchema: emptyToolInputSchema,
   },
   {
     name: "computer_mouse",
-    description: "Move the pointer to x/y (0-1279, 0-799) without clicking. Screenshot first. Prefer computer_click when you mean to click.",
     surfaces: ["worker"],
     requiresLinux: true,
     inputSchema: xyInputSchema,
   },
   {
     name: "computer_click",
-    description: "Move and left-click at x/y on your desktop in one step. Screenshot first.",
     surfaces: ["worker"],
     requiresLinux: true,
     inputSchema: xyInputSchema,
   },
   {
     name: "computer_type",
-    description: "Type 1-4000 characters into the focused desktop field. Click that field first.",
     surfaces: ["worker"],
     requiresLinux: true,
     inputSchema: typeTextInputSchema,
   },
   {
     name: "computer_key",
-    description: "Press one key combo: Return, Escape, Tab, arrows, F-keys, or ctrl/alt/shift+x.",
     surfaces: ["worker"],
     requiresLinux: true,
     inputSchema: keyInputSchema,
   },
   {
     name: "web_fetch",
-    description:
-      "Read one public page as text when you already have the URL. JS-heavy pages render automatically. Returns title, text, and outlinks. On the parent this is capped; spawn_worker for a long page.",
     surfaces: ["dispatcher", "worker"],
     requiresLinux: true,
     inputSchema: urlInputSchema,
   },
   {
     name: "web_search",
-    description:
-      "Search the public web. Returns title, URL, and a substantive snippet — often enough to answer without fetching. Pick links, then web_fetch the ones worth reading. Never repeat the same query with small rewordings: after one empty result, fetch the closest URL you have or report partial findings.",
     surfaces: ["dispatcher", "worker"],
     requiresLinux: true,
     inputSchema: webSearchInputSchema,
   },
   {
     name: "glob",
-    description: "List files by name pattern (for example **/*.ts) under home or /shared, up to 100 paths.",
     surfaces: ["dispatcher", "worker"],
     requiresLinux: true,
     inputSchema: globInputSchema,
   },
   {
     name: "grep",
-    description: "Search file contents for a pattern under home or /shared. Returns file:line hits, up to 100.",
     surfaces: ["dispatcher", "worker"],
     requiresLinux: true,
     inputSchema: grepInputSchema,
   },
   {
     name: "browser_list_pages",
-    description: "List open Chrome pages in this account's computer (localhost CDP only). Use before snapshot.",
     surfaces: ["worker"],
     requiresLinux: true,
     inputSchema: emptyToolInputSchema,
   },
   {
     name: "browser_navigate",
-    description: "Open an http(s) URL in this account's Chrome. Prefer the deepest URL you already know.",
     surfaces: ["worker"],
     requiresLinux: true,
     inputSchema: browserNavigateInputSchema,
   },
   {
     name: "browser_snapshot",
-    description:
-      "Text snapshot of the current page with uids for links, buttons, and inputs. Use this before click or fill. Dismiss ad overlays from the snapshot; do not treat a close button as a captcha.",
     surfaces: ["worker"],
     requiresLinux: true,
     inputSchema: emptyToolInputSchema,
   },
   {
     name: "browser_click",
-    description: "Click an element by uid from the latest browser_snapshot.",
     surfaces: ["worker"],
     requiresLinux: true,
     inputSchema: browserUidInputSchema,
   },
   {
     name: "browser_fill",
-    description: "Type into an input by uid from the latest browser_snapshot. Never type a password, 2FA code, or card.",
     surfaces: ["worker"],
     requiresLinux: true,
     inputSchema: browserFillInputSchema,
   },
   {
     name: "browser_press_key",
-    description: "Press a key in the page: Enter, Escape, Tab, PageDown, Home, ArrowDown. Use PageDown to scroll.",
     surfaces: ["worker"],
     requiresLinux: true,
     inputSchema: browserPressKeyInputSchema,
   },
   {
     name: "browser_handle_dialog",
-    description: "Accept or dismiss a JavaScript alert, confirm, or prompt. Use this for popup ads that are dialogs.",
     surfaces: ["worker"],
     requiresLinux: true,
     inputSchema: browserDialogInputSchema,
   },
   {
     name: "browser_wait_for",
-    description: "Wait until the page text contains a short string, or time out.",
     surfaces: ["worker"],
     requiresLinux: true,
     inputSchema: browserWaitInputSchema,
@@ -412,4 +368,9 @@ export function workerToolNames(hasLinux: boolean): string[] {
 
 export function toolDefinitionByName(name: string): ToolDefinition | undefined {
   return allToolDefinitions.find((t) => t.name === name);
+}
+
+/** Dispatcher tools that belong to one optional set. */
+export function toolNamesInSet(set: ToolSetName): string[] {
+  return allToolDefinitions.filter((t) => t.set === set && t.surfaces.includes("dispatcher")).map((t) => t.name);
 }

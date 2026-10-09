@@ -2,6 +2,9 @@
  * Tool execute bodies for the dispatcher registry.
  * DB: per tool — messages, delegations, agents, routines, notifications.
  */
+import { hitLine, mergeRanked, searchFacts, searchMessages, searchSummaries, searchTerms } from "../../memory/search.js";
+import { prompt } from "../../prompt/prompts.js";
+import { isToolSetName, toolNamesInSet, toolSetGuidance } from "./tool-sets.js";
 import {
   deleteRoutinesInputSchema,
   correctMemoryToolInputSchema,
@@ -22,8 +25,11 @@ import {
   workerRedirectInputSchema,
 } from "@nano-agents/agent-tools";
 import { takeOver } from "../../desktop/desktop.js";
-import { and, desc, eq } from "drizzle-orm";
-import { agents, conversations, delegations, members } from "../../db/schema.js";
+import { mergeWorkerBrief } from "./repair-input.js";
+import { recentWorkLogs } from "../work-log.js";
+import { accountHome } from "../../linux/linux.js";
+import { and, desc, eq, isNull } from "drizzle-orm";
+import { agents, conversations, delegations, members, messages } from "../../db/schema.js";
 import { correct, readHistory, remember } from "../../memory/memory.js";
 import { embedSummaryBacklog } from "../../memory/recall.js";
 import { todoList, todoWrite } from "../../memory/todos.js";
@@ -44,7 +50,7 @@ import {
   WorkerCapacityError,
 } from "../../rooms/subagents.js";
 import { updateAgentFlags } from "../../roster/roster.js";
-import { catalogTextForAgent, readSkillForAgent } from "../../skills/agent-skills.js";
+import { catalogTextForAgent, readSkillForAgent, skillCatalogForAgent } from "../../skills/agent-skills.js";
 import { bumpAccountPromptVersions } from "../../skills/install.js";
 import {
   createOwnRoutine,
@@ -67,12 +73,34 @@ export type ToolExecutor = (ctx: ToolContext, input: Record<string, unknown>) =>
  * Why: long-lived employees need explicit, sourceable memory rather than
  * relying on an ever-growing transcript. Agent scope is bound to the caller.
  */
+/**
+ * Resolves the message a memory cites.
+ * Why: the model rarely has a message id to hand, and a fact it could not
+ * cite was a fact it never saved. With no id (or one that is not in this
+ * room) the source is the person's latest message here.
+ */
+async function memorySourceId(ctx: ToolContext, given?: string): Promise<string> {
+  if (given) {
+    const source = await readHistory(ctx.db, ctx.accountId, ctx.conversationId, { messageId: given });
+    if (source.length > 0) return given;
+  }
+  const [latest] = await ctx.db
+    .select({ id: messages.id })
+    .from(messages)
+    .where(
+      and(eq(messages.accountId, ctx.accountId), eq(messages.conversationId, ctx.conversationId), isNull(messages.agentId)),
+    )
+    .orderBy(desc(messages.createdAt))
+    .limit(1);
+  if (!latest) throw new Error("There is no message in this room to cite as the source.");
+  return latest.id;
+}
+
 async function executeRememberFact(ctx: ToolContext, input: Record<string, unknown>) {
   const parsed = rememberFactToolInputSchema.parse(input);
-  const source = await readHistory(ctx.db, ctx.accountId, ctx.conversationId, { messageId: parsed.messageId });
-  if (source.length === 0) throw new Error("The memory source message is not in this room.");
   const saved = await remember(ctx.db, ctx.accountId, {
     ...parsed,
+    messageId: await memorySourceId(ctx, parsed.messageId),
     agentId: parsed.scope === "agent" ? ctx.agentId : undefined,
   });
   await embedSummaryBacklog(ctx.db, ctx.accountId, ctx.conversationId).catch(() => {});
@@ -86,10 +114,9 @@ async function executeRememberFact(ctx: ToolContext, input: Record<string, unkno
  */
 async function executeCorrectMemory(ctx: ToolContext, input: Record<string, unknown>) {
   const parsed = correctMemoryToolInputSchema.parse(input);
-  const source = await readHistory(ctx.db, ctx.accountId, ctx.conversationId, { messageId: parsed.messageId });
-  if (source.length === 0) throw new Error("The correction source message is not in this room.");
   const saved = await correct(ctx.db, ctx.accountId, {
     ...parsed,
+    messageId: await memorySourceId(ctx, parsed.messageId),
     agentId: parsed.scope === "agent" ? ctx.agentId : undefined,
   });
   await embedSummaryBacklog(ctx.db, ctx.accountId, ctx.conversationId).catch(() => {});
@@ -113,15 +140,6 @@ export async function executeSendMessage(ctx: ToolContext, input: Record<string,
     }
     throw error;
   }
-  const textChars = parsed.blocks
-    .filter((block) => block.kind === "text")
-    .reduce((sum, block) => sum + block.markdown.length, 0);
-  if (textChars > 1200) {
-    return {
-      error:
-        "That text bubble is too long. Split into 1–3 short sentences (or a second send_message). Lead with the answer. Use markdown (bold, short lists, links) or a widget instead of an essay.",
-    };
-  }
   const asksSecret = parsed.blocks.some((block) => block.kind === "widget" && block.widget === "secret");
   const asksDesktopHandover = parsed.blocks.some(
     (block) => block.kind === "widget" && block.widget === "desktop-handover",
@@ -131,7 +149,11 @@ export async function executeSendMessage(ctx: ToolContext, input: Record<string,
   }
   let deliverableBlocks = parsed.blocks;
   try {
-    deliverableBlocks = await inlineSharedOutputBlocks(ctx.accountId, parsed.blocks);
+    deliverableBlocks = await inlineSharedOutputBlocks(
+      ctx.accountId,
+      parsed.blocks,
+      ctx.linuxProfile ? accountHome(ctx.accountId, ctx.linuxProfile) : undefined,
+    );
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Could not attach the shared file." };
   }
@@ -198,11 +220,21 @@ function skillCtx(ctx: Pick<ToolContext, "skillsRoot" | "accountId" | "linuxProf
 export async function executeReadSkill(ctx: ToolContext, input: Record<string, unknown>) {
   if (!ctx.skillsRoot && !ctx.linuxProfile) return "No skills directory configured.";
   try {
-    return await readSkillForAgent(skillCtx(ctx), String(input.name));
+    const name = String(input.name);
+    const body = await readSkillForAgent(skillCtx(ctx), name);
+    // The chat agent hands skills on; it does not follow them step by step.
+    // Whole skill bodies here cost tens of thousands of tokens per turn and
+    // the knowledge never reached the worker that needed it.
+    // The note comes first: read last, the opening steps looked like orders
+    // and the chat agent started carrying them out itself.
+    return `${prompt("dispatcher", "skill-summary", { name })}\n\n${body.slice(0, SKILL_SUMMARY_CHARS)}`;
   } catch {
     return "Skill not found.";
   }
 }
+
+/** How much of a skill the chat agent sees; workers get the whole thing. */
+const SKILL_SUMMARY_CHARS = 1_200;
 
 export async function executeListSkills(ctx: Pick<ToolContext, "skillsRoot" | "accountId" | "linuxProfile">) {
   if (!ctx.skillsRoot && !ctx.linuxProfile) return "No skills directory configured.";
@@ -545,16 +577,20 @@ export async function executeAddToGroup(ctx: ToolContext, input: Record<string, 
   }
 }
 
-/** Max spawns per turn: validation failures count, so the model can't retry-burn. */
+/**
+ * Max workers started per turn. Only successful starts count: a rejected
+ * brief must not use up the turn's chance to start any work at all.
+ */
 export const MAX_SPAWNS_PER_TURN = 3;
 
 export async function executeSpawnWorker(ctx: ToolContext, input: Record<string, unknown>) {
-  ctx.spawnCount = (ctx.spawnCount ?? 0) + 1;
-  if (ctx.spawnCount > MAX_SPAWNS_PER_TURN) {
+  if ((ctx.spawnCount ?? 0) >= MAX_SPAWNS_PER_TURN) {
     return {
       error: "Already spawned several workers this turn. send_message what you started, then stop — results arrive on their own.",
     };
   }
+  // The brief sometimes arrives split: a title in `task`, the detail in `instructions`.
+  input = mergeWorkerBrief(input);
   const task = String(input.task ?? "");
   const failed = await failuresSinceLastUser(ctx.store, ctx.accountId, ctx.conversationId, ctx.agentId, task);
   if (failed >= 2) {
@@ -601,10 +637,11 @@ export async function executeSpawnWorker(ctx: ToolContext, input: Record<string,
       accountId: ctx.accountId,
       conversationId: ctx.conversationId,
       parentAgentId: ctx.agentId,
-      label: parsed.label,
-      role: parsed.role,
-      personality: parsed.personality,
-      jobDescription: parsed.jobDescription,
+      // The model writes only the brief; the row's label and role are derived.
+      label: workerLabel(parsed.task),
+      role: `${parsed.kind} worker`,
+      personality: "",
+      jobDescription: parsed.task.slice(0, 200),
       task: parsed.task,
       kind: parsed.kind,
       instructions: parsed.instructions,
@@ -616,8 +653,88 @@ export async function executeSpawnWorker(ctx: ToolContext, input: Record<string,
     }
     throw error;
   }
-  launchDetachedWorker(ctx, spawned, parsed.task, parsed.maxSteps);
+  ctx.spawnCount = (ctx.spawnCount ?? 0) + 1;
+  launchDetachedWorker(ctx, spawned, parsed.task, parsed.maxSteps, {
+    skills: await workerSkills(ctx, parsed.task, parsed.skills ?? []),
+    context: await workerContext(ctx),
+  });
   return spawned;
+}
+
+/** Most skills one worker carries in its prompt. */
+const MAX_WORKER_SKILLS = 5;
+
+/**
+ * Picks the skills a worker starts with.
+ * Why: the chat agent reads skills to plan, then forgets to pass them on, so
+ * the worker builds from a summary and guesses the rest (a wrong CLI flag, a
+ * composition that renders blank). Whatever the agent named, mentioned in the
+ * brief, or read lately travels with the job.
+ * Input: the brief and the names the model passed. Output: skill names, best first.
+ */
+async function workerSkills(ctx: ToolContext, task: string, named: string[]): Promise<string[]> {
+  const picked = new Set(named);
+  const readNow = [...(ctx.touched ?? [])].filter((item) => item.startsWith("skill ")).map((item) => item.slice(6));
+  const catalog = await skillCatalogForAgent({
+    skillsRoot: ctx.skillsRoot,
+    accountId: ctx.accountId,
+    linuxProfile: ctx.linuxProfile ?? undefined,
+  }).catch(() => []);
+  const known = new Set(catalog.map((skill) => skill.name));
+  const lower = task.toLowerCase();
+  const mentioned = catalog.filter((skill) => skill.name.length >= 4 && lower.includes(skill.name.toLowerCase()));
+  // A brief that lists many skills is talking about them, not asking to follow them.
+  if (mentioned.length <= 3) for (const skill of mentioned) picked.add(skill.name);
+  for (const name of readNow) picked.add(name);
+  const recent = await recentWorkLogs(ctx.db, {
+    accountId: ctx.accountId,
+    conversationId: ctx.conversationId,
+    agentId: ctx.agentId,
+    since: new Date(Date.now() - 6 * 60 * 60 * 1000),
+  }).catch(() => []);
+  // Newest runs first: what was read last is closest to the job at hand.
+  for (const row of [...recent].reverse()) {
+    for (const entry of row.entries) {
+      if (entry.tool !== "read_skill" || entry.failed) continue;
+      // The log stores a read_skill call as the bare skill name.
+      const name = entry.input.trim();
+      if (name && !name.includes(" ")) picked.add(name);
+    }
+  }
+  return [...picked].filter((name) => known.size === 0 || known.has(name)).slice(0, MAX_WORKER_SKILLS);
+}
+
+/** Short human label for a worker row, from the first words of its brief. */
+export function workerLabel(task: string): string {
+  const words = task.replace(/^\s*goal\s*:\s*/i, "").replace(/\s+/g, " ").trim().split(" ").slice(0, 6).join(" ");
+  return (words.replace(/[.:;,]+$/, "").slice(0, 60) || "Worker").trim();
+}
+
+/**
+ * Background a blank worker would otherwise lack or redo.
+ * Why: the brief is the worker's whole world. Attaching the person's own
+ * words and what was already looked at keeps briefs short and stops the
+ * worker repeating reads the parent just did.
+ * Output: text appended to the task the worker sees (not stored as the task).
+ */
+async function workerContext(ctx: ToolContext): Promise<string> {
+  const lines: string[] = [];
+  if (!ctx.hiddenTurn) {
+    const [latest] = await ctx.db
+      .select({ body: messages.body })
+      .from(messages)
+      .where(
+        and(eq(messages.accountId, ctx.accountId), eq(messages.conversationId, ctx.conversationId), isNull(messages.agentId)),
+      )
+      .orderBy(desc(messages.createdAt))
+      .limit(1);
+    const said = latest?.body.replace(/\s+/g, " ").trim().slice(0, 1500);
+    if (said) lines.push(prompt("worker-rules", "context-person", { message: said }));
+  }
+  // Skills are not listed here: the ones that matter are loaded into the worker.
+  const touched = [...(ctx.touched ?? [])].filter((item) => !item.startsWith("skill ")).slice(0, 20);
+  if (touched.length > 0) lines.push(prompt("worker-rules", "context-touched", { list: touched.join(", ") }));
+  return lines.join("\n");
 }
 
 /** Starts a spawned worker detached with settle fanout. Shared by spawn + redirect. */
@@ -626,8 +743,11 @@ function launchDetachedWorker(
   spawned: { workerId: string; delegationId: string },
   task: string,
   maxSteps?: number,
+  extra?: { skills?: string[]; context?: string },
 ): void {
   void runWorker(ctx.db, {
+    skills: extra?.skills,
+    context: extra?.context,
     accountId: ctx.accountId,
     conversationId: ctx.conversationId,
     parentAgentId: ctx.agentId,
@@ -742,7 +862,46 @@ export async function executeRedirectWorker(ctx: ToolContext, input: Record<stri
   return { ...spawned, redirected: true };
 }
 
+/**
+ * Searches facts, folded summaries and old messages across this agent's rooms.
+ * Why: the prompt carries only a slice of a years-long history; this is how
+ * the agent reaches the rest on demand. Full text always, so it works with no
+ * embedding key.
+ */
+export async function executeSearchMemory(ctx: ToolContext, input: Record<string, unknown>) {
+  const query = String(input.query ?? "").trim();
+  const terms = searchTerms(query);
+  if (terms.length === 0) return { error: "Give a few distinctive words or names to search for." };
+  const day = (value: unknown, endOfDay: boolean): Date | undefined => {
+    if (typeof value !== "string" || !value.trim()) return undefined;
+    const parsed = new Date(/^\d{4}-\d{2}-\d{2}$/.test(value.trim()) ? `${value.trim()}T${endOfDay ? "23:59:59" : "00:00:00"}Z` : value);
+    return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+  };
+  const from = day(input.from, false);
+  const to = day(input.to, true);
+  const scope = { accountId: ctx.accountId, agentId: ctx.agentId, terms };
+  const inRange = (hit: { at: Date }): boolean => (!from || hit.at >= from) && (!to || hit.at <= to);
+  const [facts, summaries, old] = await Promise.all([
+    searchFacts(ctx.db, { ...scope, limit: 6 }),
+    searchSummaries(ctx.db, { ...scope, limit: 6 }),
+    searchMessages(ctx.db, { ...scope, limit: 6, from, to }),
+  ]);
+  const hits = mergeRanked([facts.filter(inRange), summaries.filter(inRange), old], 10);
+  if (hits.length === 0) return "Nothing found. Try other words, a name, or a wider date range.";
+  return hits.map((hit) => `${hit.source} · ${hitLine(hit, 400)}`).join("\n");
+}
+
+/** Turns on one optional tool set for the rest of the turn and explains how to use it. */
+export async function executeEnableTools(ctx: ToolContext, input: Record<string, unknown>) {
+  const set = String(input.set ?? "");
+  if (!isToolSetName(set)) return { error: "Unknown tool set. Use team, routines, or admin." };
+  (ctx.enabledToolSets ??= new Set()).add(set);
+  return { enabled: set, tools: toolNamesInSet(set), guidance: toolSetGuidance(set) };
+}
+
 export const dispatcherExecutors: Record<string, ToolExecutor> = {
+  enable_tools: executeEnableTools,
+  search_memory: executeSearchMemory,
   send_message: executeSendMessage,
   react_to_message: executeReact,
   notify_user: executeNotify,

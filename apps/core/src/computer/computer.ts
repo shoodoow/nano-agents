@@ -11,8 +11,8 @@ import {
   DESKTOP_WIDTH,
   DESKTOP_HEIGHT,
 } from "../desktop/desktop.js";
-import { accountShared, exec, execStdin } from "../linux/linux.js";
-import { assertInside } from "./find.js";
+import { accountShared, exec, execBytes, execStdin } from "../linux/linux.js";
+import { expandHome, assertInside } from "./find.js";
 
 // Why: the agent must work on its assigned desktop — the one the viewer shows
 // — never boot a private X server on another display (the blank-viewer
@@ -50,12 +50,58 @@ export function assertShellSafe(command: string): void {
  * Output: the file text.
  */
 export async function readFile(accountId: string, profile: string, path: string): Promise<string> {
+  path = expandHome(accountId, profile, path);
   assertPath(accountId, path, profile);
   const result = await exec(accountId, ["cat", path], profile);
   if (result.code !== 0) {
+    // A directory is a common first guess: answer with its listing instead of
+    // an error the model would have to spend another step recovering from.
+    if (/is a directory/i.test(result.stdout)) {
+      const listing = await exec(accountId, ["ls", "-la", path], profile);
+      if (listing.code === 0) return `${path} is a directory:\n${listing.stdout}`;
+    }
     throw new Error(result.stdout || "The file could not be read.");
   }
   return result.stdout;
+}
+
+const IMAGE_FILE = /\.(png|jpe?g|webp|gif|bmp)$/i;
+
+/** True when a path names a picture a vision model can look at. */
+export function isImagePath(path: string): boolean {
+  return IMAGE_FILE.test(path.trim());
+}
+
+/**
+ * Loads a picture from the agent's computer, shrunk for a vision model.
+ * Why: a worker that renders a video or chart has to see a frame to know it
+ * is not blank; `cat` on a PNG is noise. ffmpeg scales it to 960px wide as a
+ * JPEG so one look costs about as much as a page of text.
+ * Input: account, Linux user, absolute image path. Output: {path, jpegBase64}.
+ */
+export async function readImage(
+  accountId: string,
+  profile: string,
+  path: string,
+): Promise<{ path: string; jpegBase64: string }> {
+  path = expandHome(accountId, profile, path);
+  assertPath(accountId, path, profile);
+  if (path.includes("'")) throw new Error("The image path is unsafe.");
+  const out = `/tmp/view-${Date.now()}-${Math.round(Math.random() * 1e6)}.jpg`;
+  const made = await exec(
+    accountId,
+    [
+      "sh",
+      "-c",
+      `ffmpeg -v error -y -i '${path}' -vf "scale='min(960,iw)':-2" -frames:v 1 -q:v 7 '${out}' 2>&1`,
+    ],
+    profile,
+  );
+  if (made.code !== 0) throw new Error(made.stdout.slice(0, 300) || "The image could not be opened.");
+  const bytes = await execBytes(accountId, ["cat", out], profile);
+  await exec(accountId, ["rm", "-f", out], profile).catch(() => {});
+  if (bytes.code !== 0 || bytes.stdout.length === 0) throw new Error("The image could not be opened.");
+  return { path, jpegBase64: bytes.stdout.toString("base64") };
 }
 
 /**
@@ -64,6 +110,7 @@ export async function readFile(accountId: string, profile: string, path: string)
  * Output: nothing. The file is created or replaced.
  */
 export async function writeFile(accountId: string, profile: string, path: string, body: string): Promise<void> {
+  path = expandHome(accountId, profile, path);
   assertPath(accountId, path, profile);
   const encoded = Buffer.from(body).toString("base64");
   const result = await exec(accountId, ["bash", "-lc", `printf %s '${encoded}' | base64 -d > '${path}'`], profile);

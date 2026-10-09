@@ -63,6 +63,12 @@ describe("scheduler", () => {
       }
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
+    // The reply lands before the tick that fired it reports back (the turn
+    // still settles memory afterwards), so give that tick a moment to finish.
+    const tickDeadline = Date.now() + 3000;
+    while (seen.length === 0 && Date.now() < tickDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
     stop();
     expect(fired).toBe(true);
     expect(seen.length).toBeGreaterThan(0);

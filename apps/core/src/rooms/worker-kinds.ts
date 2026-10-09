@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { prompt } from "../prompt/prompts.js";
 
 /** Built-in worker kinds (specialists). `custom` uses parent-supplied instructions. */
 export const WORKER_KINDS = [
@@ -41,21 +42,10 @@ function readKindPrompt(kind: Exclude<WorkerKind, "custom">): string {
   return readFileSync(join(promptsRoot, `${kind}.md`), "utf8").trim();
 }
 
-const EARLY_EXIT_RULE = `
-## Stop early on unrecoverable blockers
-Permission denied, missing credentials, unreachable network: stop at once, no diagnostic loops. One empty web_search is a retry with different words, then stop.
-`.trim();
-
-const ARTIFACT_RULE = `
-## Return compactly
-Your final report is private evidence for the parent agent, never a chat message. Keep it under 1,200 characters: decision-ready findings, artifact paths, blockers. Long output goes under \`/shared/worker-results/\` (or the exact path requested) — verify the file, return its path plus a short summary. No bulk rows, raw HTML, or long logs in the report. You have no voice in any room.
-`.trim();
-
-const BUDGET_RULE = (maxSteps: number) => `
-## Step budget: ${maxSteps} steps
-You have max ${maxSteps} tool steps. After step ${Math.max(maxSteps - 2, 1)}, stop calling tools and write your Findings report with what you have, even if partial. Partial evidence beats silence.
-`.trim();
-
+const earlyExitRule = (): string => prompt("worker-rules", "early-exit");
+const artifactRule = (): string => prompt("worker-rules", "return-compactly");
+const verifyRule = (): string => prompt("worker-rules", "verify");
+const budgetRule = (maxSteps: number): string => prompt("worker-rules", "step-budget", { maxSteps });
 
 /**
  * Standing method for one worker run.
@@ -64,33 +54,13 @@ You have max ${maxSteps} tool steps. After step ${Math.max(maxSteps - 2, 1)}, st
  * maxSteps injects the budget rule so the worker stops tooling in time to report.
  */
 export function workerPreambleFor(kind: WorkerKind, customInstructions?: string, maxSteps?: number): string {
-  const budget = BUDGET_RULE(maxSteps ?? 10);
+  const rules = [budgetRule(maxSteps ?? 16), "", earlyExitRule(), "", verifyRule(), "", artifactRule()];
   if (kind === "custom") {
     const body = (customInstructions ?? "").trim();
     if (!body) throw new Error("custom worker kind requires instructions.");
-    return [
-      "# Custom worker",
-      "",
-      "You are a background worker.You run on a Debian Linux box with node, npm, python3, pip, git, build-essential, chromium preinstalled. Verify with \`command -v <tool>\` before anything else. Never ask the person to install programs — installs happen here via \`bash\`, and only as a last resort (\`sudo apt-get install -y <pkg>\`). Prefer \`npx\` and system binaries. Never \`brew install\` on this box",
-      "If the screen needs the person, end with `NEEDS_PERSON: <one instruction>`.",
-      "",
-      "End with:",
-      "**Findings:**",
-      "**What I did:**",
-      "**Blockers:**",
-      "",
-      "## Standing method (from parent)",
-      "",
-      body,
-      "",
-      budget,
-      "",
-      EARLY_EXIT_RULE,
-      "",
-      ARTIFACT_RULE,
-    ].join("\n");
+    return [prompt("worker-rules", "custom-worker", { instructions: body }), "", ...rules].join("\n");
   }
-  return [readKindPrompt(kind), "", budget, "", EARLY_EXIT_RULE, "", ARTIFACT_RULE].join("\n");
+  return [readKindPrompt(kind), "", ...rules].join("\n");
 }
 
 /** Persist kind (+ optional custom prompt) inside job_description without a schema migration. */

@@ -3,7 +3,7 @@
  * Why: handlers stay pure; registry adds trace + timing. DB: handlers touch messages, delegations, etc.
  */
 import type { getDb, Store } from "../../db/client.js";
-import type { messages } from "../../db/schema.js";
+import type { messages, WorkLogEntry } from "../../db/schema.js";
 import type { TurnEvent } from "../../rooms/send-message.js";
 import type { TraceSession } from "../trace/plugins.js";
 import type { GenerateResult, TurnInput } from "../types.js";
@@ -39,6 +39,18 @@ export type ToolContext = {
   linuxProfile?: string | null;
   /** Stop the model loop after this tool (secret-request). */
   endTurn?: boolean;
+  /** Finished tool calls this turn, clipped; saved as the run's work log. */
+  workEntries?: WorkLogEntry[];
+  /** Read-type calls that already succeeded this turn, keyed by tool + input. */
+  loaded?: Set<string>;
+  /** Optional tool sets on for this turn (see tool-sets.ts). Mutated by enable_tools. */
+  enabledToolSets?: Set<string>;
+  /** Paths, URLs and skills this agent already looked at this turn; handed to workers so they skip them. */
+  touched?: Set<string>;
+  /** A worker or teammate was started this turn; the loop ends once the person has a bubble. */
+  handedOff?: boolean;
+  /** Hidden wake (worker result, routine): no opening ack is owed and silence is allowed. */
+  hiddenTurn?: boolean;
   /** Agent id that should speak Auto-review cards (parent when a worker is blocked). */
   voiceAgentId?: string;
 };

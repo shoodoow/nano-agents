@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { buildInstructions } from "../prompt/build-instructions.js";
-import { buildContext, personLine, roomLine, TOOL_CONTRACT } from "./context.js";
+import { buildContext, personLine, roomLine, turnRule } from "./context.js";
 import { getDb } from "../db/client.js";
 import { conversations, messages } from "../db/schema.js";
 import { createAccount, createAgent } from "../roster/roster.js";
@@ -29,8 +29,8 @@ describe("buildContext", () => {
       messages: [{ body: "second note" }],
     });
 
-    expect(first.prefix).toBe(`${buildInstructions(identity)}\n\n${TOOL_CONTRACT}`);
-    expect(first.prefix.endsWith(TOOL_CONTRACT)).toBe(true);
+    expect(first.prefix).toBe(`${buildInstructions(identity)}\n\n${turnRule()}`);
+    expect(first.prefix.endsWith(turnRule())).toBe(true);
     expect(first.prefix).toBe(second.prefix);
     expect(first.prefix.includes("Ship on Friday.")).toBe(false);
     expect(first.prefix.includes("first note")).toBe(false);
@@ -89,16 +89,19 @@ describe("buildContext", () => {
         teammates: [{ label: "Maya", role: "researcher", mention: "Maya-ruuc" }],
       },
     });
-    expect(context.prefix.endsWith(TOOL_CONTRACT)).toBe(true);
-    expect(context.prefix.indexOf("docx")).toBeLessThan(context.prefix.lastIndexOf(TOOL_CONTRACT));
+    expect(context.prefix.endsWith(turnRule())).toBe(true);
+    expect(context.prefix.indexOf("docx")).toBeLessThan(context.prefix.lastIndexOf(turnRule()));
     expect(context.prefix.includes("Recent trends")).toBe(false);
     expect(context.tail.startsWith('## Room\n"Launch crew"')).toBe(true);
-    expect(context.tail).toContain(personLine({
+    // The roster sits near the top; the clock, which changes every minute, closes the tail.
+    const [roster, clock] = personLine({
       name: "Mohammad Reza",
       timezone: "Asia/Riyadh",
       now,
       teammates: [{ label: "Maya", role: "researcher", mention: "Maya-ruuc" }],
-    }));
+    }).split("\nTimezone:");
+    expect(context.tail).toContain(roster);
+    expect(context.tail.endsWith(`## Now\nTimezone:${clock}`)).toBe(true);
     expect(context.tail).toContain("You speak to them");
     expect(context.tail).toContain("They are not a teammate");
     expect(context.tail).toContain("Maya (researcher, mention @Maya-ruuc)");

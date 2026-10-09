@@ -8,6 +8,43 @@ import { z } from "zod";
 
 export { sendMessageInputSchema };
 
+/**
+ * What the model fills in for send_message.
+ * Why: the stored block schema also carries server-side fields (saved paths,
+ * previews, blob references) and large size limits. None of that is the
+ * model's business, and every extra schema line is resent on each step. The
+ * executor still validates against the full `sendMessageInputSchema`.
+ */
+export const sendMessageToolInputSchema = z.object({
+  blocks: z
+    .array(
+      z.discriminatedUnion("kind", [
+        z.object({ kind: z.literal("text"), markdown: z.string().min(1) }),
+        z.object({ kind: z.literal("image"), url: z.string().min(1), alt: z.string().optional() }),
+        z.object({ kind: z.literal("code"), code: z.string().min(1), language: z.string().optional() }),
+        z.object({ kind: z.literal("file"), url: z.string().min(1), name: z.string().min(1) }),
+        z.object({
+          kind: z.literal("widget"),
+          widget: z.enum([
+            "question",
+            "poll",
+            "checklist",
+            "table",
+            "chart",
+            "approval",
+            "agent-card",
+            "secret",
+            "desktop-handover",
+          ]),
+          props: z.object({}).catchall(z.unknown()),
+        }),
+      ]),
+    )
+    .min(1)
+    .max(10),
+  replyTo: z.string().uuid().nullable().optional(),
+});
+
 export const emptyToolInputSchema = z.object({});
 
 export const memberAddInputSchema = z.object({
@@ -134,14 +171,26 @@ export const readHistoryToolInputSchema = z.object({
 export const rememberFactToolInputSchema = z.object({
   scope: z.enum(["agent", "user"]),
   body: z.string().trim().min(3).max(1000),
-  messageId: z.string().uuid(),
+  /** Source message. Optional: defaults to the message that opened this turn. */
+  messageId: z.string().uuid().optional(),
 });
 
 export const correctMemoryToolInputSchema = z.object({
   scope: z.enum(["agent", "user"]),
   oldBody: z.string().trim().min(3).max(1000),
   body: z.string().trim().min(3).max(1000),
-  messageId: z.string().uuid(),
+  messageId: z.string().uuid().optional(),
+});
+
+export const searchMemoryInputSchema = z.object({
+  query: z.string().trim().min(2).max(300),
+  /** Optional date range, as YYYY-MM-DD. */
+  from: z.string().trim().max(30).optional(),
+  to: z.string().trim().max(30).optional(),
+});
+
+export const enableToolsInputSchema = z.object({
+  set: z.enum(["team", "routines", "admin"]),
 });
 
 export const readSkillToolInputSchema = z.object({
@@ -174,8 +223,8 @@ const spawnWorkerFields = {
   kind: z.enum(workerKindNames).optional().default("computer"),
   /** Required when kind is custom: the standing method the worker follows. */
   instructions: z.string().trim().min(1).max(20_000).optional(),
-  /** Step budget override (3-30). Default is 10 (18 for browser/computer). Raise only for multi-stage builds. */
-  maxSteps: z.number().int().min(3).max(30).optional(),
+  /** Step budget override (3-40). Default is 16 (12 shell, 24 browser/computer). */
+  maxSteps: z.number().int().min(3).max(40).optional(),
   provider: z.enum(providerNames).optional(),
   modelId: z.string().trim().min(1).max(200).optional(),
 };
@@ -195,15 +244,17 @@ function refineCustomWorkerKind(
 
 export const spawnWorkerInputSchema = z.object(spawnWorkerFields).superRefine(refineCustomWorkerKind);
 
-/** Tool surface for spawn_worker — workers always inherit the chatting agent's provider/model. */
+/**
+ * Tool surface for spawn_worker. The model writes only the brief and the kind;
+ * the worker's label and role are derived, and it always inherits the
+ * chatting agent's provider/model.
+ */
 export const spawnWorkerToolInputSchema = z
   .object({
-    label: spawnWorkerFields.label,
-    role: spawnWorkerFields.role,
-    personality: spawnWorkerFields.personality,
-    jobDescription: spawnWorkerFields.jobDescription,
     task: spawnWorkerFields.task,
-    kind: spawnWorkerFields.kind,
+    kind: z.enum(workerKindNames).optional().default("executor"),
+    /** Skill names loaded into the worker's prompt so it does not spend a step reading them. */
+    skills: z.array(z.string().trim().min(1).max(100)).max(4).optional(),
     instructions: spawnWorkerFields.instructions,
     maxSteps: spawnWorkerFields.maxSteps,
   })

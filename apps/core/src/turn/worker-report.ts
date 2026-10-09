@@ -198,7 +198,7 @@ function omitHeavyMedia(value: unknown): unknown {
   if (!value || typeof value !== "object") return value;
   const out: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-    if (key === "pngBase64" || key === "base64") {
+    if (key === "pngBase64" || key === "jpegBase64" || key === "base64") {
       out[key] = "[omitted — use path]";
       continue;
     }
