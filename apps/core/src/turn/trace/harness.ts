@@ -10,7 +10,7 @@ import { keyFor } from "../../keys/keys.js";
 import type { getDb } from "../../db/client.js";
 import { toModelPrompt } from "../prompt-model.js";
 import type { TurnInput } from "../types.js";
-import { DISPATCHER_MAX_OUTPUT_TOKENS, MAX_MODEL_STEPS_DISPATCHER } from "../constants.js";
+import { DISPATCHER_MAX_OUTPUT_TOKENS, MAX_MODEL_STEPS_DISPATCHER, MAX_MODEL_STEPS_HARD } from "../constants.js";
 import { createTraceSession, type TraceSession } from "./plugins.js";
 import { tracePreview } from "./sinks/jsonl.js";
 import type { AgentMode } from "../types.js";
@@ -39,7 +39,11 @@ export type RunModelInput = TurnInput & {
    * the step cap; returns the tools to keep plus a note for the model, or
    * null to leave the step unrestricted.
    */
-  restrictStep?: (finishedSteps: number, maxSteps: number) => { activeTools: string[]; note: string } | null;
+  restrictStep?: (
+    finishedSteps: number,
+    maxSteps: number,
+    stepToolNames: string[][],
+  ) => { activeTools: string[]; note: string } | null;
   /** Tools offered on the next step, re-read every step; null offers all of them. */
   activeTools?: () => string[] | null;
 };
@@ -99,7 +103,9 @@ export async function runModelHarness(
   });
 
   let stepIndex = 0;
-  const maxSteps = input.maxSteps ?? MAX_MODEL_STEPS_DISPATCHER;
+  // The chat agent's real limit is the closing rule in loop-control, which
+  // can stretch for team setup; this is only the hard stop behind it.
+  const maxSteps = input.maxSteps ?? (input.mode === "dispatcher" ? MAX_MODEL_STEPS_HARD : MAX_MODEL_STEPS_DISPATCHER);
   const restrictedNote = new Set<string>();
   try {
     const result = await generateText({
@@ -124,12 +130,20 @@ export async function runModelHarness(
         return repaired ? { ...toolCall, input: repaired } : null;
       },
       prepareStep: ({ steps, messages }) => {
-        const restriction = input.restrictStep?.(steps.length, maxSteps);
+        const restriction = input.restrictStep?.(
+          steps.length,
+          maxSteps,
+          steps.map((step) => (step.toolCalls ?? []).map((call) => (call as { toolName?: string }).toolName ?? "")),
+        );
         if (!restriction) {
           const offered = input.activeTools?.();
           return offered ? { activeTools: offered.filter((name) => name in input.tools) as never } : undefined;
         }
-        const activeTools = restriction.activeTools.filter((name) => name in input.tools);
+        // A closing step never widens what the turn was offered.
+        const offeredNow = input.activeTools?.();
+        const activeTools = restriction.activeTools.filter(
+          (name) => name in input.tools && (!offeredNow || offeredNow.includes(name)),
+        );
         // The note is appended once per distinct text; the override carries forward.
         if (!restriction.note || restrictedNote.has(restriction.note)) return { activeTools: activeTools as never };
         restrictedNote.add(restriction.note);

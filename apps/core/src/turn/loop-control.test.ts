@@ -45,7 +45,15 @@ describe("replyOnlyRestriction", () => {
     expect(replyOnlyRestriction({ ...base, finishedSteps: 5, maxSteps: 6 })?.activeTools).toEqual([
       "send_message",
       "spawn_worker",
+      "delegate",
     ]);
+  });
+
+  it("does not count team setup steps against the budget", () => {
+    const setup = [["enable_tools"], ["create_group"], ["hire_subagent"], ["hire_subagent"]];
+    expect(replyOnlyRestriction({ ...base, finishedSteps: 4, maxSteps: 5, stepToolNames: setup })).toBeNull();
+    const research = [["web_search"], ["read"], ["glob"], ["read"]];
+    expect(replyOnlyRestriction({ ...base, finishedSteps: 4, maxSteps: 5, stepToolNames: research })).not.toBeNull();
   });
 
   it("asks for an ack right after a silent handoff", () => {

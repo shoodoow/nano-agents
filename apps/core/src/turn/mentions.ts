@@ -2,17 +2,19 @@
  * Mention routing for multi-speaker turns.
  * Why: extracted from monolithic turn.ts. DB: none.
  */
-import { speakers } from "../rooms/mentions.js";
+import { addressedIds } from "../rooms/mentions.js";
 
+/**
+ * Teammates a message hands the floor to.
+ * Why: "Looks good. @Creator, over to you" is a handoff even though the name
+ * does not open the message; a name dropped mid-sentence is not.
+ * Input: message text, room members, the speaker to leave out. Output: agent ids.
+ */
 export function mentionedAgents(
   body: string,
-  memberRows: { id: string; name: string }[],
-  onlyLeading = false,
+  memberRows: { id: string; name: string; label?: string | null }[],
+  _onlyLeading = false,
+  selfId?: string,
 ): string[] {
-  if (!onlyLeading) {
-    return speakers(body, memberRows, "").filter((id) => id !== "");
-  }
-  const leading = /^\s*@([A-Za-z0-9_-]+)/.exec(body)?.[1] ?? "";
-  const member = memberRows.find((row) => row.name === leading);
-  return member ? [member.id] : [];
+  return addressedIds(body, memberRows).filter((id) => id !== selfId);
 }

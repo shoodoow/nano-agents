@@ -78,13 +78,13 @@ List files by name pattern under your home or `/shared`, up to 100 paths. Give a
 Search file contents for a pattern under your home or `/shared`. Returns file:line hits, up to 100.
 
 # create_group
-Open a group room you own. Reuse a group from `Groups:` in your prompt when the title already matches. Teammates join through `hire_subagent`.
+Open a group chat you lead. Reuse a group from `Groups:` in your prompt when the title already matches. Pass a `brief`: the goal, who does what, the order work moves in, where files are kept. Teammates join through `hire_subagent`.
 
 # hire_subagent
-Create a lasting teammate in a group. `label` is a human first name, `role` the job title, plus `personality` and `jobDescription`. From a private chat pass the group's `conversationId`; inside a group leave it out. Hiring adds them to the group but does not start work; `delegate` does. One-off work is `spawn_worker`.
+Create a lasting teammate in a group. `label` is a human first name, `role` the job title, plus `personality` and `jobDescription` (their standing instructions, which they keep). They run on your model. From a private chat pass the group's `conversationId`; inside a group leave it out. Hiring does not start work; `delegate` does. One-off work is `spawn_worker`.
 
 # delegate
-Ask a teammate to do a task and speak in a group under their own name. `agentId` comes from `Team:` in your prompt. From a private chat pass the group's `conversationId` from `Groups:`; inside the group leave it out. A text @mention alone does not wake anyone.
+Ask a teammate for something. Your request is posted in the team chat as a message from you, they get the floor and answer there, and the answer is brought back to you. `agentId` comes from `Team:` in your prompt. Write `task` as you would message a colleague: what you need, what it is for, where the input is.
 
 # add_to_group
 Add an existing teammate to a group they are not in yet. Not needed after `hire_subagent`.
@@ -160,3 +160,6 @@ Wait until the page text contains a short string, or time out.
 
 # browser_handle_dialog
 Accept or dismiss a JavaScript alert, confirm or prompt.
+
+# set_team_brief
+Write or replace your team's brief: the goal, each teammate's part, the order work moves in (and who sends it back to whom), where files are kept, what "done" means. Every teammate sees it on every turn, so this is how the whole team stays on the same page.

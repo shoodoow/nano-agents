@@ -73,6 +73,14 @@ export const workerRedirectInputSchema = z.object({
 export const groupCreateInputSchema = z.object({
   title: z.string().trim().min(1).max(200),
   memberIds: z.array(z.string().uuid()).max(19).optional().default([]),
+  /** The team's shared brief: goal, who does what, how work is handed on, where files live. */
+  brief: z.string().trim().max(6_000).optional(),
+});
+
+export const teamBriefInputSchema = z.object({
+  brief: z.string().trim().min(10).max(6_000),
+  /** The group to brief. Optional when you own one group or are speaking in it. */
+  conversationId: z.string().uuid().optional(),
 });
 
 export type GroupCreateInput = z.infer<typeof groupCreateInputSchema>;

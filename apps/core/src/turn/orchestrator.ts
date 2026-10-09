@@ -2,13 +2,14 @@
  * Room turn orchestration: run ledger, speaker queue, queue drain.
  * DB: runs, messages, events (via TurnEmitter).
  */
+import { reportRoundToLead } from "./team-chat.js";
 import { and, eq } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
 import { agents, conversations, members, messages } from "../db/schema.js";
 import { speakers } from "../rooms/mentions.js";
 import { claimQueuedForRoom, saveUserMessage } from "../rooms/rooms.js";
 import { acquireRun, failRun, finishRun, heartbeatRun } from "../rooms/runs.js";
-import type { StreamEvent } from "../rooms/stream.js";
+import { publish, type StreamEvent } from "../rooms/stream.js";
 import { HEARTBEAT_MS } from "./constants.js";
 import { TurnEmitter } from "./events/emitter.js";
 import { registerWorkerLifecycle } from "./handlers/worker-lifecycle.js";
@@ -24,6 +25,11 @@ function ensureWorkerLifecycle(db: Db): void {
   workerLifecycleReady = true;
   registerWorkerLifecycle(() => db, runTurn);
 }
+
+/** Most agent turns in one round of a room, across all speakers. */
+const MAX_SPEAKER_TURNS = 8;
+/** Times per round the floor returns to the lead because a teammate named nobody. */
+const MAX_LEAD_RETURNS = 3;
 
 export async function runTurn(
   db: Db,
@@ -94,12 +100,20 @@ export async function runTurn(
   // Billable usage for this run: every speaker adds its harness total.
   const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, steps: 0 };
   try {
-    const spoken = new Set<string>();
     const queue = options?.speakerId ? [options.speakerId] : speakers(incoming.text, memberRows, room.ownerAgentId);
-    while (queue.length > 0) {
+    // Teammates hand work back and forth (write, review, revise), so an agent
+    // may speak more than once. The cap is what ends a round, not "once each".
+    let turnsTaken = 0;
+    let ownerSpoke = false;
+    let lastSpeaker = "";
+    let leadReturns = 0;
+    while (queue.length > 0 && turnsTaken < MAX_SPEAKER_TURNS) {
       const agentId = queue.shift();
-      if (!agentId || spoken.has(agentId)) continue;
-      spoken.add(agentId);
+      if (!agentId) continue;
+      turnsTaken += 1;
+      const spoken = new Set<string>([agentId]);
+      if (agentId === room.ownerAgentId) ownerSpoke = true;
+      lastSpeaker = agentId;
       await speakOnce(db, {
         accountId,
         conversationId,
@@ -114,11 +128,27 @@ export async function runTurn(
         saved,
         queue,
         spoken,
-        cue: options?.cue,
+        // The private note is for whoever was woken by it, not the whole chain.
+        cue: turnsTaken === 1 ? options?.cue : undefined,
         runKind: options?.kind,
         usage,
       });
       await heartbeatRun(db, runId).catch(() => {});
+      // A teammate who finishes without naming who is next leaves the work
+      // sitting. The lead is the one driving, so the floor goes back to them.
+      const leadDriving = ownerSpoke || (Boolean(options?.cue) && options?.kind !== "routine");
+      if (
+        leadReturns < MAX_LEAD_RETURNS &&
+        queue.length === 0 &&
+        room.kind === "group" &&
+        room.ownerAgentId &&
+        lastSpeaker !== room.ownerAgentId &&
+        leadDriving &&
+        turnsTaken < MAX_SPEAKER_TURNS
+      ) {
+        leadReturns += 1;
+        queue.push(room.ownerAgentId);
+      }
     }
     await compactConversation(db, accountId, conversationId);
     await finishRun(
@@ -137,6 +167,22 @@ export async function runTurn(
     );
     await emit({ type: "run", run: { id: runId, status: "done" as const, error: null } });
     emitter.emitDone();
+    // A round the team ran on its own (no person message started it) is
+    // reported to the lead's private chat, where the person is listening.
+    if (room.kind === "group" && options?.cue && room.ownerAgentId && !generate && saved.length > 0) {
+      const lead = room.ownerAgentId;
+      void reportRoundToLead(
+        db,
+        { accountId, groupId: conversationId, groupTitle: room.title, leadAgentId: lead, rows: saved, skillsRoot },
+        (roomId, cue, speakerId) =>
+          runTurn(db, accountId, roomId, cue, undefined, skillsRoot, {
+            cue,
+            speakerId,
+            acquireTimeoutMs: 600_000,
+            onEvent: (event) => publish(accountId, roomId, event as never),
+          }),
+      ).catch(() => {});
+    }
     return saved;
   } catch (error) {
     const message = error instanceof Error ? error.message : "The turn failed.";

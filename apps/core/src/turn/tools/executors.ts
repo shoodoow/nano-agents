@@ -26,9 +26,11 @@ import {
 } from "@nano-agents/agent-tools";
 import { takeOver } from "../../desktop/desktop.js";
 import { mergeWorkerBrief } from "./repair-input.js";
+import { MAX_ROUNDS_WITHOUT_PERSON, postToRoom, roundsSincePerson } from "../team-chat.js";
+import { publish } from "../../rooms/stream.js";
 import { recentWorkLogs } from "../work-log.js";
 import { accountHome } from "../../linux/linux.js";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, gt, isNull } from "drizzle-orm";
 import { agents, conversations, delegations, members, messages } from "../../db/schema.js";
 import { correct, readHistory, remember } from "../../memory/memory.js";
 import { embedSummaryBacklog } from "../../memory/recall.js";
@@ -294,7 +296,11 @@ export async function executeUpdateTeammate(ctx: ToolContext, input: Record<stri
 export async function executeHireSubagent(ctx: ToolContext, input: Record<string, unknown>) {
   let parsed: ReturnType<typeof subagentCreateSchema.parse>;
   try {
-    parsed = subagentCreateSchema.parse(input);
+    // A teammate always runs on the hiring agent's model. Models guessed a
+    // provider here ("openai") the account had no key for, and every job sent
+    // to that teammate then failed without anyone noticing.
+    const { provider: _provider, modelId: _modelId, ...rest } = input;
+    parsed = subagentCreateSchema.parse(rest);
   } catch (error) {
     if (error instanceof ZodError) {
       return { error: "Invalid hire_subagent input. Required: label, role, jobDescription." };
@@ -416,6 +422,9 @@ export async function executeDelegate(
       error: `That teammate is not in group id:${target.conversationId}. hire_subagent with that conversationId adds them — do not call add_to_group after hire. add_to_group is only for an existing teammate missing from the group.`,
     };
   }
+  // Real model: the request is a visible message in the group and the
+  // teammate answers there. (The stub path below is kept for unit tests.)
+  if (!ctx.generate) return askTeammateInGroup(ctx, target.conversationId, parsed.agentId, parsed.task);
   const row = await recordDelegation(ctx.store, {
     accountId: ctx.accountId,
     conversationId: target.conversationId,
@@ -453,6 +462,136 @@ export async function executeDelegate(
         .catch(() => {});
     });
   return { delegationId: row.id, status: "started", conversationId: target.conversationId };
+}
+
+/**
+ * Drops the "You are X on the team" opener models put on a request.
+ * Why: the teammate already has its own name, role and job. A colleague
+ * would just say what they need.
+ */
+export function plainAsk(task: string): string {
+  return task
+    .replace(/^\s*you are [^.\n]{1,120}[.\n]\s*/i, "")
+    .replace(/^\s*\*\*your (job|task)[^\n]*\*\*:?\s*/i, "")
+    .trim();
+}
+
+/**
+ * Asks a teammate for something where the person can see it.
+ * In the group itself: posts "@name request" as this agent's message; the
+ * room's own mention routing gives the teammate the floor next.
+ * From another room (the private chat): posts the same message in the group,
+ * leaves a "Messaged X" badge in the private chat, and starts the teammate's
+ * turn in the group. The lead hears back through `reportRoundToLead`.
+ */
+async function askTeammateInGroup(
+  ctx: ToolContext,
+  groupId: string,
+  teammateId: string,
+  task: string,
+): Promise<unknown> {
+  const [teammate] = await ctx.store
+    .select({ id: agents.id, name: agents.name, label: agents.label })
+    .from(agents)
+    .where(and(eq(agents.id, teammateId), eq(agents.accountId, ctx.accountId)));
+  if (!teammate) return { error: "That teammate is not on this account. list_team shows who is." };
+  const label = teammate.label?.trim() || teammate.name;
+  const ask = plainAsk(task) || task.trim();
+  const body = `@${teammate.name} ${ask}`;
+  const rounds = await roundsSincePerson(ctx.db, ctx.accountId, ctx.agentId);
+  if (rounds >= MAX_ROUNDS_WITHOUT_PERSON) {
+    return {
+      error: `The team has already done ${rounds} rounds since the person last wrote. Tell them where things stand and what you need from them, then wait for their answer.`,
+    };
+  }
+  const row = await recordDelegation(ctx.store, {
+    accountId: ctx.accountId,
+    conversationId: groupId,
+    parentAgentId: ctx.agentId,
+    agentId: teammateId,
+    task: ask,
+  });
+  if (groupId === ctx.conversationId) {
+    const saved = await saveSendMessage(ctx.store, {
+      accountId: ctx.accountId,
+      conversationId: ctx.conversationId,
+      agentId: ctx.agentId,
+      runId: ctx.runId,
+      viaAgentId: null,
+      blocks: [{ kind: "text", markdown: body }],
+      createdAt: ctx.nextTime(),
+    });
+    ctx.emittedMessages.push(saved);
+    await ctx.emit({ type: "message", message: saved });
+    await ctx.db
+      .update(delegations)
+      .set({ status: "done", result: "Asked in the group; the reply is in the group chat." })
+      .where(eq(delegations.id, row.id));
+    return {
+      status: "asked",
+      note: `Your message to ${label} is posted in this chat and they answer here next. Nothing more to do this turn.`,
+    };
+  }
+  const startedAt = new Date();
+  await postToRoom(ctx.db, { accountId: ctx.accountId, conversationId: groupId, agentId: ctx.agentId, body, runId: ctx.runId });
+  const [origin] = await ctx.store
+    .select({ kind: conversations.kind })
+    .from(conversations)
+    .where(and(eq(conversations.id, ctx.conversationId), eq(conversations.accountId, ctx.accountId)));
+  if (origin?.kind === "direct") {
+    await postToRoom(ctx.db, {
+      accountId: ctx.accountId,
+      conversationId: ctx.conversationId,
+      agentId: ctx.agentId,
+      body: ask,
+      runId: ctx.runId,
+      relay: { kind: "to", sourceConversationId: groupId, peers: [{ id: teammate.id, label }] },
+      createdAt: ctx.nextTime(),
+    });
+  }
+  const { accountId, agentId: leadId, conversationId: originId, skillsRoot, db } = ctx;
+  void (async () => {
+    const { runTurn } = await import("../orchestrator.js");
+    const start = (conversationId: string, cue: string, speakerId: string) =>
+      runTurn(db, accountId, conversationId, cue, undefined, skillsRoot, {
+        cue,
+        speakerId,
+        acquireTimeoutMs: 600_000,
+        onEvent: (event) => publish(accountId, conversationId, event as never),
+      });
+    try {
+      const [lead] = await db.select({ name: agents.name, label: agents.label }).from(agents).where(eq(agents.id, leadId));
+      await start(groupId, prompt("cues", "team-ask", { lead: lead?.label?.trim() || lead?.name || "The lead" }), teammateId);
+      const replies = await db
+        .select({ body: messages.body })
+        .from(messages)
+        .where(and(eq(messages.conversationId, groupId), eq(messages.agentId, teammateId), gt(messages.createdAt, startedAt)))
+        .orderBy(messages.createdAt);
+      await db
+        .update(delegations)
+        .set({
+          status: "done",
+          result: (replies.map((reply) => reply.body).join("\n\n") || "No reply was posted.").slice(0, 20_000),
+        })
+        .where(eq(delegations.id, row.id));
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "The teammate's turn failed.";
+      await db
+        .update(delegations)
+        .set({ status: "failed", result: reason.slice(0, 20_000) })
+        .where(eq(delegations.id, row.id))
+        .catch(() => {});
+      // A teammate that cannot run must not look like one that is "on it".
+      await start(originId, prompt("cues", "team-failed", { teammate: label, reason: reason.slice(0, 400) }), leadId).catch(
+        () => {},
+      );
+    }
+  })();
+  return {
+    status: "asked",
+    conversationId: groupId,
+    note: `Your message to ${label} is posted in the team chat. Their answer comes back to you on its own.`,
+  };
 }
 
 /**
@@ -601,6 +740,18 @@ export async function executeSpawnWorker(ctx: ToolContext, input: Record<string,
   }
   const valid = validateWorkerTask(task);
   if (!valid.ok) return { error: valid.hint };
+  // A worker told "You are <teammate>" is the lead doing a teammate's job out
+  // of sight. The teammate exists; ask them where the team can see it.
+  const persona = /^\s*you are ([A-Za-z][\w-]{1,40})/i.exec(task)?.[1]?.toLowerCase();
+  if (persona) {
+    const team = await listTeam(ctx.store, ctx.accountId, ctx.agentId).catch(() => []);
+    const mate = team.find((member) => (member.label ?? "").toLowerCase() === persona || member.name.toLowerCase().startsWith(persona));
+    if (mate) {
+      return {
+        error: `${mate.label || mate.name} is a real teammate (id:${mate.id}). Ask them with delegate so the work happens in the team chat, instead of a worker playing their part.`,
+      };
+    }
+  }
   // De-dupe: same parent+room already running (near-)identical task — reuse it
   // instead of burning a second worker on the same question. Independent jobs
   // (different task heads) still run side by side.
@@ -731,6 +882,12 @@ async function workerContext(ctx: ToolContext): Promise<string> {
     const said = latest?.body.replace(/\s+/g, " ").trim().slice(0, 1500);
     if (said) lines.push(prompt("worker-rules", "context-person", { message: said }));
   }
+  // A worker started from a team chat needs the team's goal as much as the teammate does.
+  const [here] = await ctx.db
+    .select({ kind: conversations.kind, brief: conversations.brief })
+    .from(conversations)
+    .where(and(eq(conversations.id, ctx.conversationId), eq(conversations.accountId, ctx.accountId)));
+  if (here?.kind === "group" && here.brief?.trim()) lines.push(`Team brief:\n${here.brief.trim().slice(0, 2_000)}`);
   // Skills are not listed here: the ones that matter are loaded into the worker.
   const touched = [...(ctx.touched ?? [])].filter((item) => !item.startsWith("skill ")).slice(0, 20);
   if (touched.length > 0) lines.push(prompt("worker-rules", "context-touched", { list: touched.join(", ") }));
@@ -942,7 +1099,29 @@ export const dispatcherExecutors: Record<string, ToolExecutor> = {
       title: parsed.title,
       memberIds: parsed.memberIds,
     });
-    return { conversationId: room.id, title: room.title, members: room.members.length };
+    if (parsed.brief) {
+      await ctx.store.update(conversations).set({ brief: parsed.brief }).where(eq(conversations.id, room.id));
+    }
+    return {
+      conversationId: room.id,
+      title: room.title,
+      members: room.members.length,
+      ...(parsed.brief ? {} : { note: "No brief yet. After hiring, call set_team_brief so every teammate knows the goal and how work moves." }),
+    };
+  },
+  set_team_brief: async (ctx, input) => {
+    const brief = String(input.brief ?? "").trim();
+    if (brief.length < 10) return { error: "Write the brief: the goal, who does what, how work is handed on, where files live." };
+    const target = await resolveGroupTarget(ctx, typeof input.conversationId === "string" ? input.conversationId : undefined, "add_to_group");
+    if ("error" in target) return target;
+    const [room] = await ctx.store
+      .select({ ownerAgentId: conversations.ownerAgentId, kind: conversations.kind })
+      .from(conversations)
+      .where(and(eq(conversations.id, target.conversationId), eq(conversations.accountId, ctx.accountId)));
+    if (!room || room.kind !== "group") return { error: "That is not a group room." };
+    if (room.ownerAgentId !== ctx.agentId) return { error: "Only the lead of a group writes its brief." };
+    await ctx.store.update(conversations).set({ brief: brief.slice(0, 6_000) }).where(eq(conversations.id, target.conversationId));
+    return { saved: true, conversationId: target.conversationId, note: "Every teammate now sees this brief in the group." };
   },
   spawn_worker: executeSpawnWorker,
   redirect_worker: executeRedirectWorker,

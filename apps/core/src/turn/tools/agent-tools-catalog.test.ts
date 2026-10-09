@@ -31,6 +31,7 @@ describe("agent-tools catalog", () => {
       "remember_fact",
       "search_memory",
       "send_message",
+      "set_team_brief",
       "spawn_worker",
       "stop_worker",
       "todo_list",

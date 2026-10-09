@@ -217,3 +217,34 @@ function assertPath(accountId: string, path: string, profile: string): void {
 }
 
 export { clampPoint, DESKTOP_WIDTH, DESKTOP_HEIGHT };
+
+const FACTS_TTL_MS = 60 * 60 * 1000;
+const factsCache = new Map<string, { at: number; text: string }>();
+
+/**
+ * One line describing the account computer: CPU, memory, GPU, free disk.
+ * Why: without it the agent asks the person "does your computer have a GPU?"
+ * about a machine that is its own and that it could have checked. Read once
+ * an hour per account, so it costs nothing per turn.
+ * Input: account id. Output: the line, or "" when the computer is unreachable.
+ */
+export async function computerFacts(accountId: string): Promise<string> {
+  const cached = factsCache.get(accountId);
+  if (cached && Date.now() - cached.at < FACTS_TTL_MS) return cached.text;
+  try {
+    const probe = await exec(accountId, [
+      "sh",
+      "-c",
+      "echo \"cpu=$(nproc) arch=$(uname -m)\"; awk '/MemTotal/{printf \"ram_gb=%.0f\\n\", $2/1048576}' /proc/meminfo; " +
+        "df -BG --output=avail / | tail -1 | tr -dc '0-9' | sed 's/^/disk_free_gb=/'; echo; " +
+        "(command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi --query-gpu=name --format=csv,noheader | head -1 | sed 's/^/gpu=/') || echo gpu=none",
+    ]);
+    const get = (key: string): string => new RegExp(`${key}=(\\S+)`).exec(probe.stdout)?.[1] ?? "?";
+    const gpu = /gpu=(.*)/.exec(probe.stdout)?.[1]?.trim() ?? "none";
+    const text = `Linux, ${get("cpu")} CPU cores (${get("arch")}), ${get("ram_gb")} GB RAM, ${get("disk_free_gb")} GB free disk, ${gpu === "none" ? "no GPU" : `GPU: ${gpu}`}.`;
+    factsCache.set(accountId, { at: Date.now(), text });
+    return text;
+  } catch {
+    return "";
+  }
+}

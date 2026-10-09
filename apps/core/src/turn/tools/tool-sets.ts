@@ -24,9 +24,14 @@ export function isToolSetName(value: string): value is ToolSetName {
  * Output: ungated tools (built-ins, connectors, plugins) plus the enabled
  * sets. `enable_tools` disappears once nothing is left to enable.
  */
-export function activeDispatcherTools(allNames: string[], enabled: ReadonlySet<string>): string[] {
+export function activeDispatcherTools(
+  allNames: string[],
+  enabled: ReadonlySet<string>,
+  blocked: ReadonlySet<string> = new Set(),
+): string[] {
   const allOn = toolSetNames.every((set) => enabled.has(set));
   return allNames.filter((name) => {
+    if (blocked.has(name)) return false;
     if (name === "enable_tools") return !allOn;
     const set = gatedBy.get(name);
     return !set || enabled.has(set);
@@ -49,11 +54,20 @@ export function initialToolSets(input: {
   hasRoutines: boolean;
   routineWake?: boolean;
   delegated?: boolean;
+  /** A teammate in someone else's group: it hands work on by @mention, not with the lead's tools. */
+  teamMember?: boolean;
 }): ToolSetName[] {
   const sets: ToolSetName[] = [];
-  if (input.roomKind === "group" || input.hasTeam || input.delegated) sets.push("team");
+  if (!input.teamMember && (input.roomKind === "group" || input.hasTeam || input.delegated)) sets.push("team");
   if (input.hasRoutines || input.routineWake) sets.push("routines");
   return sets;
 }
 
 export { toolNamesInSet };
+
+/**
+ * Tools a teammate does not get in a group it does not lead.
+ * Why: given the lead's tools, teammates tried to delegate to invented ids and
+ * pinged the person directly. A teammate replies in the chat and names who is next.
+ */
+export const TEAM_MEMBER_BLOCKED = ["enable_tools", "notify_user"] as const;

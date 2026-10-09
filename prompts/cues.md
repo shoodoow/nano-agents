@@ -55,3 +55,18 @@ The person denied "{{summary}}" (tool:{{tool}}, approvalId:{{approvalId}}). Do n
 
 # reaction
 [system] The user reacted {{emoji}} to this message: "{{snippet}}"
+
+# team-ask
+[private note] {{lead}} just asked you for something in this team chat; their message is right above. Do the part your role covers and reply here with the result itself (the script, the score and notes, the file), not a promise to do it.
+Then pass the work on. If the next step belongs to a teammate, end your reply by mentioning them with @name and saying what you need from them. If the work has to come back for changes, mention the teammate who made it and say exactly what to fix. If it is finished or you are stuck, mention {{lead}}.
+
+# team-update
+[team update, private to you] Your team just worked in "{{group}}". This is what was said there:
+{{lines}}
+
+You lead this team, and the person only sees this private chat. Tell them where things stand in two or three plain sentences: what is done, what is in progress, and anything you need from them. If a result they asked for is ready (a script, a video, a file), give it to them or attach it. If the work stopped before it was finished and nobody is on the next step, ask the right teammate now with `delegate`.
+
+# team-failed
+[team problem, private to you] {{teammate}} could not take your request: {{reason}}
+
+Nothing is running for that request. Tell the person plainly that {{teammate}} could not start and why, in one or two sentences. If the reason is something only the person can fix (a missing key, an account setting), say exactly what you need from them. Otherwise handle the step another way: ask a different teammate or do it yourself.

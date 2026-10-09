@@ -45,9 +45,14 @@ export type Bubble = {
   relay?: {
     kind: "from" | "to";
     peers: { id: string; label: string }[];
+    /** The team chat this badge came from; opens read-only in the sheet. */
+    sourceConversationId?: string | null;
   } | null;
   reactions?: Reaction[];
 };
+
+/** One line of a team chat shown read-only under a relay badge. */
+export type TeamChatLine = { id: string; author: string; time: string; body: string };
 
 export type ComposerAttachment = {
   id: string;
@@ -106,42 +111,55 @@ function SwipeableBubble({ onSwipe, children }: { onSwipe: () => void; children:
 }
 
 /**
- * Compact "Message from X" badge for a group ping mirrored into the 1:1.
- * Why: full crew bubbles stay in the group; the private chat only gets a chip.
- * Tap opens a sheet with the message body.
+ * Compact badge for team traffic mirrored into the private chat:
+ * "Message from X" for what a teammate said, "Messaged X" (or "N Bots") for
+ * what the lead asked the team.
+ * Why: the full conversation stays in the team chat; the private chat only
+ * gets a chip, so the person sees that work is moving without the noise.
+ * Tap opens a read-only sheet with the message and the team chat around it.
  */
 function RelayBadge({
+  kind,
   author,
   authorId,
+  peers,
   roster,
   onPress,
 }: {
+  kind: "from" | "to";
   author: string;
   authorId: string | null;
+  peers: { id: string; label: string }[];
   roster: Map<string, RosterAgent>;
   onPress: () => void;
 }) {
-  const face = authorId ? roster.get(authorId) : undefined;
+  const faces = kind === "to" ? peers.map((peer) => ({ id: peer.id, face: roster.get(peer.id) })) : [{ id: authorId ?? author, face: authorId ? roster.get(authorId) : undefined }];
+  const name = kind === "to" ? (peers.length === 1 ? (peers[0]?.label ?? "Bot") : `${peers.length} Bots`) : author;
+  const caption = kind === "to" ? "Messaged " : "Message from ";
   return (
     <Pressable
       style={styles.relayBadge}
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={`Message from ${author}. Tap to read.`}
+      accessibilityLabel={`${caption}${name}. Tap to read.`}
     >
-      <Text style={styles.relayCaptionText}>Message from </Text>
-      <Avatar
-        id={authorId ?? author}
-        size={14}
-        round
-        shape={face?.markShape ?? null}
-        color={face?.markColor ?? null}
-        material={face?.markMaterial ?? null}
-        style={face?.markStyle ?? null}
-        gender={face?.markGender ?? null}
-        photo={face?.avatarUrl ?? null}
-      />
-      <Text style={styles.relayCaptionName}> {author}</Text>
+      <Text style={styles.relayCaptionText}>{caption}</Text>
+      {faces.slice(0, 3).map(({ id, face }, index) => (
+        <View key={`${id}-${index}`} style={index > 0 ? styles.relayFaceOverlap : undefined}>
+          <Avatar
+            id={id}
+            size={14}
+            round
+            shape={face?.markShape ?? null}
+            color={face?.markColor ?? null}
+            material={face?.markMaterial ?? null}
+            style={face?.markStyle ?? null}
+            gender={face?.markGender ?? null}
+            photo={face?.avatarUrl ?? null}
+          />
+        </View>
+      ))}
+      <Text style={styles.relayCaptionName}> {name}</Text>
     </Pressable>
   );
 }
@@ -186,6 +204,7 @@ export function ChatScreen({
   onApprove,
   onDeny,
   onFetchBlob,
+  onLoadTeamChat,
   onBack,
   onDesktop,
   onAgentMenu,
@@ -223,6 +242,8 @@ export function ChatScreen({
   onApprove: (approvalId?: string) => void;
   onDeny: (approvalId?: string) => void;
   onFetchBlob: (messageId: string, index: number) => Promise<{ url?: string; previewUrl?: string }>;
+  /** Loads a team chat's recent messages for the read-only badge sheet. */
+  onLoadTeamChat?: (conversationId: string) => Promise<TeamChatLine[]>;
   onBack: () => void;
   onDesktop: () => void;
   onAgentMenu: () => void;
@@ -242,6 +263,17 @@ export function ChatScreen({
   const [pickingFor, setPickingFor] = useState<string | null>(null);
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [relaySheet, setRelaySheet] = useState<Bubble | null>(null);
+  const [teamChat, setTeamChat] = useState<TeamChatLine[] | null>(null);
+  /** Opens the badge sheet and loads the team chat it came from, read-only. */
+  const openRelaySheet = (bubble: Bubble) => {
+    setRelaySheet(bubble);
+    setTeamChat(null);
+    const source = bubble.relay?.sourceConversationId;
+    if (!source || !onLoadTeamChat) return;
+    void onLoadTeamChat(source)
+      .then((lines) => setTeamChat(lines))
+      .catch(() => setTeamChat([]));
+  };
   // Newest-first + inverted FlatList opens on the latest message with no
   // top→bottom scroll animation (scrollToEnd on layout was the jump).
   const thread = useMemo(() => [...messages].reverse(), [messages]);
@@ -344,10 +376,12 @@ export function ChatScreen({
               {relay ? (
                 <View style={styles.relayWrap}>
                   <RelayBadge
+                    kind={relay.kind}
                     author={item.author}
                     authorId={item.agentId}
+                    peers={relay.peers}
                     roster={rosterFaces}
-                    onPress={() => setRelaySheet(item)}
+                    onPress={() => openRelaySheet(item)}
                   />
                 </View>
               ) : (
@@ -489,7 +523,11 @@ export function ChatScreen({
             <View style={styles.relaySheetHandle} />
             {relaySheet ? (
               <>
-                <Text style={styles.relaySheetTitle}>Message from {relaySheet.author}</Text>
+                <Text style={styles.relaySheetTitle}>
+                  {relaySheet.relay?.kind === "to"
+                    ? `Messaged ${relaySheet.relay.peers.map((peer) => peer.label).join(", ") || "the team"}`
+                    : `Message from ${relaySheet.author}`}
+                </Text>
                 <ScrollView style={styles.relaySheetBody} bounces={false}>
                   {(relaySheet.blocks && relaySheet.blocks.length > 0
                     ? relaySheet.blocks
@@ -509,6 +547,25 @@ export function ChatScreen({
                       fetchBlob={onFetchBlob}
                     />
                   ))}
+                  {relaySheet.relay?.sourceConversationId && onLoadTeamChat ? (
+                    <View style={styles.teamChat}>
+                      <Text style={styles.teamChatTitle}>Team chat · read only</Text>
+                      {teamChat === null ? (
+                        <Text style={styles.teamChatMuted}>Loading…</Text>
+                      ) : teamChat.length === 0 ? (
+                        <Text style={styles.teamChatMuted}>Nothing to show yet.</Text>
+                      ) : (
+                        teamChat.map((line) => (
+                          <View key={line.id} style={styles.teamChatLine}>
+                            <Text style={styles.teamChatAuthor}>
+                              {line.author} <Text style={styles.teamChatMuted}>{line.time}</Text>
+                            </Text>
+                            <Text style={styles.teamChatBody}>{line.body}</Text>
+                          </View>
+                        ))
+                      )}
+                    </View>
+                  ) : null}
                 </ScrollView>
                 <PillButton label="Close" onPress={() => setRelaySheet(null)} />
               </>
@@ -681,7 +738,14 @@ function createStyles(colors: ColorPalette) {
     marginBottom: 4,
   },
   relaySheetTitle: { color: colors.text, fontSize: 16, fontWeight: "600" },
-  relaySheetBody: { maxHeight: 360 },
+  relaySheetBody: { maxHeight: 460 },
+  relayFaceOverlap: { marginLeft: -5 },
+  teamChat: { marginTop: 14, paddingTop: 10, borderTopWidth: 1, borderTopColor: colors.line, gap: 10 },
+  teamChatTitle: { color: colors.muted, fontSize: 12, fontWeight: "600" },
+  teamChatLine: { gap: 2 },
+  teamChatAuthor: { color: colors.text, fontSize: 13, fontWeight: "600" },
+  teamChatBody: { color: colors.text, fontSize: 14, lineHeight: 20 },
+  teamChatMuted: { color: colors.muted, fontSize: 12, fontWeight: "400" },
   quote: { color: colors.muted, fontSize: 13, borderLeftWidth: 2, borderLeftColor: colors.link, paddingLeft: 8, marginBottom: 4 },
   bubbleHighlight: { borderWidth: 1, borderColor: colors.link },
   error: { color: colors.danger, paddingHorizontal: 20, paddingBottom: 6, fontSize: 14 },

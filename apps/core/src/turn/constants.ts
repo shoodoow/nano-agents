@@ -22,6 +22,9 @@ export const DISPATCHER_TOOL_BUDGET_DEFAULT_MS = 15_000;
  */
 export const MAX_MODEL_STEPS_DISPATCHER = 5;
 
+/** Hard stop for one chat-agent turn, behind the closing rule (which stretches for team setup). */
+export const MAX_MODEL_STEPS_HARD = 11;
+
 /** Dispatcher output cap. Reasoning models spend most of this on thinking — keep headroom for send_message. */
 export const DISPATCHER_MAX_OUTPUT_TOKENS = 4_096;
 

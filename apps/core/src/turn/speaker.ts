@@ -17,7 +17,9 @@ import { propose } from "../skills/proposals.js";
 import { skillCatalogForAgent } from "../skills/agent-skills.js";
 import { blocksToText, type TurnEvent } from "../rooms/send-message.js";
 import { runAgentLoop } from "./agent-loop.js";
-import { initialToolSets } from "./tools/tool-sets.js";
+import { teamContextFor } from "./team-chat.js";
+import { computerFacts } from "../computer/computer.js";
+import { initialToolSets, TEAM_MEMBER_BLOCKED } from "./tools/tool-sets.js";
 import { recentWorkLogs, saveWorkLog, weaveWorkLogs } from "./work-log.js";
 import { mentionedAgents } from "./mentions.js";
 import { toModelMessages, type ReplyParent } from "./prompt-media.js";
@@ -35,7 +37,7 @@ export async function speakOnce(
     conversationId: string;
     agentId: string;
     memberRows: { id: string; name: string; label?: string; role?: string }[];
-    room: { title: string; kind: string };
+    room: { title: string; kind: string; ownerAgentId?: string | null; brief?: string | null };
     skillsRoot?: string;
     generate?: (input: TurnInput) => Promise<GenerateResult>;
     nextTime: () => Date;
@@ -222,7 +224,9 @@ export async function speakOnce(
     .select({ count: sql<number>`count(*)::int` })
     .from(routines)
     .where(and(eq(routines.accountId, accountId), eq(routines.agentId, agentId)));
+  const teamMember = room.kind === "group" && Boolean(room.ownerAgentId) && room.ownerAgentId !== agent.id;
   const toolSets = initialToolSets({
+    teamMember,
     roomKind: room.kind,
     hasTeam: person.teammates.length > 0 || (person.groups?.length ?? 0) > 0,
     hasRoutines: (routineCount?.count ?? 0) > 0,
@@ -254,6 +258,12 @@ export async function speakOnce(
     toolSets,
     activeWorkers,
     workHistory,
+    computer: agent.linuxProfile ? await computerFacts(accountId).catch(() => "") : "",
+    team: await teamContextFor(db, {
+      accountId,
+      agentId: agent.id,
+      room: { id: conversationId, kind: room.kind, ownerAgentId: room.ownerAgentId ?? null, title: room.title, brief: room.brief },
+    }).catch(() => ""),
   });
   const emittedMessages: (typeof messages.$inferSelect)[] = [];
   const replyParents = await loadReplyParents(db, accountId, conversationId, recent);
@@ -278,13 +288,28 @@ export async function speakOnce(
             ),
           )
       : [];
+  // Names for everyone who has spoken here, members or mirrored teammates.
+  const speakerNames = new Map<string, string>(memberRows.map((member) => [member.id, member.label?.trim() || member.name]));
+  const unknownSpeakers = [...new Set(recent.map((row) => row.agentId).filter((id): id is string => Boolean(id)))].filter(
+    (id) => !speakerNames.has(id),
+  );
+  if (unknownSpeakers.length > 0) {
+    const rows = await db
+      .select({ id: agents.id, name: agents.name, label: agents.label })
+      .from(agents)
+      .where(and(eq(agents.accountId, accountId), inArray(agents.id, unknownSpeakers)));
+    for (const row of rows) speakerNames.set(row.id, row.label?.trim() || row.name);
+  }
   const personReactions = new Map<string, string[]>();
   for (const row of reactionRows) {
     personReactions.set(row.messageId, [...(personReactions.get(row.messageId) ?? []), row.emoji]);
   }
   const modelMessages = weaveWorkLogs(
     recent,
-    toModelMessages(recent, replyParents, person.timezone, personReactions),
+    toModelMessages(recent, replyParents, person.timezone, personReactions, {
+      selfId: agent.id,
+      names: speakerNames,
+    }),
     workLogs,
   );
   if (cue) modelMessages.push({ role: "user", content: cue });
@@ -333,6 +358,7 @@ export async function speakOnce(
           messages: modelMessages,
           hiddenTurn: Boolean(cue),
           toolSets,
+          blockedTools: teamMember ? [...TEAM_MEMBER_BLOCKED] : undefined,
           generate,
         });
   let result: ReturnType<typeof unwrapGenerateResult>;
@@ -382,15 +408,17 @@ export async function speakOnce(
       .filter((m) => !m.viaAgentId)
       .map((m) => m.body)
       .join("\n");
-    for (const next of mentionedAgents(chainSource, memberRows, true)) {
-      if (!spoken.has(next)) queue.push(next);
+    for (const next of mentionedAgents(chainSource, memberRows, true, agentId)) {
+      if (!spoken.has(next) && !queue.includes(next)) queue.push(next);
     }
     return;
   }
   // A hidden wake that started background work has nothing to tell the
   // person yet; text beside that handoff is the agent thinking out loud.
   if (result.quiet) return;
-  const raw = result.text.trim();
+  // Teammates' lines reach the model as "[Name]: ...", and it copies that
+  // label onto its own reply. The room already shows who is speaking.
+  const raw = result.text.trim().replace(/^\[[^\]\n]{1,40}\]:\s*/, "");
   // Models copy the "[file: name (saved at /path)]" form history shows them.
   // Deliver those as real attachments instead of a line of text.
   const parsedReply = fileBlocksFromText(raw);
@@ -433,8 +461,8 @@ export async function speakOnce(
       messageIds: result.proposal.messageIds,
     });
   }
-  for (const next of mentionedAgents(bodyText, memberRows, true)) {
-    if (!spoken.has(next)) queue.push(next);
+  for (const next of mentionedAgents(bodyText, memberRows, true, agentId)) {
+    if (!spoken.has(next) && !queue.includes(next)) queue.push(next);
   }
 }
 

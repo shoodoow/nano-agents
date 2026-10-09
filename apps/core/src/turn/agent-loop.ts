@@ -42,6 +42,8 @@ export async function runAgentLoop(
     mode?: AgentMode;
     /** Optional tool sets that start on for this turn. */
     toolSets?: string[];
+    /** Tools withheld for this turn whatever sets are on. */
+    blockedTools?: string[];
     /** Hidden wake (worker result, routine): no ack owed, silence allowed. */
     hiddenTurn?: boolean;
     generate?: (input: TurnInput) => Promise<GenerateResult>;
@@ -95,13 +97,15 @@ export async function runAgentLoop(
           sentMessage: input.emittedMessages.length > 0,
           hiddenTurn: Boolean(toolCtx.hiddenTurn),
         })),
-    activeTools: () => activeDispatcherTools(Object.keys(tools), toolCtx.enabledToolSets ?? new Set()),
+    activeTools: () =>
+      activeDispatcherTools(Object.keys(tools), toolCtx.enabledToolSets ?? new Set(), new Set(input.blockedTools ?? [])),
     restrictStep:
       mode === "dispatcher"
-        ? (finishedSteps: number, maxSteps: number) =>
+        ? (finishedSteps: number, _hardCap: number, stepToolNames: string[][]) =>
             replyOnlyRestriction({
               finishedSteps,
-              maxSteps,
+              maxSteps: MAX_MODEL_STEPS_DISPATCHER,
+              stepToolNames,
               handedOff: Boolean(toolCtx.handedOff),
               sentMessage: input.emittedMessages.length > 0,
               hiddenTurn: Boolean(toolCtx.hiddenTurn),

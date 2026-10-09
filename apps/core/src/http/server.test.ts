@@ -244,8 +244,9 @@ describe("server", () => {
     });
     const stored = (await sent.json()) as { replies: { agentId: string; body: string }[] };
     expect(sent.status).toBe(201);
-    expect(stored.replies.map((reply) => reply.agentId)).toEqual([ada.id, bea.id]);
-    expect(stored.replies.map((reply) => reply.body)).toEqual(["@Bea your turn", "finished"]);
+    // Bea names nobody, so the floor returns to Ada, who leads the room.
+    expect(stored.replies.map((reply) => reply.agentId)).toEqual([ada.id, bea.id, ada.id]);
+    expect(stored.replies.map((reply) => reply.body)).toEqual(["@Bea your turn", "finished", "finished"]);
 
     const other = await postJson<{ id: string }>(`${baseUrl}/accounts`, { name: "Outsider" });
     const blocked = await fetch(`${baseUrl}/conversations/${room.id}/messages?accountId=${other.id}&sync=1`, {

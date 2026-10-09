@@ -68,6 +68,8 @@ export const conversations = pgTable(
     // Fold watermark: creation time of the newest message already folded into
     // summary items, so a fold reads only what is new. Null until the first fold.
     foldedThrough: timestamp("folded_through", { withTimezone: true }),
+    // Group rooms: the team's shared brief, shown to every member in the room.
+    brief: text("brief"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [check("conversations_kind_check", sql`${table.kind} in ('direct', 'group')`)],

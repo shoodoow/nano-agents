@@ -81,6 +81,7 @@ function toBubble(
       row.relayKind === "from" || row.relayKind === "to"
         ? {
             kind: row.relayKind,
+            sourceConversationId: row.sourceConversationId ?? null,
             peers: Array.isArray(row.relayPeers)
               ? row.relayPeers.map((peer) => ({
                   id: String(peer.id),
@@ -978,6 +979,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     await refreshThread(conversationId, agents);
   }
 
+  /**
+   * Loads the latest messages of a team chat for the read-only badge sheet.
+   * Input: the group's conversation id. Output: up to 40 plain lines, oldest first.
+   */
+  async function loadTeamChat(conversationId: string): Promise<{ id: string; author: string; time: string; body: string }[]> {
+    const rows = await core.listMessages(accountId.trim(), conversationId);
+    return rows.slice(-40).map((row) => ({
+      id: row.id,
+      author: row.agentId ? (agents.find((agent) => agent.id === row.agentId)?.label ?? agents.find((agent) => agent.id === row.agentId)?.name ?? "Agent") : "You",
+      time: new Date(row.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }),
+      body: row.body,
+    }));
+  }
+
   async function persistAutoReview(value: boolean): Promise<void> {
     setAutoReview(value);
     await core.setAutoReview(accountId.trim(), value);
@@ -1270,6 +1285,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     pickCamera,
     pickFile,
     toggleReaction,
+    loadTeamChat,
     persistAutoReview,
     refreshProposals,
     decideToolRow,
@@ -1375,6 +1391,7 @@ type SessionValue = {
   pickCamera: () => Promise<void>;
   pickFile: () => Promise<void>;
   toggleReaction: (conversationId: string, bubble: Bubble, emoji: string) => Promise<void>;
+  loadTeamChat: (conversationId: string) => Promise<{ id: string; author: string; time: string; body: string }[]>;
   persistAutoReview: (value: boolean) => Promise<void>;
   refreshProposals: (proposalId?: string, accept?: boolean) => Promise<void>;
   decideToolRow: (approvalId: string, accept: boolean) => Promise<void>;

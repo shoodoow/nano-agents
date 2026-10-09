@@ -35,3 +35,13 @@ describe("repairToolInput", () => {
     expect(repairToolInput("read", "not json")).toBeNull();
   });
 });
+
+describe("plainAsk", () => {
+  it("drops the role opener and keeps the request", async () => {
+    const { plainAsk } = await import("./executors.js");
+    expect(plainAsk("You are Reviewer on the Social Media Content Team. Review the script at /shared/a.md.")).toBe(
+      "Review the script at /shared/a.md.",
+    );
+    expect(plainAsk("Review the script.")).toBe("Review the script.");
+  });
+});

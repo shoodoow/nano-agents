@@ -101,9 +101,29 @@ describe("runTurn", () => {
     const calls: string[] = [];
     await runTurn(db, account.id, room!.id, "@Ada start", async ({ agentId }) => {
       calls.push(agentId);
-      return agentId === ada.id ? "@Bea your turn" : "finished";
+      if (agentId === bea.id) return "finished";
+      return calls.filter((id) => id === ada.id).length === 1 ? "@Bea your turn" : "all done";
     });
-    expect(calls).toEqual([ada.id, bea.id]);
+    // Bea names nobody, so the floor returns to Ada (the lead), who closes the round.
+    expect(calls).toEqual([ada.id, bea.id, ada.id]);
+  });
+
+  it("lets two agents hand work back and forth, and stops at the round cap", async () => {
+    const account = await createAccount(db, { name: "Loop" });
+    const ada = await createAgent(db, account.id, { name: "Ada", label: "Ada", role: "Writer", jobDescription: "Write.", provider: "openai", modelId: "gpt-5" });
+    const bea = await createAgent(db, account.id, { name: "Bea", label: "Bea", role: "Reviewer", jobDescription: "Review.", provider: "openai", modelId: "gpt-5" });
+    const [room] = await db
+      .insert(conversations)
+      .values({ accountId: account.id, kind: "group", ownerAgentId: ada.id, title: "loop" })
+      .returning();
+    await db.insert(members).values([ada, bea].map((member) => ({ conversationId: room!.id, accountId: account.id, agentId: member.id })));
+    const calls: string[] = [];
+    await runTurn(db, account.id, room!.id, "@Ada start", async ({ agentId }) => {
+      calls.push(agentId);
+      return agentId === ada.id ? "Draft attached. @bea please review" : "Not yet.\n@Ada tighten the hook";
+    });
+    expect(calls.slice(0, 4)).toEqual([ada.id, bea.id, ada.id, bea.id]);
+    expect(calls.length).toBe(8);
   });
 
   it("wakes the mentioned agent from anywhere in a user message, nobody else", async () => {

@@ -75,6 +75,10 @@ export function buildContext(input: {
     createdAt?: Date | null;
   }[];
   workHistory?: { kind: "worker" | "routine"; title: string; outcome: string; status: string; createdAt: Date }[];
+  /** Team brief, the other room's latest lines, and requests that failed to start. */
+  team?: string;
+  /** Specs of the agent's own computer, so it never asks the person about them. */
+  computer?: string;
 }): BuiltContext {
   const extras = [
     ...(input.toolSets ?? []).filter(isToolSetName).map((set) => toolSetGuidance(set)),
@@ -96,12 +100,14 @@ export function buildContext(input: {
   const tail = [
     ...(input.room ? [`## Room\n${roomLine(input.room)}`] : []),
     ...(input.person ? [`## Person\n${personBlock(input.person)}`] : []),
+    ...(input.computer?.trim() ? [`## Your computer\n${prompt("dispatcher", "computer-facts", { facts: input.computer.trim() })}`] : []),
     ...(input.profile?.trim() ? [`## Profile\n${input.profile.trim().slice(0, PROFILE_CHARS)}`] : []),
     ...(memoryBlock ? [`## Memory\n${memoryBlock}`] : []),
     ...(summaryBlock ? [`## Summary\n${summaryBlock}`] : []),
     ...(recallBlock ? [`## Recall\n${recallBlock}`] : []),
     ...(workersBlock ? [`## Active workers\n${workersBlock}`] : []),
     ...(workBlock ? [`## Recent work\n${workBlock}`] : []),
+    ...(input.team?.trim() ? [`## Team\n${input.team.trim()}`] : []),
     ...(input.person ? [`## Now\n${clockLine(input.person)}`] : []),
   ].join("\n\n");
   return {

@@ -19,6 +19,7 @@ export type HistoryRow = {
   body: string;
   payload: unknown;
   replyTo?: string | null;
+  relayKind?: string | null;
 };
 
 export type ReplyParent = {
@@ -114,6 +115,8 @@ export function toModelMessages(
   timezone?: string,
   /** The person's emoji reactions, by the id of the message they reacted to. */
   reactions?: Map<string, string[]>,
+  /** Who is reading. Other agents' messages are shown as theirs, by name. */
+  reader?: { selfId: string; names: Map<string, string> },
 ): { role: "user" | "assistant"; content: TurnMessageContent }[] {
   const byId = new Map<string, ReplyParent>();
   for (const row of history) {
@@ -143,13 +146,18 @@ export function toModelMessages(
     }
   }
   return history.map((row, index) => {
-    const role = row.agentId ? "assistant" : "user";
-    const body = tailSlice(row.body);
+    // In a group, a teammate's message is something said to this agent, not
+    // by it. Sent as its own words, the model answered itself or stayed quiet.
+    const other = Boolean(reader && row.agentId && row.agentId !== reader.selfId);
+    const role = row.agentId && !other ? "assistant" : "user";
+    const where = row.relayKind ? ", in the team chat" : "";
+    const speaker = other ? `[${reader!.names.get(row.agentId!) ?? "teammate"}${where}]: ` : "";
+    const body = `${speaker}${tailSlice(row.body)}`;
     const linked = row.replyTo ? formatReplyBody(body, byId.get(row.replyTo) ?? null) : body;
     const marker = dateMarker(history[index - 1]?.createdAt, row.createdAt, timezone);
     // A reaction is feedback on what the agent said. It rides on the person's
     // next message, so the agent sees it even when the tap did not wake it.
-    const reacted = role === "user" ? reactionNote(history, index, reactions) : "";
+    const reacted = role === "user" && !other ? reactionNote(history, index, reactions) : "";
     const text = [marker, reacted, linked].filter(Boolean).join("\n");
     const parts = wanted.get(index);
     if (!parts || parts.length === 0) return { role, content: text };

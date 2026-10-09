@@ -246,6 +246,13 @@
       "when": 1790721000000,
       "tag": "0034_long-memory",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1790807400000,
+      "tag": "0035_team-brief",
+      "breakpoints": true
     }
   ]
 }

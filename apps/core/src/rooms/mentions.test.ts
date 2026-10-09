@@ -1,24 +1,31 @@
 import { describe, expect, it } from "vitest";
-import { speakers } from "./mentions.js";
+import { addressedIds, mentionedIds, resolveMention } from "./mentions.js";
 
 const members = [
-  { id: "ada", name: "Ada" },
-  { id: "bea", name: "Bea" },
-  { id: "cy", name: "Cy" },
+  { id: "1", name: "Reviewer-969e", label: "Reviewer" },
+  { id: "2", name: "ResearchBot-245o", label: "ResearchBot" },
+  { id: "3", name: "Jimmy", label: "Social management" },
 ];
 
-describe("speakers", () => {
-  it("returns mentioned agents in the order they appear", () => {
-    expect(speakers("@Ada @Bea", members, "cy")).toEqual(["ada", "bea"]);
+describe("resolveMention", () => {
+  it("finds a teammate by handle, by short name, and by label", () => {
+    expect(resolveMention("Reviewer-969e", members)).toBe("1");
+    expect(resolveMention("reviewer", members)).toBe("1");
+    expect(resolveMention("ResearchBot", members)).toBe("2");
+    expect(resolveMention("jimmy", members)).toBe("3");
+    expect(resolveMention("Nobody", members)).toBeNull();
+  });
+});
+
+describe("addressedIds", () => {
+  it("counts a name that opens the message, a line, or a sentence", () => {
+    expect(addressedIds("@Reviewer please score this", members)).toEqual(["1"]);
+    expect(addressedIds("Script is ready.\n@reviewer over to you", members)).toEqual(["1"]);
+    expect(addressedIds("Looks good. @ResearchBot, tighten the hook", members)).toEqual(["2"]);
   });
 
-  it("returns only the owner when nobody is mentioned", () => {
-    expect(speakers("hello", members, "cy")).toEqual(["cy"]);
-  });
-
-  it("ignores an unknown name and uses the same result for an agent reply", () => {
-    const body = "@Nope @Ada";
-    expect(speakers(body, members, "cy")).toEqual(["ada"]);
-    expect(speakers(body, members, "cy")).toEqual(speakers(body, members, "cy"));
+  it("ignores a name dropped in passing", () => {
+    expect(addressedIds("thanks @Reviewer for the earlier help, done here", members)).toEqual([]);
+    expect(mentionedIds("thanks @Reviewer for the earlier help", members)).toEqual(["1"]);
   });
 });
