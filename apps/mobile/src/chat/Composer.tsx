@@ -1,0 +1,194 @@
+import { useEffect, useState } from "react";
+import { Modal, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
+import { AdaptiveSurface } from "../ui/AdaptiveSurface";
+import { AppKeyboardShell } from "../ui/AppKeyboardShell";
+import { ContextUsageRing } from "../ui/ContextUsageRing";
+import { IconCollapse, IconExpand } from "../ui/icons";
+import { PillButton } from "../ui/PrimaryButton";
+
+const LINE_HEIGHT = 22;
+/** Vertical padding inside the box; one line plus both pads is the 44pt rest height. */
+const PADDING_Y = 11;
+const MIN_HEIGHT = LINE_HEIGHT + PADDING_Y * 2;
+const MAX_LINES = 6;
+const MAX_HEIGHT = LINE_HEIGHT * MAX_LINES + PADDING_Y * 2;
+
+/**
+ * The message field, Telegram style.
+ * Why: it rests at one line, grows a line at a time with the text, and stops
+ * at six lines. The field sizes itself from its text (no measured height fed
+ * back through state), so the box never lags a keystroke behind. Past the cap
+ * the text scrolls inside and an expand button opens a full-screen editor for
+ * long briefs; both edit the same draft.
+ * Input: draft + change handler, placeholder, optional context ring, send.
+ * Output: the field, and the full-screen editor while it is open.
+ */
+export function Composer({
+  value,
+  onChange,
+  placeholder,
+  contextRing,
+  canSend,
+  sending,
+  onSend,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  contextRing?: { share: number; hint: string } | null;
+  canSend: boolean;
+  sending: boolean;
+  onSend: () => void;
+}) {
+  const insets = useSafeAreaInsets();
+  // True once the text is taller than the cap: scrolling turns on and the
+  // expand button shows. Scrolling stays off below it so growing never jumps.
+  const [capped, setCapped] = useState(false);
+  const [fullScreen, setFullScreen] = useState(false);
+  // Sending clears the draft; drop back to one line even if no size event follows.
+  useEffect(() => {
+    if (value.length === 0) setCapped(false);
+  }, [value]);
+
+  return (
+    <AdaptiveSurface style={styles.surface}>
+      <TextInput
+        value={value}
+        onChangeText={onChange}
+        placeholder={placeholder}
+        placeholderTextColor={colors.muted}
+        keyboardAppearance="dark"
+        style={[styles.input, contextRing || capped ? styles.inputWithSide : null]}
+        multiline
+        maxLength={20000}
+        scrollEnabled={capped}
+        textAlignVertical="top"
+        onContentSizeChange={(event) => {
+          setCapped(event.nativeEvent.contentSize.height > LINE_HEIGHT * MAX_LINES + 2);
+        }}
+      />
+      {capped ? (
+        <Pressable
+          style={styles.expand}
+          hitSlop={6}
+          onPress={() => setFullScreen(true)}
+          accessibilityRole="button"
+          accessibilityLabel="Edit full screen"
+        >
+          <IconExpand />
+        </Pressable>
+      ) : null}
+      {contextRing ? (
+        <View style={styles.ring} pointerEvents="box-none">
+          <ContextUsageRing share={contextRing.share} hint={contextRing.hint} />
+        </View>
+      ) : null}
+      {/* Full screen, not a page sheet: a sheet sits below the top of the
+          window, which throws the keyboard padding off by that gap. */}
+      <Modal visible={fullScreen} animationType="slide" onRequestClose={() => setFullScreen(false)}>
+        <AppKeyboardShell>
+          <View style={[styles.editor, { paddingTop: insets.top }]}>
+            <View style={styles.editorBar}>
+              <Pressable
+                style={styles.editorClose}
+                hitSlop={8}
+                onPress={() => setFullScreen(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Back to chat"
+              >
+                <IconCollapse />
+              </Pressable>
+              <Text style={styles.editorTitle} numberOfLines={1}>
+                {placeholder}
+              </Text>
+              <PillButton
+                label="Send"
+                disabled={!canSend}
+                busy={sending}
+                onPress={() => {
+                  setFullScreen(false);
+                  onSend();
+                }}
+              />
+            </View>
+            <TextInput
+              value={value}
+              onChangeText={onChange}
+              placeholder={placeholder}
+              placeholderTextColor={colors.muted}
+              keyboardAppearance="dark"
+              style={styles.editorInput}
+              multiline
+              autoFocus
+              maxLength={20000}
+              textAlignVertical="top"
+            />
+          </View>
+        </AppKeyboardShell>
+      </Modal>
+    </AdaptiveSurface>
+  );
+}
+
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
+    surface: { flex: 1, borderRadius: 22, borderCurve: "continuous", overflow: "hidden" },
+    input: {
+      minHeight: MIN_HEIGHT,
+      maxHeight: MAX_HEIGHT,
+      color: colors.text,
+      paddingHorizontal: 16,
+      paddingTop: PADDING_Y,
+      paddingBottom: PADDING_Y,
+      fontSize: 16,
+      lineHeight: LINE_HEIGHT,
+      backgroundColor: "transparent",
+    },
+    inputWithSide: { paddingRight: 40 },
+    expand: {
+      position: "absolute",
+      top: 6,
+      right: 6,
+      width: 32,
+      height: 32,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    // Pinned to the last line, so it stays put while the box grows upward.
+    ring: {
+      position: "absolute",
+      right: 12,
+      bottom: 0,
+      height: MIN_HEIGHT,
+      justifyContent: "center",
+    },
+    editor: { flex: 1, backgroundColor: colors.bg },
+    editorBar: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.line,
+    },
+    editorClose: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
+    editorTitle: { flex: 1, color: colors.muted, fontSize: 15 },
+    editorInput: {
+      flex: 1,
+      color: colors.text,
+      fontSize: 17,
+      lineHeight: 24,
+      paddingHorizontal: 16,
+      paddingTop: 14,
+      paddingBottom: 14,
+    },
+  });
+}
+
+let styles = createStyles(darkColors);
+onPaletteChange((next) => {
+  styles = createStyles(next);
+});

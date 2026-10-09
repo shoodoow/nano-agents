@@ -81,6 +81,8 @@ export const messageAgentInputSchema = z.object({
   /** The other agent's name as listed under "Other agents" (or its id). */
   agent: z.string().trim().min(1).max(120),
   message: z.string().trim().min(1).max(6_000),
+  /** False when you are only passing information on and need nothing back. */
+  wantsReply: z.boolean().optional().default(true),
 });
 
 export const teamBriefInputSchema = z.object({

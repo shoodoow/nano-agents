@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Image, Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
 import type { Reaction } from "../api";
@@ -40,19 +41,25 @@ export function EmojiImg({ emoji, size }: { emoji: string; size: number }) {
  * Why: hold-to-react opens a centered dark pill with big image glyphs
  * (vertical, like Telegram) instead of an inline row; tapbacks stay compact
  * underneath as image + count. No system emoji font is ever required.
- * Input: reactions, panel visibility, dismiss + pick callbacks.
+ * The same hold also offers the message actions (Reply, Copy, Select Text)
+ * as a menu under the emoji, so one gesture reaches everything.
+ * Input: reactions, panel visibility, dismiss + pick callbacks, actions.
  * Output: chips row, and a modal panel while picking.
  */
+export type MessageAction = { label: string; icon: ReactNode; onPress: () => void };
+
 export function Reactions({
   reactions,
   picking,
   onTogglePicker,
   onPick,
+  actions = [],
 }: {
   reactions: Reaction[];
   picking: boolean;
   onTogglePicker: () => void;
   onPick: (emoji: string) => void;
+  actions?: MessageAction[];
 }) {
   const grouped = new Map<string, number>();
   for (const reaction of reactions) grouped.set(reaction.emoji, (grouped.get(reaction.emoji) ?? 0) + 1);
@@ -85,6 +92,21 @@ export function Reactions({
               </Pressable>
             ))}
           </View>
+          {actions.length > 0 ? (
+            <View style={styles.menu}>
+              {actions.map((action, index) => (
+                <Pressable
+                  key={action.label}
+                  accessibilityRole="button"
+                  onPress={action.onPress}
+                  style={({ pressed }) => [styles.menuRow, index > 0 ? styles.menuDivider : null, pressed ? styles.menuPressed : null]}
+                >
+                  <Text style={styles.menuLabel}>{action.label}</Text>
+                  {action.icon}
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
         </Pressable>
       </Modal>
     </View>
@@ -106,7 +128,25 @@ function createStyles(colors: ColorPalette) {
   },
   count: { color: colors.muted, fontSize: 12, fontWeight: "600" },
   more: { color: colors.muted, fontSize: 13 },
-  backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.45)", alignItems: "center", justifyContent: "center" },
+  backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.45)", alignItems: "center", justifyContent: "center", gap: 12 },
+  menu: {
+    width: 230,
+    backgroundColor: colors.control,
+    borderRadius: 16,
+    borderCurve: "continuous",
+    overflow: "hidden",
+    boxShadow: "0 8px 16px rgba(0, 0, 0, 0.35)",
+  },
+  menuRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+  },
+  menuDivider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.line },
+  menuPressed: { backgroundColor: colors.line },
+  menuLabel: { color: colors.text, fontSize: 16 },
   panel: {
     backgroundColor: "#1E1E20",
     borderRadius: 32,

@@ -256,3 +256,72 @@ export async function teamContextFor(
   }
   return parts.join("\n\n");
 }
+
+type AwaitingPeer = { id: string; label: string; awaiting?: boolean };
+
+/**
+ * Sends an agent's answer back to the agent that asked for it.
+ * Why: the person asks Jimmy to have Zoe look something up. Zoe's answer in
+ * her own chat is not where the person is waiting; it has to come back to
+ * Jimmy's chat as a "Message from Zoe" badge, with Jimmy woken to pass it on.
+ * The open request is the badge the asker left in this room, marked awaiting.
+ * An answer is only sent once the room's own background work has finished, so
+ * "on it" is never mistaken for the result.
+ * Input: a direct room and the messages its owner just posted.
+ * Output: nothing; rooms with no open request are left alone.
+ */
+export async function relayAwaitedReply(
+  db: Db,
+  input: { accountId: string; roomId: string; ownerAgentId: string; rows: MessageRow[] },
+  startTurn: (conversationId: string, cue: string, speakerId: string) => Promise<unknown>,
+): Promise<void> {
+  const answer = [...input.rows].reverse().find((row) => row.agentId === input.ownerAgentId && !row.relayKind && row.body.trim());
+  if (!answer) return;
+  const open = (
+    await db
+      .select()
+      .from(messages)
+      .where(and(eq(messages.conversationId, input.roomId), eq(messages.accountId, input.accountId), eq(messages.relayKind, "from")))
+      .orderBy(desc(messages.createdAt))
+      .limit(10)
+  ).filter((row) => Array.isArray(row.relayPeers) && (row.relayPeers as AwaitingPeer[]).some((peer) => peer.awaiting));
+  if (open.length === 0) return;
+  const [busy] = await db
+    .select({ id: delegations.id })
+    .from(delegations)
+    .where(
+      and(
+        eq(delegations.accountId, input.accountId),
+        eq(delegations.conversationId, input.roomId),
+        eq(delegations.parentAgentId, input.ownerAgentId),
+        eq(delegations.status, "running"),
+      ),
+    )
+    .limit(1);
+  if (busy) return;
+  const [owner] = await db
+    .select({ name: agents.name, label: agents.label })
+    .from(agents)
+    .where(eq(agents.id, input.ownerAgentId));
+  const ownerLabel = owner?.label?.trim() || owner?.name || "The other agent";
+  for (const request of open) {
+    const asker = request.agentId;
+    const backTo = request.sourceConversationId;
+    await db.update(messages).set({ relayPeers: [] }).where(eq(messages.id, request.id));
+    if (!asker || !backTo) continue;
+    await postToRoom(db, {
+      accountId: input.accountId,
+      conversationId: backTo,
+      agentId: input.ownerAgentId,
+      body: answer.body,
+      runId: answer.runId,
+      relay: { kind: "from", sourceConversationId: input.roomId, peers: [] },
+    });
+    const cue = prompt("cues", "agent-reply", {
+      from: ownerLabel,
+      asked: request.body.replace(/\s+/g, " ").trim().slice(0, 600),
+      answer: answer.body.slice(0, 6_000),
+    });
+    await startTurn(backTo, cue, asker).catch(() => {});
+  }
+}

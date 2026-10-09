@@ -110,3 +110,35 @@ export function IconEyeOff() {
 export function IconShield() {
   return <PlatformIcon sf="shield" md="shield" size={16} color={colors.secondaryLabel} />;
 }
+
+export function IconExpand() {
+  return <PlatformIcon sf="arrow.up.left.and.arrow.down.right" md="open-in-full" size={15} color={colors.secondaryLabel} />;
+}
+
+export function IconCollapse() {
+  return <PlatformIcon sf="arrow.down.right.and.arrow.up.left" md="close-fullscreen" size={18} color={colors.label} />;
+}
+
+export function IconCopy() {
+  return <PlatformIcon sf="doc.on.doc" md="content-copy" size={18} color={colors.label} />;
+}
+
+export function IconSelectText() {
+  return <PlatformIcon sf="text.cursor" md="text-fields" size={18} color={colors.label} />;
+}
+
+export function IconReplyAction() {
+  return <PlatformIcon sf="arrowshape.turn.up.left" md="reply" size={18} color={colors.label} />;
+}
+
+export function IconGlobe() {
+  return <PlatformIcon sf="globe" md="public" size={16} color={colors.secondaryLabel} />;
+}
+
+export function IconPlay() {
+  return <PlatformIcon sf="play.fill" md="play-arrow" size={26} color="#FFFFFF" />;
+}
+
+export function IconCloseLight() {
+  return <PlatformIcon sf="xmark" md="close" size={18} color="#FFFFFF" />;
+}

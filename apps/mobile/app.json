@@ -38,6 +38,7 @@
       "expo-router",
       "expo-web-browser",
       "expo-sharing",
+      "expo-video",
       ["expo-notifications", { "defaultChannel": "default" }],
       [
         "expo-image-picker",

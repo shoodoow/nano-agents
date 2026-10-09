@@ -165,4 +165,5 @@ Accept or dismiss a JavaScript alert, confirm or prompt.
 Write or replace your team's brief: the goal, each teammate's part, the order work moves in (and who sends it back to whom), where files are kept, what "done" means. Every teammate sees it on every turn, so this is how the whole team stays on the same page.
 
 # message_agent
-Pass a message to another agent on this account, by the name shown under "Other agents". Use it when the person asks you to tell, teach or hand something to that agent. The message appears in that agent's own chat with the person as a message from you, and the agent takes it in. Write the whole thing they need to know; they have not seen this conversation.
+Reach another agent on this account, by the name shown under "Other agents". Use it when the person asks you to ask, tell, or hand something to that agent. Your message appears in that agent's own chat with the person as a message from you. Write everything they need; they have not seen this conversation.
+When you are asking for something, their answer comes back to this chat as a message from them and you are woken to pass it on, so your turn ends after the call. Set `wantsReply: false` when you are only passing information along.

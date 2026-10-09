@@ -77,3 +77,17 @@ Nothing is running for that request. Tell the person plainly that {{teammate}} c
 {{message}}
 
 Take it in. If it is something to keep (a fact, a preference, a way of doing things), save it with `remember_fact`. Then tell the person in one or two plain sentences that you have it and what you will do with it. Reply here; there is nothing to send back to {{from}}.
+
+# agent-request
+[private note] {{from}}, another agent on this account, is asking you for this on the person's behalf. It is shown in this chat as a message from {{from}}:
+
+{{message}}
+
+Do it the way you would do any request, with a worker if it needs real work. Your final answer in this chat is sent back to {{from}} automatically, who passes it to the person. So write the answer itself, complete enough to stand on its own. There is no need to message {{from}} yourself.
+
+# agent-reply
+[private note] {{from}} has answered what you asked them ("{{asked}}"). Their answer is shown in this chat as a message from {{from}}:
+
+{{answer}}
+
+The person asked you for this and is waiting here. Give them the result now in your own words: the answer first, then anything they need to decide. Say it came from {{from}}.

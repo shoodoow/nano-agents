@@ -1,16 +1,53 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { Image, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { File, Paths } from "expo-file-system";
-import * as Sharing from "expo-sharing";
+import { useState, type ReactNode } from "react";
+import { Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from "react-native";
 import type { MessageBlock } from "../api";
 import { blocksFromMaybeWidgetText } from "@nano-agents/shared";
-import { parseMarkdownBlocks } from "./markdown";
+import { extractUrls, parseMarkdownBlocks, trimUrl } from "./markdown";
 import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
 import { IconClose, IconMonitor, IconShield } from "../ui/icons";
+import { LinkPreview } from "./LinkPreview";
+import { ImageGroup, VideoBlock, isVideoBlock, openFileBlock, type FetchBlob, type ImageBlock } from "./media";
+import { copyText } from "./SelectTextSheet";
 
-// Client-side bytes cache: one fetch per attachment no matter how often the
-// thread re-renders or refreshes. Keyed messageId:index, process-lifetime.
-const blobCache = new Map<string, string>();
+export { openFileBlock };
+
+type BlockHandlers = {
+  messageId?: string;
+  onApprove?: (approvalId?: string) => void;
+  onDeny?: (approvalId?: string) => void;
+  onSubmitPoll?: (text: string) => void;
+  onQuestionPick?: (messageId: string, pick: { value: string; label: string }) => void;
+  onSubmitSecret?: (name: string, secret: string) => Promise<void>;
+  onOpenDesktop?: () => void;
+  onOpenAgent?: (agentId: string) => void;
+  fetchBlob?: FetchBlob;
+};
+
+/**
+ * Renders every block of one message, in order.
+ * Why: pictures that sit next to each other belong together, so a run of
+ * image blocks becomes one album instead of a stack of full-size photos.
+ * Input: the blocks + the same handlers BlockView takes. Output: the views.
+ */
+export function MessageBlocks({ blocks, ...handlers }: BlockHandlers & { blocks: MessageBlock[] }) {
+  const groups: (MessageBlock | ImageBlock[])[] = [];
+  for (const block of blocks) {
+    const last = groups[groups.length - 1];
+    if (block.kind === "image" && Array.isArray(last)) last.push(block);
+    else groups.push(block.kind === "image" ? [block] : block);
+  }
+  return (
+    <>
+      {groups.map((group, index) =>
+        Array.isArray(group) ? (
+          <ImageGroup key={index} images={group} fetchBlob={handlers.fetchBlob} />
+        ) : (
+          <BlockView key={index} block={group} {...handlers} />
+        ),
+      )}
+    </>
+  );
+}
 
 /**
  * Renders one rich MessageBlock inside a bubble.
@@ -32,18 +69,7 @@ export function BlockView({
   onOpenDesktop,
   onOpenAgent,
   fetchBlob,
-}: {
-  block: MessageBlock;
-  messageId?: string;
-  onApprove?: (approvalId?: string) => void;
-  onDeny?: (approvalId?: string) => void;
-  onSubmitPoll?: (text: string) => void;
-  onQuestionPick?: (messageId: string, pick: { value: string; label: string }) => void;
-  onSubmitSecret?: (name: string, secret: string) => Promise<void>;
-  onOpenDesktop?: () => void;
-  onOpenAgent?: (agentId: string) => void;
-  fetchBlob?: (messageId: string, index: number) => Promise<{ url?: string; previewUrl?: string }>;
-}) {
+}: BlockHandlers & { block: MessageBlock }) {
   if (block.kind === "text") {
     if (/\[widget:/i.test(block.markdown)) {
       const recovered = blocksFromMaybeWidgetText(block.markdown);
@@ -72,33 +98,23 @@ export function BlockView({
     return <RichText text={block.markdown} />;
   }
   if (block.kind === "image") {
-    const inline = block.previewUrl || block.url;
-    if (inline) {
-      return (
-        <View style={styles.mediaWrap}>
-          <Image source={{ uri: inline }} style={styles.image} accessibilityLabel={block.alt ?? "Shared image"} />
-          {block.alt ? <Text style={styles.caption}>{block.alt}</Text> : null}
-        </View>
-      );
-    }
-    if (block.blobRef && fetchBlob) {
-      return <LazyBlobImage blobRef={block.blobRef} alt={block.alt} fetchBlob={fetchBlob} />;
-    }
-    return (
-      <View style={styles.mediaWrap}>
-        <Text style={styles.caption}>{block.alt ?? "Shared image"}</Text>
-      </View>
-    );
+    return <ImageGroup images={[block]} fetchBlob={fetchBlob} />;
   }
   if (block.kind === "code") {
     return (
       <View style={styles.codeWrap}>
-        {block.language ? <Text style={styles.codeLang}>{block.language}</Text> : null}
+        <View style={styles.codeHead}>
+          <Text style={styles.codeLang}>{block.language ?? "code"}</Text>
+          <CopyButton text={block.code} />
+        </View>
         <Text style={styles.code}>{block.code}</Text>
       </View>
     );
   }
   if (block.kind === "file") {
+    if (isVideoBlock(block)) {
+      return <VideoBlock block={block} fetchBlob={fetchBlob} />;
+    }
     return (
       <Pressable
         style={styles.fileWrap}
@@ -125,92 +141,46 @@ export function BlockView({
   );
 }
 
-/** Resolves lazy bytes, writes them to device cache, then opens the native share/preview sheet. */
-export async function openFileBlock(
-  block: Extract<MessageBlock, { kind: "file" }>,
-  fetchBlob?: (messageId: string, index: number) => Promise<{ url?: string; previewUrl?: string }>,
-): Promise<void> {
-  let url = block.url;
-  if (!url && block.blobRef && fetchBlob) {
-    url = (await fetchBlob(block.blobRef.messageId, block.blobRef.index)).url ?? "";
-  }
-  const data = /^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/.exec(url);
-  if (!data) {
-    if (url) await Linking.openURL(url);
-    return;
-  }
-  const raw = globalThis.atob(data[2]!);
-  const bytes = new Uint8Array(raw.length);
-  for (let index = 0; index < raw.length; index += 1) bytes[index] = raw.charCodeAt(index);
-  const safeName = block.name.replace(/[^A-Za-z0-9._-]+/g, "_") || "attachment";
-  const file = new File(Paths.cache, safeName);
-  if (file.exists) file.delete();
-  file.create();
-  file.write(bytes);
-  if (await Sharing.isAvailableAsync()) {
-    await Sharing.shareAsync(file.uri, { mimeType: block.mime ?? data[1], dialogTitle: `Open ${block.name}` });
-  } else {
-    await Linking.openURL(file.uri);
-  }
-}
-
-/**
- * Resolves and renders one stripped image on demand.
- * Why: keeps thread refreshes at kilobytes; the photo loads once per process
- * lifetime and pops in when ready. A grey box holds layout meanwhile.
- * Input: blobRef + alt + fetcher. Output: image or placeholder.
- */
-function LazyBlobImage({
-  blobRef,
-  alt,
-  fetchBlob,
-}: {
-  blobRef: { messageId: string; index: number };
-  alt?: string;
-  fetchBlob: (messageId: string, index: number) => Promise<{ url?: string; previewUrl?: string }>;
-}) {
-  const cacheKey = `${blobRef.messageId}:${blobRef.index}`;
-  const [uri, setUri] = useState<string | null>(blobCache.get(cacheKey) ?? null);
-  useEffect(() => {
-    let live = true;
-    if (blobCache.has(cacheKey)) {
-      return;
-    }
-    void fetchBlob(blobRef.messageId, blobRef.index)
-      .then((blob) => {
-        const resolved = blob.previewUrl || blob.url;
-        if (resolved) {
-          blobCache.set(cacheKey, resolved);
-          if (live) {
-            setUri(resolved);
-          }
-        }
-      })
-      .catch(() => {
-        // Offline or gone: placeholder stays, refresh retries via remount.
-      });
-    return () => {
-      live = false;
-    };
-  }, [cacheKey, blobRef.messageId, blobRef.index, fetchBlob]);
-  if (!uri) {
-    return (
-      <View style={styles.mediaWrap}>
-        <View style={styles.imageLoading} />
-        {alt ? <Text style={styles.caption}>{alt}</Text> : null}
-      </View>
-    );
-  }
+/** A small text button that copies and says so for a moment. */
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
   return (
-    <View style={styles.mediaWrap}>
-      <Image source={{ uri }} style={styles.image} accessibilityLabel={alt ?? "Shared image"} />
-      {alt ? <Text style={styles.caption}>{alt}</Text> : null}
-    </View>
+    <Pressable
+      hitSlop={8}
+      accessibilityRole="button"
+      accessibilityLabel="Copy code"
+      onPress={() => {
+        void copyText(text).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        });
+      }}
+    >
+      <Text style={styles.codeCopy}>{copied ? "Copied" : "Copy"}</Text>
+    </Pressable>
   );
 }
 
-/** Wide tables scroll horizontally inside bubbles (swipe-to-reply uses dx>0 only). */
+// True while a finger is down on a table. The bubble's swipe-to-reply reads it
+// and stands down, so dragging a table back to its first column never replies.
+let tableTouch = false;
+export function isTableTouch(): boolean {
+  return tableTouch;
+}
+
+/**
+ * Wide tables scroll sideways inside the bubble.
+ * Why the explicit maxWidth: left to size itself, the scroller could take its
+ * content's full width and push the bubble past the screen edge — then there
+ * is nothing to scroll and the last columns are simply cut off. Capping it at
+ * the bubble's widest (85% of the thread row, see ChatScreen `column`) keeps
+ * the frame on screen so the extra columns scroll.
+ */
 function HorizontalTableScroll({ children }: { children: ReactNode }) {
+  const { width } = useWindowDimensions();
+  const release = (): void => {
+    tableTouch = false;
+  };
   return (
     <ScrollView
       horizontal
@@ -218,8 +188,14 @@ function HorizontalTableScroll({ children }: { children: ReactNode }) {
       directionalLockEnabled
       showsHorizontalScrollIndicator
       keyboardShouldPersistTaps="handled"
-      style={styles.horizontalTableScroll}
+      style={[styles.horizontalTableScroll, { maxWidth: Math.round((width - 24) * 0.85) }]}
       contentContainerStyle={styles.horizontalTableContent}
+      onTouchStart={() => {
+        tableTouch = true;
+      }}
+      onTouchEnd={release}
+      onTouchCancel={release}
+      onScrollEndDrag={release}
     >
       {children}
     </ScrollView>
@@ -235,7 +211,8 @@ const MD_TABLE_COL = { minWidth: 128, maxWidth: 240, flexShrink: 0 as const };
  */
 function RichText({ text }: { text: string }) {
   const blocks = parseMarkdownBlocks(text);
-  if (blocks.length === 1 && blocks[0]?.kind === "text") {
+  const links = extractUrls(text);
+  if (blocks.length === 1 && blocks[0]?.kind === "text" && links.length === 0) {
     return <Text style={styles.body}>{renderInlineMarkdown(blocks[0].text)}</Text>;
   }
   return (
@@ -268,6 +245,9 @@ function RichText({ text }: { text: string }) {
           </Text>
         ),
       )}
+      {links.map((url) => (
+        <LinkPreview key={url} url={url} />
+      ))}
     </View>
   );
 }
@@ -302,12 +282,16 @@ function renderInlineMarkdown(text: string, keyPrefix = "t"): ReactNode[] {
         </Text>,
       );
     } else if (match[6] !== undefined) {
-      const href = match[6];
+      // A bare URL swallows the full stop or bracket after it; hand that back.
+      const href = trimUrl(match[6]);
       nodes.push(
         <Text key={`${keyPrefix}-${i++}`} style={styles.link} onPress={() => void Linking.openURL(href)}>
           {href}
         </Text>,
       );
+      if (href.length < match[6].length) {
+        nodes.push(<Text key={`${keyPrefix}-${i++}`}>{match[6].slice(href.length)}</Text>);
+      }
     }
     last = match.index + match[0].length;
   }
@@ -924,12 +908,10 @@ function createStyles(colors: ColorPalette) {
     backgroundColor: colors.control,
   },
   link: { color: colors.link },
-  mediaWrap: { gap: 6 },
-  image: { width: 240, height: 180, borderRadius: 12, backgroundColor: colors.control },
-  caption: { color: colors.muted, fontSize: 13 },
-  imageLoading: { width: 240, height: 180, borderRadius: 12, backgroundColor: colors.control, opacity: 0.6 },
   codeWrap: { backgroundColor: colors.control, borderRadius: 10, padding: 10, gap: 4 },
+  codeHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 16 },
   codeLang: { color: colors.muted, fontSize: 12 },
+  codeCopy: { color: colors.link, fontSize: 12, fontWeight: "600" },
   code: { color: colors.text, fontFamily: "monospace", fontSize: 13 },
   fileWrap: { backgroundColor: colors.control, borderRadius: 10, padding: 12, gap: 2 },
   fileName: { color: colors.text, fontWeight: "600" },

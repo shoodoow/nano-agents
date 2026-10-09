@@ -2,7 +2,7 @@
  * Room turn orchestration: run ledger, speaker queue, queue drain.
  * DB: runs, messages, events (via TurnEmitter).
  */
-import { reportRoundToLead } from "./team-chat.js";
+import { relayAwaitedReply, reportRoundToLead } from "./team-chat.js";
 import { and, eq } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
 import { agents, conversations, members, messages } from "../db/schema.js";
@@ -174,6 +174,20 @@ export async function runTurn(
       void reportRoundToLead(
         db,
         { accountId, groupId: conversationId, groupTitle: room.title, leadAgentId: lead, rows: saved, skillsRoot },
+        (roomId, cue, speakerId) =>
+          runTurn(db, accountId, roomId, cue, undefined, skillsRoot, {
+            cue,
+            speakerId,
+            acquireTimeoutMs: 600_000,
+            onEvent: (event) => publish(accountId, roomId, event as never),
+          }),
+      ).catch(() => {});
+    }
+    // An answer another agent is waiting for goes back to that agent's chat.
+    if (room.kind === "direct" && room.ownerAgentId && !generate && saved.length > 0) {
+      void relayAwaitedReply(
+        db,
+        { accountId, roomId: conversationId, ownerAgentId: room.ownerAgentId, rows: saved },
         (roomId, cue, speakerId) =>
           runTurn(db, accountId, roomId, cue, undefined, skillsRoot, {
             cue,

@@ -477,6 +477,7 @@ async function executeMessageAgent(ctx: ToolContext, input: Record<string, unkno
   const wanted = String(input.agent ?? "").trim();
   const text = String(input.message ?? "").trim();
   if (!wanted || !text) return { error: "Give the agent's name and the message to pass on." };
+  const wantsReply = input.wantsReply !== false && String(input.wantsReply) !== "false";
   if (ctx.hiddenTurn) {
     return { error: "This turn was started by a note, not by the person. Answer in your own chat instead of messaging another agent." };
   }
@@ -507,7 +508,12 @@ async function executeMessageAgent(ctx: ToolContext, input: Record<string, unkno
     agentId: ctx.agentId,
     body: text,
     runId: ctx.runId,
-    relay: { kind: "from", sourceConversationId: ctx.conversationId, peers: [] },
+    // An open request: the answer is sent back to this room when it is ready.
+    relay: {
+      kind: "from",
+      sourceConversationId: ctx.conversationId,
+      peers: wantsReply ? ([{ id: ctx.agentId, label: myLabel, awaiting: true }] as never) : [],
+    },
   });
   const [here] = await ctx.store
     .select({ kind: conversations.kind })
@@ -528,7 +534,7 @@ async function executeMessageAgent(ctx: ToolContext, input: Record<string, unkno
   const { accountId, skillsRoot, db } = ctx;
   void (async () => {
     const { runTurn } = await import("../orchestrator.js");
-    const cue = prompt("cues", "agent-message", { from: myLabel, message: text.slice(0, 4_000) });
+    const cue = prompt("cues", wantsReply ? "agent-request" : "agent-message", { from: myLabel, message: text.slice(0, 4_000) });
     await runTurn(db, accountId, room.id, cue, undefined, skillsRoot, {
       cue,
       speakerId: target.id,
@@ -536,6 +542,15 @@ async function executeMessageAgent(ctx: ToolContext, input: Record<string, unkno
       onEvent: (event) => publish(accountId, room.id, event as never),
     }).catch(() => {});
   })();
+  if (wantsReply) {
+    // Waiting on another agent is a handoff: the turn ends and the answer wakes this agent.
+    ctx.handedOff = true;
+    return {
+      delivered: true,
+      to: label,
+      note: `${label} is working on it. Their answer comes back to this chat on its own, and you pass it on then. Nothing more to do this turn.`,
+    };
+  }
   return { delivered: true, to: label, note: `${label} has it and it shows in their chat with the person.` };
 }
 
