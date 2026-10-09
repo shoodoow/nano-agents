@@ -549,7 +549,7 @@ export function ChatScreen({
                   ))}
                   {relaySheet.relay?.sourceConversationId && onLoadTeamChat ? (
                     <View style={styles.teamChat}>
-                      <Text style={styles.teamChatTitle}>Team chat · read only</Text>
+                      <Text style={styles.teamChatTitle}>Where this came from · read only</Text>
                       {teamChat === null ? (
                         <Text style={styles.teamChatMuted}>Loading…</Text>
                       ) : teamChat.length === 0 ? (

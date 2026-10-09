@@ -28,6 +28,7 @@ import { takeOver } from "../../desktop/desktop.js";
 import { mergeWorkerBrief } from "./repair-input.js";
 import { MAX_ROUNDS_WITHOUT_PERSON, postToRoom, roundsSincePerson } from "../team-chat.js";
 import { publish } from "../../rooms/stream.js";
+import { resolveMention } from "../../rooms/mentions.js";
 import { recentWorkLogs } from "../work-log.js";
 import { accountHome } from "../../linux/linux.js";
 import { and, desc, eq, gt, isNull } from "drizzle-orm";
@@ -462,6 +463,80 @@ export async function executeDelegate(
         .catch(() => {});
     });
   return { delegationId: row.id, status: "started", conversationId: target.conversationId };
+}
+
+/**
+ * Passes a message to another agent on the account.
+ * Why: the person says "tell Max that..." to Zoe. Max and Zoe share no room,
+ * so the message lands in Max's private chat as a "Message from Zoe" badge
+ * (where the person will see it), and Max is woken once to take it in.
+ * An agent woken by such a message cannot send one back in the same turn,
+ * so two agents never end up talking in circles.
+ */
+async function executeMessageAgent(ctx: ToolContext, input: Record<string, unknown>): Promise<unknown> {
+  const wanted = String(input.agent ?? "").trim();
+  const text = String(input.message ?? "").trim();
+  if (!wanted || !text) return { error: "Give the agent's name and the message to pass on." };
+  if (ctx.hiddenTurn) {
+    return { error: "This turn was started by a note, not by the person. Answer in your own chat instead of messaging another agent." };
+  }
+  if ((ctx.agentMessages ?? 0) >= 3) return { error: "Three messages to other agents this turn is the limit." };
+  const roster = await ctx.store
+    .select({ id: agents.id, name: agents.name, label: agents.label })
+    .from(agents)
+    .where(and(eq(agents.accountId, ctx.accountId), eq(agents.hidden, false)));
+  const others = roster.filter((row) => row.id !== ctx.agentId);
+  const targetId = others.find((row) => row.id === wanted)?.id ?? resolveMention(wanted.replace(/^@/, ""), others);
+  const target = others.find((row) => row.id === targetId);
+  if (!target) {
+    return { error: `No agent called "${wanted}" on this account. Agents here: ${others.map((row) => row.label || row.name).slice(0, 15).join(", ") || "none"}.` };
+  }
+  const [room] = await ctx.store
+    .select({ id: conversations.id })
+    .from(conversations)
+    .where(and(eq(conversations.accountId, ctx.accountId), eq(conversations.kind, "direct"), eq(conversations.ownerAgentId, target.id)))
+    .orderBy(conversations.createdAt)
+    .limit(1);
+  const label = target.label?.trim() || target.name;
+  if (!room) return { error: `${label} has no private chat yet, so the message has nowhere to land.` };
+  const me = roster.find((row) => row.id === ctx.agentId);
+  const myLabel = me?.label?.trim() || me?.name || "Another agent";
+  await postToRoom(ctx.db, {
+    accountId: ctx.accountId,
+    conversationId: room.id,
+    agentId: ctx.agentId,
+    body: text,
+    runId: ctx.runId,
+    relay: { kind: "from", sourceConversationId: ctx.conversationId, peers: [] },
+  });
+  const [here] = await ctx.store
+    .select({ kind: conversations.kind })
+    .from(conversations)
+    .where(and(eq(conversations.id, ctx.conversationId), eq(conversations.accountId, ctx.accountId)));
+  if (here?.kind === "direct") {
+    await postToRoom(ctx.db, {
+      accountId: ctx.accountId,
+      conversationId: ctx.conversationId,
+      agentId: ctx.agentId,
+      body: text,
+      runId: ctx.runId,
+      relay: { kind: "to", sourceConversationId: room.id, peers: [{ id: target.id, label }] },
+      createdAt: ctx.nextTime(),
+    });
+  }
+  ctx.agentMessages = (ctx.agentMessages ?? 0) + 1;
+  const { accountId, skillsRoot, db } = ctx;
+  void (async () => {
+    const { runTurn } = await import("../orchestrator.js");
+    const cue = prompt("cues", "agent-message", { from: myLabel, message: text.slice(0, 4_000) });
+    await runTurn(db, accountId, room.id, cue, undefined, skillsRoot, {
+      cue,
+      speakerId: target.id,
+      acquireTimeoutMs: 300_000,
+      onEvent: (event) => publish(accountId, room.id, event as never),
+    }).catch(() => {});
+  })();
+  return { delivered: true, to: label, note: `${label} has it and it shows in their chat with the person.` };
 }
 
 /**
@@ -1109,6 +1184,7 @@ export const dispatcherExecutors: Record<string, ToolExecutor> = {
       ...(parsed.brief ? {} : { note: "No brief yet. After hiring, call set_team_brief so every teammate knows the goal and how work moves." }),
     };
   },
+  message_agent: executeMessageAgent,
   set_team_brief: async (ctx, input) => {
     const brief = String(input.brief ?? "").trim();
     if (brief.length < 10) return { error: "Write the brief: the goal, who does what, how work is handed on, where files live." };

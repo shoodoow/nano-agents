@@ -2,7 +2,8 @@ import { type MessageBlock } from "@nano-agents/shared";
 import { reactionSchema, sendMessageInputSchema } from "@nano-agents/agent-tools";
 import { and, asc, eq } from "drizzle-orm";
 import type { Store } from "../db/client.js";
-import { agents, conversations, messages, notifications, reactions, runs } from "../db/schema.js";
+import { agents, conversations, members, messages, notifications, reactions, runs } from "../db/schema.js";
+import { mentionedIds } from "./mentions.js";
 import { appendEvent } from "./events.js";
 import { publish } from "./stream.js";
 
@@ -133,79 +134,89 @@ export async function saveSendMessage(
 }
 
 /**
- * When a teammate @mentions the group owner in a group, drops a relay badge
- * into the owner's private chat (full bubble stays in the group).
- * Why: mirroring every crew message spamms the 1:1; only @pings of the lead
- * need a "Message from X" chip the person can open. Owner speech is never
- * copied — that already lives in the private chat when they talk to the person.
- * Input: store and the group message row. Output: nothing. Failures are swallowed
- * so a missing private chat never drops the group message.
+ * When someone is @mentioned in a group, drops a "Message from X" badge into
+ * the mentioned agent's private chat (the full bubble stays in the group).
+ * Why: the person talks to each agent in its private chat. A mention is the
+ * one group event that concerns that agent directly, so that is what shows up
+ * there. Mirroring every group line buried the private chat in noise.
+ * Input: store and the group message row. Output: nothing. Failures are
+ * swallowed so a missing private chat never drops the group message.
  */
 export async function mirrorGroupSpeechToOwnerDm(
   store: Store,
   message: typeof messages.$inferSelect,
 ): Promise<void> {
   try {
-    if (!message.agentId) return;
+    if (!message.agentId || message.relayKind) return;
     const [room] = await store
-      .select({ kind: conversations.kind, ownerAgentId: conversations.ownerAgentId })
+      .select({ kind: conversations.kind })
       .from(conversations)
       .where(and(eq(conversations.id, message.conversationId), eq(conversations.accountId, message.accountId)));
-    if (!room || room.kind !== "group" || !room.ownerAgentId) return;
-    // Owner bubbles stay in the group only — never echo them into the 1:1.
-    if (message.agentId === room.ownerAgentId) return;
-
-    const [owner] = await store
-      .select({ name: agents.name, label: agents.label })
-      .from(agents)
-      .where(and(eq(agents.id, room.ownerAgentId), eq(agents.accountId, message.accountId)));
-    if (!owner) return;
-    // Only when the lead is @mentioned — otherwise the person opens the group.
-    if (!bodyMentionsName(message.body, [owner.name, owner.label])) return;
-
-    const [dm] = await store
-      .select({ id: conversations.id })
-      .from(conversations)
-      .where(
-        and(
-          eq(conversations.accountId, message.accountId),
-          eq(conversations.kind, "direct"),
-          eq(conversations.ownerAgentId, room.ownerAgentId),
-        ),
-      )
-      .orderBy(asc(conversations.createdAt))
-      .limit(1);
-    if (!dm) return;
-    const [copy] = await store
-      .insert(messages)
-      .values({
-        accountId: message.accountId,
-        conversationId: dm.id,
-        agentId: message.agentId,
-        runId: message.runId,
-        viaAgentId: null,
-        body: message.body,
-        kind: message.kind,
-        payload: message.payload,
-        replyTo: null,
-        sourceConversationId: message.conversationId,
-        relayKind: "from",
-        relayPeers: [] as RelayPeer[],
-        createdAt: message.createdAt,
-      })
-      .returning();
-    if (!copy) return;
-    const event = { type: "message" as const, message: copy };
-    try {
-      const row = await appendEvent(store, {
-        accountId: message.accountId,
-        conversationId: dm.id,
-        runId: message.runId,
-        event,
-      });
-      publish(message.accountId, dm.id, { ...event, cursor: row.id });
-    } catch {
-      publish(message.accountId, dm.id, event);
+    if (!room || room.kind !== "group") return;
+    const roster = await store
+      .select({ id: agents.id, name: agents.name, label: agents.label })
+      .from(members)
+      .innerJoin(agents, eq(members.agentId, agents.id))
+      .where(and(eq(members.conversationId, message.conversationId), eq(members.accountId, message.accountId)));
+    const mentioned = mentionedIds(message.body, roster).filter((id) => id !== message.agentId);
+    for (const agentId of mentioned) {
+      const [dm] = await store
+        .select({ id: conversations.id })
+        .from(conversations)
+        .where(
+          and(
+            eq(conversations.accountId, message.accountId),
+            eq(conversations.kind, "direct"),
+            eq(conversations.ownerAgentId, agentId),
+          ),
+        )
+        .orderBy(asc(conversations.createdAt))
+        .limit(1);
+      if (!dm) continue;
+      const [already] = await store
+        .select({ id: messages.id })
+        .from(messages)
+        .where(
+          and(
+            eq(messages.conversationId, dm.id),
+            eq(messages.sourceConversationId, message.conversationId),
+            eq(messages.agentId, message.agentId),
+            eq(messages.body, message.body),
+          ),
+        )
+        .limit(1);
+      if (already) continue;
+      const [copy] = await store
+        .insert(messages)
+        .values({
+          accountId: message.accountId,
+          conversationId: dm.id,
+          agentId: message.agentId,
+          runId: message.runId,
+          viaAgentId: null,
+          body: message.body,
+          kind: message.kind,
+          payload: message.payload,
+          replyTo: null,
+          sourceConversationId: message.conversationId,
+          relayKind: "from",
+          relayPeers: [] as RelayPeer[],
+          createdAt: message.createdAt,
+        })
+        .returning();
+      if (!copy) continue;
+      const event = { type: "message" as const, message: copy };
+      try {
+        const row = await appendEvent(store, {
+          accountId: message.accountId,
+          conversationId: dm.id,
+          runId: message.runId,
+          event,
+        });
+        publish(message.accountId, dm.id, { ...event, cursor: row.id });
+      } catch {
+        publish(message.accountId, dm.id, event);
+      }
     }
   } catch {
     // The group bubble already committed; a mirror miss must not fail the send.

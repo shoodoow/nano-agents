@@ -10,6 +10,7 @@ import {
   groupConversationInputSchema,
   groupCreateInputSchema,
   teamBriefInputSchema,
+  messageAgentInputSchema,
   keyInputSchema,
   memberAddInputSchema,
   notifyInputSchema,
@@ -78,6 +79,11 @@ export const allToolDefinitions: ToolDefinition[] = [
     set: "team",
     surfaces: ["dispatcher"],
     inputSchema: groupCreateInputSchema,
+  },
+  {
+    name: "message_agent",
+    surfaces: ["dispatcher"],
+    inputSchema: messageAgentInputSchema,
   },
   {
     name: "set_team_brief",

@@ -4,7 +4,7 @@
  */
 import { and, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
-import { accounts, agents, delegations, jobs, messages, reactions, routines, summaryItems } from "../db/schema.js";
+import { accounts, agents, conversations, delegations, jobs, messages, reactions, routines, summaryItems } from "../db/schema.js";
 import { buildContext, type PersonContext } from "../memory/context.js";
 import { stallMessage } from "./narration-stall.js";
 import { factsAboutMentioned, memoriesFor, profileFor } from "../memory/memory.js";
@@ -15,7 +15,7 @@ import { fileBlocksFromText, inlineSharedOutputBlocks } from "../rooms/uploads.j
 import { RECENT_WINDOW, SUMMARY_WINDOW } from "./constants.js";
 import { propose } from "../skills/proposals.js";
 import { skillCatalogForAgent } from "../skills/agent-skills.js";
-import { blocksToText, type TurnEvent } from "../rooms/send-message.js";
+import { blocksToText, mirrorGroupSpeechToOwnerDm, type TurnEvent } from "../rooms/send-message.js";
 import { runAgentLoop } from "./agent-loop.js";
 import { teamContextFor } from "./team-chat.js";
 import { computerFacts } from "../computer/computer.js";
@@ -452,6 +452,7 @@ export async function speakOnce(
     })
     .returning();
   saved.push(wrapped!);
+  await mirrorGroupSpeechToOwnerDm(db, wrapped!);
   await emit({ type: "message", message: wrapped! });
   if (result.proposal) {
     await propose(db, accountId, {
@@ -513,7 +514,28 @@ async function loadPerson(db: Db, accountId: string, agentId: string): Promise<P
       mention: member.name,
     })),
     groups: groups.map((group) => ({ id: group.conversationId, title: group.title, owned: group.owned })),
+    others: await otherAgents(db, accountId, agentId, new Set(team.map((member) => member.id))),
   };
+}
+
+/** The person's other top-level agents: those with their own private chat. */
+async function otherAgents(
+  db: Db,
+  accountId: string,
+  agentId: string,
+  teamIds: Set<string>,
+): Promise<{ label: string; role: string }[]> {
+  const rows = await db
+    .select({ id: agents.id, name: agents.name, label: agents.label, role: agents.role })
+    .from(agents)
+    .innerJoin(conversations, and(eq(conversations.ownerAgentId, agents.id), eq(conversations.kind, "direct")))
+    .where(and(eq(agents.accountId, accountId), eq(agents.hidden, false)))
+    .limit(40);
+  const seen = new Set<string>();
+  return rows
+    .filter((row) => row.id !== agentId && !teamIds.has(row.id) && !seen.has(row.id) && Boolean(seen.add(row.id)))
+    .slice(0, 12)
+    .map((row) => ({ label: row.label?.trim() || row.name, role: row.role?.trim() ?? "" }));
 }
 
 /**

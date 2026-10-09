@@ -77,6 +77,12 @@ export const groupCreateInputSchema = z.object({
   brief: z.string().trim().max(6_000).optional(),
 });
 
+export const messageAgentInputSchema = z.object({
+  /** The other agent's name as listed under "Other agents" (or its id). */
+  agent: z.string().trim().min(1).max(120),
+  message: z.string().trim().min(1).max(6_000),
+});
+
 export const teamBriefInputSchema = z.object({
   brief: z.string().trim().min(10).max(6_000),
   /** The group to brief. Optional when you own one group or are speaking in it. */

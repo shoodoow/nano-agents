@@ -11,6 +11,7 @@ import { and, asc, desc, eq, gt, isNull } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
 import { agents, conversations, delegations, messages } from "../db/schema.js";
 import { appendEvent } from "../rooms/events.js";
+import { mirrorGroupSpeechToOwnerDm } from "../rooms/send-message.js";
 import { publish } from "../rooms/stream.js";
 import { prompt } from "../prompt/prompts.js";
 
@@ -50,6 +51,8 @@ export async function postToRoom(
     })
     .returning();
   if (!row) throw new Error("Message insert returned no row.");
+  // A mention in a group shows up in the mentioned agent's private chat.
+  if (!input.relay) await mirrorGroupSpeechToOwnerDm(db, row);
   const event = { type: "message" as const, message: row };
   try {
     const saved = await appendEvent(db, {
@@ -76,53 +79,6 @@ export async function leadDirectRoom(db: Db, accountId: string, leadAgentId: str
     .orderBy(asc(conversations.createdAt))
     .limit(1);
   return room?.id ?? null;
-}
-
-/**
- * Drops "Message from X" badges into the lead's private chat for what
- * teammates said in the group.
- * Input: the group id, its lead, and the messages one round produced.
- * Output: how many badges were added.
- */
-export async function relayTeamSpeech(
-  db: Db,
-  input: { accountId: string; groupId: string; leadAgentId: string; directRoomId: string; rows: MessageRow[] },
-): Promise<number> {
-  let added = 0;
-  // One badge per teammate per round, carrying their last word. The whole
-  // exchange is one tap away in the team chat; a badge per line buried the
-  // lead's own summary.
-  const lastByTeammate = new Map<string, MessageRow>();
-  for (const row of input.rows) {
-    if (!row.agentId || row.agentId === input.leadAgentId || row.relayKind) continue;
-    lastByTeammate.set(row.agentId, row);
-  }
-  for (const row of lastByTeammate.values()) {
-    if (!row.agentId) continue;
-    const [already] = await db
-      .select({ id: messages.id })
-      .from(messages)
-      .where(
-        and(
-          eq(messages.conversationId, input.directRoomId),
-          eq(messages.sourceConversationId, input.groupId),
-          eq(messages.agentId, row.agentId),
-          eq(messages.body, row.body),
-        ),
-      )
-      .limit(1);
-    if (already) continue;
-    await postToRoom(db, {
-      accountId: input.accountId,
-      conversationId: input.directRoomId,
-      agentId: row.agentId,
-      body: row.body,
-      runId: row.runId,
-      relay: { kind: "from", sourceConversationId: input.groupId, peers: [] },
-    });
-    added += 1;
-  }
-  return added;
 }
 
 /** Renders one round of group messages as lines the lead can read. */
@@ -182,7 +138,6 @@ export async function reportRoundToLead(
   if (spoken.length === 0) return;
   const directRoomId = await leadDirectRoom(db, input.accountId, input.leadAgentId);
   if (!directRoomId) return;
-  await relayTeamSpeech(db, { ...input, directRoomId });
   const ids = [...new Set(spoken.map((row) => row.agentId!))];
   const people = await db
     .select({ id: agents.id, name: agents.name, label: agents.label })

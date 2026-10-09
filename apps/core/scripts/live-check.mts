@@ -24,8 +24,8 @@ if (fresh) {
     .insert(agents)
     .values({
       accountId: source.accountId,
-      name: `LiveLead-${Math.random().toString(36).slice(2, 6)}`,
-      label: "Live Lead",
+      name: `LiveLead-${process.env.LIVE_LABEL ?? "Lead"}-${Math.random().toString(36).slice(2, 6)}`,
+      label: process.env.LIVE_LABEL ?? "Live Lead",
       role: source.role,
       personality: source.personality,
       jobDescription: source.jobDescription,

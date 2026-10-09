@@ -26,6 +26,8 @@ export type PersonContext = {
   now: Date;
   teammates: { id?: string; label: string; role: string; mention: string }[];
   groups?: { id: string; title: string; memberCount?: number; owned?: boolean }[];
+  /** The person's other agents: not teammates, reachable with message_agent. */
+  others?: { label: string; role: string }[];
 };
 
 export type BuiltContext = {
@@ -190,7 +192,14 @@ function personBlock(person: PersonContext): string {
             .slice(0, 10)
             .map((group) => `- "${group.title.replace(/\s+/g, " ").trim().slice(0, 60)}" (id:${group.id}${typeof group.memberCount === "number" ? `, ${group.memberCount} members` : ""})`)
             .join("\n")}${person.groups.length > 10 ? `\n+${person.groups.length - 10} more` : ""}`;
-  return `Person: ${name}. You speak to them. They are not a teammate.\n${teammates}${groups}`;
+  const others =
+    person.others && person.others.length > 0
+      ? `\nOther agents (each has its own chat with the person; pass one a message with message_agent): ${person.others
+          .slice(0, 12)
+          .map((other) => `${other.label.replace(/\s+/g, " ").trim().slice(0, 40)}${other.role.trim() ? ` (${other.role.replace(/\s+/g, " ").trim().slice(0, 30)})` : ""}`)
+          .join(", ")}`
+      : "";
+  return `Person: ${name}. You speak to them. They are not a teammate.\n${teammates}${groups}${others}`;
 }
 
 /** The person's clock. Kept apart from the roster because it changes every minute. */

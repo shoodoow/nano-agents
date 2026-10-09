@@ -150,7 +150,7 @@ export function toModelMessages(
     // by it. Sent as its own words, the model answered itself or stayed quiet.
     const other = Boolean(reader && row.agentId && row.agentId !== reader.selfId);
     const role = row.agentId && !other ? "assistant" : "user";
-    const where = row.relayKind ? ", in the team chat" : "";
+    const where = row.relayKind ? ", passed on to you" : "";
     const speaker = other ? `[${reader!.names.get(row.agentId!) ?? "teammate"}${where}]: ` : "";
     const body = `${speaker}${tailSlice(row.body)}`;
     const linked = row.replyTo ? formatReplyBody(body, byId.get(row.replyTo) ?? null) : body;

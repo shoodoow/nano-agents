@@ -23,6 +23,7 @@ describe("dispatcher SDK tools", () => {
       "list_routines",
       "list_skills",
       "list_team",
+      "message_agent",
       "notify_user",
       "react_to_message",
       "read",

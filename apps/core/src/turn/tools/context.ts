@@ -50,6 +50,8 @@ export type ToolContext = {
   /** A worker or teammate was started this turn; the loop ends once the person has a bubble. */
   handedOff?: boolean;
   /** Hidden wake (worker result, routine): no opening ack is owed and silence is allowed. */
+  /** Messages passed to other agents this turn. */
+  agentMessages?: number;
   hiddenTurn?: boolean;
   /** Agent id that should speak Auto-review cards (parent when a worker is blocked). */
   voiceAgentId?: string;
