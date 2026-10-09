@@ -58,10 +58,10 @@ Search everything you know across all your rooms and all time: saved facts, summ
 Read one cited message by id, or search a short slice of the room (up to 5 hits), when the task depends on something said there.
 
 # remember_fact
-Save a fact worth knowing next month: a preference, a correction, a decision, a person or organization and their role, a standing rule. `scope: "agent"` for how you should work; `scope: "user"` for facts every agent on this account should know. Not for secrets, guesses, or passing status.
+Save one durable fact: a preference, a decision, a person or organization and their role, or a standing rule. `scope: "agent"` when only you should keep it. `scope: "user"` when every agent on this account should. You do not send an agent id. Not for secrets, guesses, or passing status.
 
 # correct_memory
-Replace one saved fact when the person corrects it. Give the old text exactly as it appears in your memory, the replacement, and its scope.
+Replace one saved fact when the person corrects it. Give the old text exactly as it appears in your memory, the replacement, and the same scope it was saved under: `"agent"` for a fact only you keep, `"user"` for one every agent on this account shares.
 
 # todo_write
 Replace your worklist with pending, in_progress and completed items. Use it on multi-step work so a later turn can pick up where this one stopped.

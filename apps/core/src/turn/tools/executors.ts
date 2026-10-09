@@ -108,7 +108,7 @@ async function executeRememberFact(ctx: ToolContext, input: Record<string, unkno
   const saved = await remember(ctx.db, ctx.accountId, {
     ...parsed,
     messageId: await memorySourceId(ctx, parsed.messageId),
-    agentId: parsed.scope === "agent" ? ctx.agentId : undefined,
+    agentId: parsed.scope === "agent" ? ctx.agentId : null,
   });
   await embedSummaryBacklog(ctx.db, ctx.accountId, ctx.conversationId).catch(() => {});
   return { memoryId: saved.id, scope: saved.scope, body: saved.body };
@@ -124,7 +124,7 @@ async function executeCorrectMemory(ctx: ToolContext, input: Record<string, unkn
   const saved = await correct(ctx.db, ctx.accountId, {
     ...parsed,
     messageId: await memorySourceId(ctx, parsed.messageId),
-    agentId: parsed.scope === "agent" ? ctx.agentId : undefined,
+    agentId: parsed.scope === "agent" ? ctx.agentId : null,
   });
   await embedSummaryBacklog(ctx.db, ctx.accountId, ctx.conversationId).catch(() => {});
   return { memoryId: saved.id, scope: saved.scope, body: saved.body };

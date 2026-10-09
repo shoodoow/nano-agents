@@ -189,15 +189,19 @@ export const readHistoryToolInputSchema = z.object({
   search: z.string().optional(),
 });
 
+const memoryScopeSchema = z
+  .enum(["agent", "user"])
+  .describe('"agent" is kept by this agent only. "user" is shared with every agent on the account. Do not send an agent id.');
+
 export const rememberFactToolInputSchema = z.object({
-  scope: z.enum(["agent", "user"]),
+  scope: memoryScopeSchema,
   body: z.string().trim().min(3).max(1000),
   /** Source message. Optional: defaults to the message that opened this turn. */
   messageId: z.string().uuid().optional(),
 });
 
 export const correctMemoryToolInputSchema = z.object({
-  scope: z.enum(["agent", "user"]),
+  scope: memoryScopeSchema,
   oldBody: z.string().trim().min(3).max(1000),
   body: z.string().trim().min(3).max(1000),
   messageId: z.string().uuid().optional(),
