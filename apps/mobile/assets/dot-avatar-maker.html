@@ -1693,7 +1693,7 @@ if(MARK && main){
 
 function resize(){ if(!main) return; const r = stage.getBoundingClientRect(); main.setSize(Math.max(1,r.width), Math.max(1,r.height)); dirty = true; }
 let dirty = true, popT = 1, T0 = 0, motion = !(VIEW && VIEW.motion === false) && !matchMedia('(prefers-reduced-motion: reduce)').matches;
-function rebuildMain(){ if(!main) return; const t0 = performance.now(); main.build(cfg(), MAIN_RES); popT = 0; dirty = true; if(performance.now()-t0 > 120) console.info('build', (performance.now()-t0).toFixed(0)+'ms'); }
+function rebuildMain(){ if(!main) return; const t0 = performance.now(); main.build(cfg(), MAIN_RES); popT = 0; dirty = true; if(MARK) kick(); if(performance.now()-t0 > 120) console.info('build', (performance.now()-t0).toFixed(0)+'ms'); }
 
 /* ---------- turntable interaction ---------- */
 const drag = {on:false, x:0, y:0, yaw:VIEW && +VIEW.yaw || 0, vel:0, touched:false};
@@ -1719,8 +1719,11 @@ if('IntersectionObserver' in window && !MARK) new IntersectionObserver(([e]) => 
   onScreen = e.isIntersecting; document.documentElement.classList.toggle('offscreen', !onScreen);
   if(onScreen){ dirty = true; kick(); scheduleThumbWork(); } }).observe(stage);
 if(MARK){ onScreen = true; dirty = true; kick(); }
+// Inside the app: a still mark (the PNG bakery) has nothing to animate, so its loop stops once the frame is drawn
+// and rebuildMain() starts it again; a live mark sways at 30fps, which reads the same at avatar size for half the GPU work.
+const FRAME_MS = MARK ? 33 : 15.5;
 function loop(now){
-  if(!onScreen){ looping = false; return; }
+  if(!onScreen || (MARK && !motion && !dirty && popT >= 1 && !drag.on && resetT < 0)){ looping = false; return; }
   requestAnimationFrame(loop);
   const dt = Math.min(.05, (now-last)/1000); last = now;
   if(main){
@@ -1741,7 +1744,7 @@ function loop(now){
     if(motion){ nextBlink -= dt; if(nextBlink < 0){ blinkT = 0; nextBlink = 2.4 + Math.random()*3.2; } }
     if(blinkT >= 0){ blinkT += dt; const k = blinkT > .15 ? 1 : 1 - Math.sin(blinkT/.15*PI)*.9; for(const e of main.eyes) e.scale.y = e.userData.sy*k; if(blinkT > .15) blinkT = -1; }
     const active = drag.on || Math.abs(drag.vel) > .001 || popT < 1 || resetT >= 0 || !isSettled();
-    if(dirty && (active || now - lastDraw > 15.5)){ lastDraw = now;
+    if(dirty && (active || now - lastDraw > FRAME_MS)){ lastDraw = now;
       main.coatMat.uniforms.uTime.value = T0; main.place(FRAME); main.render(); announceReady(); dirty = live > 0 || resetT >= 0 || popT < 1 || Math.abs(drag.vel) > .001 || !isSettled(); }
   }
 }

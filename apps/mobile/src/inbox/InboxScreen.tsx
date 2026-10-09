@@ -107,7 +107,7 @@ export function InboxScreen({
                   onPress={() => onOpenGroup(group.id)}
                   style={({ pressed }) => [styles.row, pressed && styles.pressed]}
                 >
-                  <GroupCluster members={group.members} size={40} />
+                  <GroupCluster members={group.members} size={36} />
                   <View style={styles.rowBody}>
                     <Text style={styles.name} numberOfLines={1}>
                       {group.title}

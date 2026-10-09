@@ -32,6 +32,7 @@ import {
   type MarkLook,
 } from "../ui/Mark";
 import { openFileBlock } from "./blocks";
+import { PrimaryButton } from "../ui/PrimaryButton";
 import { collectShares, type SharedFile } from "./shares";
 
 type Page = "info" | "instructions" | "provider" | "routine";
@@ -81,7 +82,7 @@ export function BotInfoScreen({
   providers: ProviderSetting[];
   routines: Routine[];
   onChange: (profile: RosterAgent) => void;
-  onSave: () => void;
+  onSave: () => void | Promise<unknown>;
   onSaveNotify: (profile: RosterAgent) => void;
   onBack: () => void;
   onApprovals: () => void;
@@ -265,7 +266,7 @@ function InfoPage({
   onResetMark: () => void;
   onPickAvatar: () => void;
   onChange: (profile: RosterAgent) => void;
-  onSave: () => void;
+  onSave: () => void | Promise<unknown>;
   onSaveNotify: (profile: RosterAgent) => void;
   onInstructions: () => void;
   onProvider: () => void;
@@ -562,14 +563,7 @@ function InfoPage({
                 <Switch value={profile.hidden} onValueChange={(hidden) => onChange({ ...profile, hidden })} />
               </View>
             </View>
-            <Pressable
-              accessibilityRole="button"
-              disabled={!saveReady}
-              onPress={onSave}
-              style={[styles.save, !saveReady ? styles.saveDisabled : null]}
-            >
-              <Text style={styles.saveText}>Save changes</Text>
-            </Pressable>
+            <PrimaryButton label="Save changes" disabled={!saveReady} onPress={onSave} style={styles.saveSpace} />
           </View>
         )}
       </ScrollView>
@@ -648,7 +642,7 @@ function InstructionsPage({
 }: {
   profile: RosterAgent;
   onChange: (profile: RosterAgent) => void;
-  onSave: () => void;
+  onSave: () => void | Promise<unknown>;
 }) {
   return (
     <View style={styles.screen}>
@@ -676,9 +670,7 @@ function InstructionsPage({
           multiline
           style={styles.area}
         />
-        <Pressable accessibilityRole="button" onPress={onSave} style={styles.save}>
-          <Text style={styles.saveText}>Save changes</Text>
-        </Pressable>
+        <PrimaryButton label="Save changes" onPress={onSave} style={styles.saveSpace} />
       </ScrollView>
     </View>
   );
@@ -1106,6 +1098,7 @@ function createStyles(colors: ColorPalette) {
   },
   saveDisabled: { opacity: 0.4 },
   saveText: { color: colors.bg, fontSize: 16, fontWeight: "600" },
+  saveSpace: { marginTop: 20 },
   tabEmpty: { flex: 1, alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: 48 },
   shareList: { marginHorizontal: 16, marginTop: 12, backgroundColor: colors.bubble, borderRadius: 14, overflow: "hidden" },
   shareRow: { paddingHorizontal: 14, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },

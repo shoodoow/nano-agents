@@ -120,7 +120,7 @@ export function CustomPluginPage({
   onSignIn,
   scrollStyle,
 }: {
-  onSave: (name: string, url: string, secret: string) => void;
+  onSave: (name: string, url: string, secret: string) => void | Promise<unknown>;
   onSignIn: (name: string, url: string) => void;
   scrollStyle: ViewStyle;
 }) {

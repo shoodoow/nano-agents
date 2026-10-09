@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Linking, Platform } from "react-native";
-import { router } from "expo-router";
+import { router, usePathname } from "expo-router";
 import type { MenuPage, SignedAccount } from "../account/MenuSheet";
 import { authCallbackURL } from "../auth-callback-url";
 import * as DocumentPicker from "expo-document-picker";
@@ -41,6 +41,7 @@ import { resolveMarkLook } from "../ui/Mark";
 import { documentPickerOptions } from "../media/documentPickerOptions";
 import { cameraPickerOptions, imageLibraryPickerOptions } from "../media/imagePickerOptions";
 import type { GroupFace } from "../ui/GroupCluster";
+import type { ToastMessage } from "../ui/Toast";
 
 configureAuthCookie(authClient.getCookie);
 const core = createCore();
@@ -156,6 +157,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [menu, setMenu] = useState<MenuPage | null>(null);
   const [afterSignup, setAfterSignup] = useState(false);
   const [draft, setDraft] = useState("");
+  // Unsent text per chat, so leaving a chat and coming back keeps what was typed.
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const draftsRef = useRef(new Map<string, string>());
   const [messages, setMessages] = useState<Bubble[]>([]);
   const [sending, setSending] = useState(false);
   const [roomActivity, setRoomActivity] = useState<RoomActivityPhase | null>(null);
@@ -172,6 +177,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [replyTo, setReplyTo] = useState<Bubble | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [note, setNote] = useState("");
+  const [toast, setToast] = useState<ToastMessage | null>(null);
+  const toastId = useRef(0);
+  /** Raises the short banner: green tick for done, red mark for failed. */
+  const notify = useCallback((text: string, tone: ToastMessage["tone"] = "success"): void => {
+    toastId.current += 1;
+    setToast({ id: toastId.current, at: Date.now(), text, tone });
+  }, []);
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [toolApprovals, setToolApprovals] = useState<ToolApproval[]>([]);
   const [routines, setRoutines] = useState<Routine[]>([]);
@@ -190,6 +202,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [pendingCount, setPendingCount] = useState(0);
   const [autoReview, setAutoReview] = useState(true);
   const [autoTimeZone, setAutoTimeZone] = useState(true);
+  const pathname = usePathname();
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
   const account = accounts.find((row) => row.id === accountId) ?? null;
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -199,8 +214,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
    * Output: nothing. The note becomes the error message.
    */
   const show = useCallback((error: unknown): void => {
-    setNote(error instanceof Error ? error.message : "The request failed.");
-  }, []);
+    const text = error instanceof Error ? error.message : "The request failed.";
+    setNote(text);
+    // Sheets have no error line of their own, so the banner carries it there.
+    notify(text, "error");
+  }, [notify]);
 
   /**
    * Loads the Google session and the roster for that account id.
@@ -231,7 +249,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
     setMenu(null);
     closeSheets();
-    router.replace("/");
+    // Only leave for the inbox when some other screen is up (sign-in return).
+    // On a cold start the inbox is already showing; replacing it there threw
+    // away the list that had just drawn and built it a second time.
+    if (pathnameRef.current !== "/") {
+      router.replace("/");
+    }
     setNote("");
     await loadGroups(accountIdFromSession, roster);
     // Best-effort push registration + badge: no EAS projectId, denied
@@ -465,16 +488,38 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     return { isGroup: chat.kind === "group", agentName: chat.agent.name };
   }
 
+  // What each bubble on screen looked like as text, so a poll can tell "same
+  // as before" without comparing field by field.
+  const bubblePrints = useRef(new WeakMap<Bubble, string>());
+
   function mergeThread(fresh: Bubble[]): void {
     setMessages((current) => {
-      const byId = new Map(fresh.map((bubble) => [bubble.id, bubble]));
-      const merged = [...fresh];
+      const prints = bubblePrints.current;
+      const printOf = (bubble: Bubble): string => {
+        let print = prints.get(bubble);
+        if (print === undefined) {
+          print = JSON.stringify(bubble);
+          prints.set(bubble, print);
+        }
+        return print;
+      };
+      const before = new Map(current.map((bubble) => [bubble.id, bubble]));
+      const byId = new Set(fresh.map((bubble) => bubble.id));
+      // The open chat polls every 2s. An unchanged row keeps its old object,
+      // and an unchanged thread keeps the old array, so React skips the
+      // render entirely instead of redrawing every bubble each tick.
+      const merged = fresh.map((bubble) => {
+        const old = before.get(bubble.id);
+        return old && printOf(old) === printOf(bubble) ? old : bubble;
+      });
       for (const bubble of current) {
         if (!byId.has(bubble.id)) {
           merged.push(bubble);
         }
       }
-      return sortBubbles(merged);
+      const next = sortBubbles(merged);
+      const same = next.length === current.length && next.every((bubble, index) => bubble === current[index]);
+      return same ? current : next;
     });
   }
 
@@ -608,6 +653,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       subtitle: kind === "group" ? names.join(", ").slice(0, 60) : "",
       memberIds: memberRows.map((member) => member.agentId),
     };
+    const leaving = lastChatRef.current?.conversationId;
+    if (leaving) draftsRef.current.set(leaving, draftRef.current);
     setAgents(roster);
     setConversationId(room.id);
     setLastChat(opened);
@@ -616,7 +663,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setContextRing(null);
     void loadContextLine(room.id);
     setMessages(toBubbles(history, taps, roster));
-    setDraft("");
+    setDraft(draftsRef.current.get(room.id) ?? "");
     setReplyTo(null);
     setAttachments([]);
     setNote("");
@@ -822,7 +869,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   async function saveVaultSecret(name: string, secret: string): Promise<void> {
     try {
       await core.saveSecret(accountId.trim(), { name, secret });
-      setNote("Secret saved.");
+      notify("Secret saved");
       if (conversationId) {
         beginTurn(turnMetaFromScreen().isGroup, turnMetaFromScreen().agentName);
         expectReply.current = true;
@@ -1106,7 +1153,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         ? { ...currentChat, agent: saved, title: currentChat.kind === "group" ? currentChat.title : saved.name }
         : currentChat,
     );
-    setNote("Saved.");
+    notify("Changes saved");
   }
 
   /**
@@ -1180,7 +1227,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   ): Promise<void> {
     await core.saveProvider(accountId, { provider, secret, baseUrl });
     setProviders(await core.listProviders(accountId));
-    setNote("Provider saved.");
+    notify("Provider saved");
   }
 
   async function refreshPlugins(): Promise<void> {
@@ -1244,6 +1291,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     plugins,
     menu,
     setMenu,
+    toast,
     draft,
     setDraft,
     messages,
@@ -1351,6 +1399,7 @@ type SessionValue = {
   menu: MenuPage | null;
   setMenu: (page: MenuPage | null) => void;
   draft: string;
+  toast: ToastMessage | null;
   setDraft: (value: string) => void;
   messages: Bubble[];
   sending: boolean;

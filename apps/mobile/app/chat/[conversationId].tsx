@@ -7,6 +7,7 @@ import { useSession } from "../../src/session/SessionProvider";
 import { Avatar } from "../../src/ui/Avatar";
 import { IconMonitor } from "../../src/ui/icons";
 import { colors } from "../../src/theme/tokens";
+import { Toast } from "../../src/ui/Toast";
 
 export default function ChatRoute() {
   const { conversationId } = useLocalSearchParams<{ conversationId: string }>();
@@ -42,7 +43,7 @@ export default function ChatRoute() {
         >
           <Avatar
             id={chat.agent.id}
-            size={22}
+            size={26}
             round
             shape={chat.agent.markShape}
             color={chat.agent.markColor}
@@ -88,6 +89,7 @@ export default function ChatRoute() {
   }
 
   return (
+    <>
     <ChatScreen
       agent={chat.agent}
       conversationId={chat.conversationId}
@@ -137,5 +139,8 @@ export default function ChatRoute() {
         if (target) void session.openAgent(target).catch(session.show);
       }}
     />
+    {/* Errors already print above the composer. */}
+    <Toast tones={["success"]} />
+    </>
   );
 }

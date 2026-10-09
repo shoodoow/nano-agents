@@ -1,5 +1,6 @@
 import { View, Text } from "react-native";
 import { Avatar } from "./Avatar";
+import { colors } from "../theme/tokens";
 
 export type GroupFace = {
   id: string;
@@ -11,46 +12,43 @@ export type GroupFace = {
   avatarUrl?: string | null;
 };
 
+const MAX_FACES = 3;
+const RING = 2;
+
 /**
- * Draws the overlapping member marks used for a group.
- * Why: a group is a pile of faces plus a +N count, not one agent's avatar.
- * Input: members and the pixel height of the pile. Output: the cluster.
+ * Draws a group as an avatar stack: equal circles in a row, each overlapping
+ * the one before, with a "+N" circle for the members that do not fit.
+ * Why: the old pile used three different sizes at three heights, which read
+ * as clutter at list size. Same-size faces on one line with a ring in the
+ * page color between them is the pattern people know (shadcn's AvatarGroup).
+ * Input: members and the pixel size of one face. Output: the stack.
  */
 export function GroupCluster({ members, size = 56 }: { members: GroupFace[]; size?: number }) {
-  const shown = members.slice(0, 3);
-  const extra = Math.max(0, members.length - shown.length);
-  const slots = [
-    { scale: 0.62, x: 0, y: 0.28, z: 1 },
-    { scale: 0.86, x: 0.42, y: 0, z: 3 },
-    { scale: 0.58, x: 0.92, y: 0.34, z: 2 },
-  ];
+  const shown = members.slice(0, MAX_FACES);
+  const extra = members.length - shown.length;
+  const overlap = -Math.round(size * 0.3);
+  const circle = {
+    width: size,
+    height: size,
+    borderRadius: size / 2,
+    borderWidth: RING,
+    borderColor: colors.bg,
+    backgroundColor: colors.control,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+    overflow: "hidden" as const,
+  };
   return (
-    <View style={{ width: size * 2.15 + (extra > 0 ? size * 0.7 : 0), height: size }}>
-      {shown.map((member, index) => {
-        const slot = slots[index] ?? slots[0]!;
-        const face = Math.round(size * slot.scale);
-        return (
-          <View
-            key={member.id}
-            style={{ position: "absolute", left: size * slot.x, top: size * slot.y, zIndex: slot.z }}
-          >
-            <Face member={member} size={face} />
-          </View>
-        );
-      })}
+    <View style={{ flexDirection: "row", alignItems: "center" }}>
+      {shown.map((member, index) => (
+        <View key={member.id} style={[circle, index > 0 ? { marginLeft: overlap } : null]}>
+          <Face member={member} size={size - RING * 2} />
+        </View>
+      ))}
       {extra > 0 ? (
-        <Text
-          style={{
-            position: "absolute",
-            left: size * 1.55,
-            top: size * 0.28,
-            color: "#8E8E93",
-            fontSize: Math.round(size * 0.34),
-            fontWeight: "700",
-          }}
-        >
-          +{extra}
-        </Text>
+        <View style={[circle, { marginLeft: overlap }]}>
+          <Text style={{ color: colors.muted, fontSize: Math.round(size * 0.32), fontWeight: "600" }}>+{extra}</Text>
+        </View>
       ) : null}
     </View>
   );
@@ -61,6 +59,7 @@ function Face({ member, size }: { member: GroupFace; size: number }) {
     <Avatar
       id={member.id}
       size={size}
+      round
       shape={member.markShape}
       color={member.markColor}
       material={member.markMaterial}

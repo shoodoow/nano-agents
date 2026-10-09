@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -12,13 +12,13 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { Image } from "expo-image";
-import { File, Paths } from "expo-file-system";
+import { Directory, File, Paths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import { VideoView, useVideoPlayer } from "expo-video";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { MessageBlock } from "../api";
 import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
-import { IconCloseLight, IconPlay } from "../ui/icons";
+import { IconCloseLight, IconDownload, IconDownloadLight, IconFullscreen, IconPlay } from "../ui/icons";
 
 export type FetchBlob = (messageId: string, index: number) => Promise<{ url?: string; previewUrl?: string }>;
 export type ImageBlock = Extract<MessageBlock, { kind: "image" }>;
@@ -64,6 +64,23 @@ function useImageUri(block: ImageBlock, fetchBlob: FetchBlob | undefined, full =
   if (inline) return inline;
   if (!blob) return null;
   return (full ? blob.url || blob.previewUrl : blob.previewUrl || blob.url) ?? null;
+}
+
+/** The original picture as a file block, so it can go to the share sheet. */
+async function imageAsFile(block: ImageBlock, fetchBlob: FetchBlob | undefined, position: number): Promise<FileBlock | null> {
+  let url = block.url;
+  if (!url && block.blobRef) {
+    const key = `${block.blobRef.messageId}:${block.blobRef.index}`;
+    const blob = blobCache.get(key) ?? (fetchBlob ? await fetchBlob(block.blobRef.messageId, block.blobRef.index) : null);
+    if (blob) blobCache.set(key, blob);
+    url = blob?.url ?? blob?.previewUrl ?? "";
+  }
+  url = url || block.previewUrl || "";
+  if (!url) return null;
+  const mime = /^data:(image\/[a-z0-9.+-]+)/i.exec(url)?.[1];
+  const extension = mime ? mime.split("/")[1]!.replace("jpeg", "jpg").replace("svg+xml", "svg") : (/\.(png|jpe?g|gif|webp|heic)([?#]|$)/i.exec(url)?.[1] ?? "jpg");
+  const named = block.alt && /\.[a-z0-9]{2,5}$/i.test(block.alt) ? block.alt : `image-${position + 1}.${extension}`;
+  return { kind: "file", name: named, url, mime };
 }
 
 const ALBUM_WIDTH = 240;
@@ -240,7 +257,17 @@ function ImageViewer({
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const [index, setIndex] = useState(start);
+  const [saving, setSaving] = useState(false);
   const caption = images[index]?.alt;
+  const save = (): void => {
+    const block = images[index];
+    if (!block || saving) return;
+    setSaving(true);
+    void imageAsFile(block, fetchBlob, index)
+      .then((file) => (file ? shareFileBlock(file) : undefined))
+      .catch(() => {})
+      .finally(() => setSaving(false));
+  };
   return (
     <Modal visible animationType="fade" onRequestClose={onClose} statusBarTranslucent>
       <View style={styles.viewer}>
@@ -264,7 +291,9 @@ function ImageViewer({
               {index + 1} / {images.length}
             </Text>
           ) : null}
-          <View style={styles.viewerSpacer} />
+          <Pressable style={styles.viewerButton} onPress={save} accessibilityRole="button" accessibilityLabel="Save image">
+            {saving ? <ActivityIndicator color="#FFFFFF" size="small" /> : <IconDownloadLight />}
+          </Pressable>
         </View>
         {caption ? (
           <Text style={[styles.viewerCaption, { bottom: insets.bottom + 16 }]} numberOfLines={3}>
@@ -290,12 +319,14 @@ export function isVideoBlock(block: FileBlock): boolean {
  * or inline/lazy bytes written to the cache folder.
  * Input: block, fetcher, and `keep` to give the file its own name and reuse it
  * (playback); without it the plain name is rewritten each time (share sheet).
+ * `download` also pulls a web URL down, for the share sheet and Save.
  * Output: a URL or file URI plus the mime type found, or null with no bytes.
  */
 async function materializeFile(
   block: FileBlock,
   fetchBlob: FetchBlob | undefined,
   keep = false,
+  download = false,
 ): Promise<{ uri: string; mime?: string; local: boolean } | null> {
   let url = block.url;
   if (!url && block.blobRef && fetchBlob) {
@@ -303,6 +334,12 @@ async function materializeFile(
   }
   if (!url) return null;
   const data = /^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/.exec(url);
+  if (!data && download && /^https?:\/\//i.test(url)) {
+    const target = new File(Paths.cache, block.name.replace(/[^A-Za-z0-9._-]+/g, "_") || "attachment");
+    if (target.exists) target.delete();
+    const saved = await File.downloadFileAsync(url, target);
+    return { uri: saved.uri, mime: block.mime, local: true };
+  }
   if (!data) return { uri: url, mime: block.mime, local: false };
   const mime = block.mime ?? data[1];
   let name = block.name.replace(/[^A-Za-z0-9._-]+/g, "_") || "attachment";
@@ -332,12 +369,72 @@ export async function openFileBlock(block: FileBlock, fetchBlob?: FetchBlob): Pr
   }
 }
 
-function InlineVideo({ uri }: { uri: string }) {
+/** Hands a file to the system share sheet (Save Image/Video, Save to Files, other apps). */
+export async function shareFileBlock(block: FileBlock, fetchBlob?: FetchBlob): Promise<void> {
+  const file = await materializeFile(block, fetchBlob, false, true);
+  if (!file) return;
+  if (file.local && (await Sharing.isAvailableAsync())) {
+    await Sharing.shareAsync(file.uri, { mimeType: file.mime, dialogTitle: block.name });
+  } else {
+    await Linking.openURL(file.uri);
+  }
+}
+
+/**
+ * Saves a file where the person chooses (Files on iOS, a folder on Android).
+ * Output: true when written, false when they closed the picker.
+ */
+export async function saveFileBlock(block: FileBlock, fetchBlob?: FetchBlob): Promise<boolean> {
+  const file = await materializeFile(block, fetchBlob, false, true);
+  if (!file || !file.local) throw new Error("Nothing to save.");
+  let folder: Directory;
+  try {
+    folder = await Directory.pickDirectoryAsync();
+  } catch {
+    return false;
+  }
+  const source = new File(file.uri);
+  const target = new File(folder, source.name);
+  if (target.exists) target.delete();
+  source.copy(target);
+  return true;
+}
+
+/** Reads a file block as text, for the in-app viewer. */
+export async function readFileText(block: FileBlock, fetchBlob?: FetchBlob): Promise<string> {
+  let url = block.url;
+  if (!url && block.blobRef && fetchBlob) {
+    url = (await fetchBlob(block.blobRef.messageId, block.blobRef.index)).url ?? "";
+  }
+  if (!url) throw new Error("This file has no content.");
+  const base64 = /^data:[^,]*;base64,([A-Za-z0-9+/=]+)$/.exec(url);
+  if (base64) {
+    const raw = globalThis.atob(base64[1]!);
+    const bytes = new Uint8Array(raw.length);
+    for (let index = 0; index < raw.length; index += 1) bytes[index] = raw.charCodeAt(index);
+    return new TextDecoder().decode(bytes);
+  }
+  if (url.startsWith("data:")) return decodeURIComponent(url.slice(url.indexOf(",") + 1));
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`The file did not load (${response.status}).`);
+  return response.text();
+}
+
+function InlineVideo({ uri, fullScreen }: { uri: string; fullScreen: number }) {
+  const view = useRef<VideoView>(null);
+  // Each press of the full-screen button bumps the count; the short wait lets a
+  // just-mounted player attach before it is asked to go full screen.
+  useEffect(() => {
+    if (fullScreen === 0) return;
+    const timer = setTimeout(() => void view.current?.enterFullscreen().catch(() => {}), 250);
+    return () => clearTimeout(timer);
+  }, [fullScreen]);
   const player = useVideoPlayer(uri, (created) => {
     created.play();
   });
   return (
     <VideoView
+      ref={view}
       player={player}
       style={styles.video}
       nativeControls
@@ -358,10 +455,12 @@ function InlineVideo({ uri }: { uri: string }) {
 export function VideoBlock({ block, fetchBlob }: { block: FileBlock; fetchBlob?: FetchBlob }) {
   const [uri, setUri] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [fullScreen, setFullScreen] = useState(0);
 
   function start(): void {
-    if (busy) return;
+    if (busy || uri) return;
     setBusy(true);
     setFailed(false);
     void materializeFile(block, fetchBlob, true)
@@ -373,18 +472,43 @@ export function VideoBlock({ block, fetchBlob }: { block: FileBlock; fetchBlob?:
       .finally(() => setBusy(false));
   }
 
+  function save(): void {
+    if (saving) return;
+    setSaving(true);
+    void shareFileBlock(block, fetchBlob)
+      .catch(() => setFailed(true))
+      .finally(() => setSaving(false));
+  }
+
   return (
     <View style={styles.mediaWrap}>
       {uri ? (
-        <InlineVideo uri={uri} />
+        <InlineVideo uri={uri} fullScreen={fullScreen} />
       ) : (
         <Pressable style={styles.poster} onPress={start} accessibilityRole="button" accessibilityLabel={`Play ${block.name}`}>
           <View style={styles.playDisk}>{busy ? <ActivityIndicator color="#FFFFFF" /> : <IconPlay />}</View>
         </Pressable>
       )}
-      <Text style={styles.caption} numberOfLines={1}>
-        {failed ? "Could not load this video. Tap to retry." : block.name}
-      </Text>
+      <View style={styles.videoBar}>
+        <Text style={[styles.caption, styles.videoName]} numberOfLines={1}>
+          {failed ? "Could not load this video. Tap to retry." : block.name}
+        </Text>
+        <Pressable
+          style={styles.videoAction}
+          hitSlop={6}
+          accessibilityRole="button"
+          accessibilityLabel="Full screen"
+          onPress={() => {
+            start();
+            setFullScreen((count) => count + 1);
+          }}
+        >
+          <IconFullscreen />
+        </Pressable>
+        <Pressable style={styles.videoAction} hitSlop={6} accessibilityRole="button" accessibilityLabel="Save video" onPress={save}>
+          {saving ? <ActivityIndicator color={colors.text} size="small" /> : <IconDownload />}
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -399,7 +523,11 @@ function createStyles(colors: ColorPalette) {
     album: { width: ALBUM_WIDTH, borderRadius: 12, borderCurve: "continuous", overflow: "hidden" },
     tile: { position: "absolute", backgroundColor: colors.control },
     moreVeil: {
-      ...StyleSheet.absoluteFillObject,
+      position: "absolute",
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
       backgroundColor: "rgba(0,0,0,0.5)",
       alignItems: "center",
       justifyContent: "center",
@@ -423,7 +551,6 @@ function createStyles(colors: ColorPalette) {
       alignItems: "center",
       justifyContent: "center",
     },
-    viewerSpacer: { width: 36 },
     viewerCount: { color: "#FFFFFF", fontSize: 15, fontWeight: "600", fontVariant: ["tabular-nums"] },
     viewerCaption: {
       position: "absolute",
@@ -432,6 +559,16 @@ function createStyles(colors: ColorPalette) {
       color: "#FFFFFF",
       fontSize: 14,
       textAlign: "center",
+    },
+    videoBar: { flexDirection: "row", alignItems: "center", gap: 6, width: ALBUM_WIDTH },
+    videoName: { flex: 1 },
+    videoAction: {
+      width: 30,
+      height: 30,
+      borderRadius: 15,
+      backgroundColor: colors.control,
+      alignItems: "center",
+      justifyContent: "center",
     },
     video: { width: ALBUM_WIDTH, height: 150, borderRadius: 12, overflow: "hidden", backgroundColor: "#000000" },
     poster: {

@@ -1,9 +1,13 @@
+import { useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, type StyleProp, type ViewStyle } from "react-native";
+import * as Haptics from "expo-haptics";
 import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
 import { pressableStyle } from "./pressableStyles";
 
 /**
  * Full-width primary action with pressed, disabled, and busy states.
+ * When onPress returns a promise (a save), the button shows a spinner and
+ * ignores taps until it settles, so the press visibly does something.
  */
 export function PrimaryButton({
   label,
@@ -14,12 +18,14 @@ export function PrimaryButton({
   style,
 }: {
   label: string;
-  onPress: () => void;
+  onPress: () => void | Promise<unknown>;
   disabled?: boolean;
   busy?: boolean;
   variant?: "primary" | "secondary" | "danger";
   style?: StyleProp<ViewStyle>;
 }) {
+  const [working, setWorking] = useState(false);
+  busy = busy || working;
   const off = disabled || busy;
   const shell =
     variant === "secondary" ? styles.secondary : variant === "danger" ? styles.danger : styles.primary;
@@ -31,8 +37,15 @@ export function PrimaryButton({
       accessibilityRole="button"
       accessibilityState={{ disabled: off, busy }}
       disabled={off}
-      onPress={onPress}
-      style={(state) => pressableStyle([shell, style], { ...state, disabled: off })}
+      onPress={() => {
+        if (process.env.EXPO_OS === "ios") void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        const result = onPress();
+        if (result instanceof Promise) {
+          setWorking(true);
+          void result.catch(() => {}).finally(() => setWorking(false));
+        }
+      }}
+      style={(state) => pressableStyle([shell, style], { ...state, disabled: off && !busy })}
     >
       {busy ? (
         <ActivityIndicator color={variant === "secondary" ? colors.text : colors.bg} />

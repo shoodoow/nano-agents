@@ -5,6 +5,7 @@ import { MenuSheet, type MenuPage } from "../src/account/MenuSheet";
 import { useSession } from "../src/session/SessionProvider";
 import { colors } from "../src/theme/tokens";
 import { View } from "react-native";
+import { Toast } from "../src/ui/Toast";
 
 const TITLES: Record<MenuPage, string> = {
   menu: "Account",
@@ -72,17 +73,18 @@ export default function AccountRoute() {
           const agent = session.agents.find((row) => row.linuxProfile) ?? session.agents[0];
           if (agent) session.openDesktop(agent);
         }}
-        onSaveProvider={(provider, secret, baseUrl) => void session.saveProvider(provider, secret, baseUrl).catch(session.show)}
+        onSaveProvider={(provider, secret, baseUrl) => session.saveProvider(provider, secret, baseUrl).catch(session.show)}
         onAddPlugin={(id) => void session.addPlugin(id).catch(session.show)}
         onRemovePlugin={session.removePlugin}
         onRefreshPlugins={() => void session.refreshPlugins().catch(session.show)}
-        onSaveCustomPlugin={(name, url, secret) => void session.saveCustomPlugin(name, url, secret).catch(session.show)}
+        onSaveCustomPlugin={(name, url, secret) => session.saveCustomPlugin(name, url, secret).catch(session.show)}
         onSignInCustomPlugin={(name, url) => void session.signInCustomPlugin(name, url).catch(session.show)}
         onGoogle={() => void session.signInWithGoogle().catch(session.show)}
         onSwitch={(id) => void session.switchAccount(id).catch(session.show)}
         onSignOut={session.signOut}
         onDelete={session.deleteAccount}
       />
+      <Toast />
     </View>
   );
 }

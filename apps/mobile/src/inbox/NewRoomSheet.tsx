@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from "react-native";
 import type { ProviderSetting, RosterAgent } from "../api";
 import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
 import { useResolvedScheme } from "../theme/appearance";
@@ -59,6 +59,7 @@ export function NewRoomSheet({
     configured.some((row) => row.provider === provider);
   const groupReady = title.trim().length > 0 && picked.length >= 2;
   useResolvedScheme();
+  const window = useWindowDimensions();
 
   /**
    * Toggles one agent in the group.
@@ -71,7 +72,10 @@ export function NewRoomSheet({
 
   return (
       <ScrollView
-        style={{ flex: 1, backgroundColor: colors.sheet }}
+        // The sheet is as tall as this form (fitToContents), so the list must
+        // take its own height, not flex. A long group list stops at most of
+        // the screen and scrolls inside.
+        style={{ flexGrow: 0, maxHeight: Math.round(window.height * 0.82), backgroundColor: colors.sheet }}
         nestedScrollEnabled
         contentInsetAdjustmentBehavior="automatic"
         keyboardShouldPersistTaps="handled"

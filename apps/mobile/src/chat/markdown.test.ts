@@ -26,3 +26,13 @@ describe("parseMarkdownBlocks", () => {
     });
   });
 });
+
+describe("fenced code", () => {
+  it("lifts a fenced block out of the prose", () => {
+    expect(parseMarkdownBlocks("Run this:\n```sh\nnpm test\n```\nDone.")).toEqual([
+      { kind: "text", text: "Run this:" },
+      { kind: "code", language: "sh", code: "npm test" },
+      { kind: "text", text: "Done." },
+    ]);
+  });
+});

@@ -68,11 +68,11 @@ export function MenuSheet({
   onAutoTimeZone: (value: boolean) => void;
   onApprovals: () => void;
   onComputer: () => void;
-  onSaveProvider: (provider: ProviderSetting["provider"], secret: string, baseUrl: string | null) => void;
+  onSaveProvider: (provider: ProviderSetting["provider"], secret: string, baseUrl: string | null) => void | Promise<unknown>;
   onAddPlugin: (id: string) => void;
   onRemovePlugin: (id: string) => void;
   onRefreshPlugins: () => void;
-  onSaveCustomPlugin: (name: string, url: string, secret: string) => void;
+  onSaveCustomPlugin: (name: string, url: string, secret: string) => void | Promise<unknown>;
   onSignInCustomPlugin: (name: string, url: string) => void;
   onGoogle: () => void;
   onSwitch: (id: string) => void;
@@ -299,7 +299,7 @@ function ProviderPage({
   scrollStyle,
 }: {
   providers: ProviderSetting[];
-  onSave: (provider: ProviderSetting["provider"], secret: string, baseUrl: string | null) => void;
+  onSave: (provider: ProviderSetting["provider"], secret: string, baseUrl: string | null) => void | Promise<unknown>;
   scrollStyle: ViewStyle;
 }) {
   const [provider, setProvider] = useState<ProviderSetting["provider"]>("openai");

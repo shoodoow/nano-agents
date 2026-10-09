@@ -142,3 +142,27 @@ export function IconPlay() {
 export function IconCloseLight() {
   return <PlatformIcon sf="xmark" md="close" size={18} color="#FFFFFF" />;
 }
+
+export function IconDownload() {
+  return <PlatformIcon sf="arrow.down.to.line" md="file-download" size={17} color={colors.label} />;
+}
+
+export function IconDownloadLight() {
+  return <PlatformIcon sf="arrow.down.to.line" md="file-download" size={18} color="#FFFFFF" />;
+}
+
+export function IconFullscreen() {
+  return <PlatformIcon sf="arrow.up.left.and.arrow.down.right" md="fullscreen" size={16} color={colors.label} />;
+}
+
+export function IconToastDone() {
+  return <PlatformIcon sf="checkmark.circle.fill" md="check-circle" size={20} color={colors.green} />;
+}
+
+export function IconToastWarn() {
+  return <PlatformIcon sf="exclamationmark.circle.fill" md="error" size={20} color={colors.danger} />;
+}
+
+export function IconDismiss() {
+  return <PlatformIcon sf="xmark" md="close" size={16} color={colors.secondaryLabel} />;
+}

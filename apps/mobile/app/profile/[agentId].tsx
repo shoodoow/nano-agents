@@ -4,6 +4,7 @@ import { createCore } from "../../src/api";
 import { BotInfoScreen } from "../../src/chat/BotInfoScreen";
 import { useSession } from "../../src/session/SessionProvider";
 import { colors } from "../../src/theme/tokens";
+import { Toast } from "../../src/ui/Toast";
 
 const core = createCore();
 
@@ -21,12 +22,13 @@ export default function ProfileRoute() {
   }
 
   return (
+    <>
     <BotInfoScreen
       profile={profile}
       providers={session.providers}
       routines={session.routines}
       onChange={(next) => session.setProfile(next)}
-      onSave={() => void session.saveProfile().catch(session.show)}
+      onSave={() => session.saveProfile().catch(session.show)}
       onSaveNotify={(draft) => void session.saveProfile(draft).catch(session.show)}
       onBack={() => router.back()}
       onApprovals={() => void session.refreshProposals().catch(session.show)}
@@ -36,5 +38,7 @@ export default function ProfileRoute() {
       messages={session.profileFeed}
       onFetchBlob={(roomId, messageId, index) => core.blob(session.accountId.trim(), roomId, messageId, index)}
     />
+    <Toast />
+    </>
   );
 }

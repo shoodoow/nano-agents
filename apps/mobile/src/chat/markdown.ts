@@ -1,8 +1,9 @@
 export type MarkdownBlock =
   | { kind: "text"; text: string }
-  | { kind: "table"; columns: string[]; rows: string[][] };
+  | { kind: "table"; columns: string[]; rows: string[][] }
+  | { kind: "code"; language: string; code: string };
 
-/** Splits chat markdown into prose and GFM tables so pipes are not shown raw. */
+/** Splits chat markdown into prose, GFM tables, and fenced code so the marks are not shown raw. */
 export function parseMarkdownBlocks(source: string): MarkdownBlock[] {
   const lines = joinBrokenRows(source).split("\n");
   const blocks: MarkdownBlock[] = [];
@@ -13,6 +14,18 @@ export function parseMarkdownBlocks(source: string): MarkdownBlock[] {
     if (text) blocks.push({ kind: "text", text });
   };
   for (let index = 0; index < lines.length; index += 1) {
+    const fence = /^\s*```\s*([\w+-]*)\s*$/.exec(lines[index] ?? "");
+    if (fence) {
+      flush();
+      const code: string[] = [];
+      index += 1;
+      while (index < lines.length && !/^\s*```\s*$/.test(lines[index] ?? "")) {
+        code.push(lines[index] ?? "");
+        index += 1;
+      }
+      blocks.push({ kind: "code", language: fence[1] ?? "", code: code.join("\n") });
+      continue;
+    }
     const columns = tableRow(lines[index] ?? "");
     if (columns && isSeparator(lines[index + 1] ?? "")) {
       flush();

@@ -1,13 +1,12 @@
-import { useState, type ReactNode } from "react";
-import { Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from "react-native";
+import { useState } from "react";
+import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import type { MessageBlock } from "../api";
 import { blocksFromMaybeWidgetText } from "@nano-agents/shared";
-import { extractUrls, parseMarkdownBlocks, trimUrl } from "./markdown";
 import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
 import { IconClose, IconMonitor, IconShield } from "../ui/icons";
-import { LinkPreview } from "./LinkPreview";
+import { FileCard } from "./FileViewer";
+import { CopyButton, HorizontalTableScroll, MarkdownText } from "./MarkdownText";
 import { ImageGroup, VideoBlock, isVideoBlock, openFileBlock, type FetchBlob, type ImageBlock } from "./media";
-import { copyText } from "./SelectTextSheet";
 
 export { openFileBlock };
 
@@ -95,7 +94,7 @@ export function BlockView({
         );
       }
     }
-    return <RichText text={block.markdown} />;
+    return <MarkdownText text={block.markdown} />;
   }
   if (block.kind === "image") {
     return <ImageGroup images={[block]} fetchBlob={fetchBlob} />;
@@ -115,15 +114,7 @@ export function BlockView({
     if (isVideoBlock(block)) {
       return <VideoBlock block={block} fetchBlob={fetchBlob} />;
     }
-    return (
-      <Pressable
-        style={styles.fileWrap}
-        onPress={() => void openFileBlock(block, fetchBlob)}
-      >
-        <Text style={styles.fileName}>{block.name}</Text>
-        <Text style={styles.fileHint}>Tap to open</Text>
-      </Pressable>
-    );
+    return <FileCard block={block} fetchBlob={fetchBlob} />;
   }
   return (
     <WidgetView
@@ -139,166 +130,6 @@ export function BlockView({
       onOpenAgent={onOpenAgent}
     />
   );
-}
-
-/** A small text button that copies and says so for a moment. */
-function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <Pressable
-      hitSlop={8}
-      accessibilityRole="button"
-      accessibilityLabel="Copy code"
-      onPress={() => {
-        void copyText(text).then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        });
-      }}
-    >
-      <Text style={styles.codeCopy}>{copied ? "Copied" : "Copy"}</Text>
-    </Pressable>
-  );
-}
-
-// True while a finger is down on a table. The bubble's swipe-to-reply reads it
-// and stands down, so dragging a table back to its first column never replies.
-let tableTouch = false;
-export function isTableTouch(): boolean {
-  return tableTouch;
-}
-
-/**
- * Wide tables scroll sideways inside the bubble.
- * Why the explicit maxWidth: left to size itself, the scroller could take its
- * content's full width and push the bubble past the screen edge — then there
- * is nothing to scroll and the last columns are simply cut off. Capping it at
- * the bubble's widest (85% of the thread row, see ChatScreen `column`) keeps
- * the frame on screen so the extra columns scroll.
- */
-function HorizontalTableScroll({ children }: { children: ReactNode }) {
-  const { width } = useWindowDimensions();
-  const release = (): void => {
-    tableTouch = false;
-  };
-  return (
-    <ScrollView
-      horizontal
-      nestedScrollEnabled
-      directionalLockEnabled
-      showsHorizontalScrollIndicator
-      keyboardShouldPersistTaps="handled"
-      style={[styles.horizontalTableScroll, { maxWidth: Math.round((width - 24) * 0.85) }]}
-      contentContainerStyle={styles.horizontalTableContent}
-      onTouchStart={() => {
-        tableTouch = true;
-      }}
-      onTouchEnd={release}
-      onTouchCancel={release}
-      onScrollEndDrag={release}
-    >
-      {children}
-    </ScrollView>
-  );
-}
-
-const MD_TABLE_COL = { minWidth: 128, maxWidth: 240, flexShrink: 0 as const };
-
-/**
- * Renders markdown-lite: bold, inline code, and linkified URLs.
- * Why: agents write **bold** / `code` but the phone only did URLs, so markup showed raw.
- * Input: raw markdown-ish text. Output: nested Text spans.
- */
-function RichText({ text }: { text: string }) {
-  const blocks = parseMarkdownBlocks(text);
-  const links = extractUrls(text);
-  if (blocks.length === 1 && blocks[0]?.kind === "text" && links.length === 0) {
-    return <Text style={styles.body}>{renderInlineMarkdown(blocks[0].text)}</Text>;
-  }
-  return (
-    <View style={styles.richStack}>
-      {blocks.map((block, index) =>
-        block.kind === "table" ? (
-          <HorizontalTableScroll key={index}>
-            <View>
-              <View style={styles.mdTableHead}>
-                {block.columns.map((column, columnIndex) => (
-                  <Text key={columnIndex} style={[styles.mdTableHeader, MD_TABLE_COL]}>
-                    {renderInlineMarkdown(column, `h-${index}-${columnIndex}`)}
-                  </Text>
-                ))}
-              </View>
-              {block.rows.map((row, rowIndex) => (
-                <View key={rowIndex} style={styles.mdTableRow}>
-                  {block.columns.map((_, columnIndex) => (
-                    <Text key={columnIndex} style={[styles.mdTableCell, MD_TABLE_COL]}>
-                      {renderInlineMarkdown(row[columnIndex] ?? "", `c-${index}-${rowIndex}-${columnIndex}`)}
-                    </Text>
-                  ))}
-                </View>
-              ))}
-            </View>
-          </HorizontalTableScroll>
-        ) : (
-          <Text key={index} style={styles.body}>
-            {renderInlineMarkdown(block.text, `p-${index}`)}
-          </Text>
-        ),
-      )}
-      {links.map((url) => (
-        <LinkPreview key={url} url={url} />
-      ))}
-    </View>
-  );
-}
-
-function renderInlineMarkdown(text: string, keyPrefix = "t"): ReactNode[] {
-  const nodes: ReactNode[] = [];
-  const pattern = /(\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|(https?:\/\/\S+))/g;
-  let last = 0;
-  let match: RegExpExecArray | null;
-  let i = 0;
-  while ((match = pattern.exec(text)) !== null) {
-    if (match.index > last) {
-      nodes.push(<Text key={`${keyPrefix}-${i++}`}>{text.slice(last, match.index)}</Text>);
-    }
-    if (match[2] !== undefined) {
-      nodes.push(
-        <Text key={`${keyPrefix}-${i++}`} style={styles.mdBold}>
-          {match[2]}
-        </Text>,
-      );
-    } else if (match[3] !== undefined) {
-      nodes.push(
-        <Text key={`${keyPrefix}-${i++}`} style={styles.mdCode}>
-          {match[3]}
-        </Text>,
-      );
-    } else if (match[4] !== undefined && match[5] !== undefined) {
-      const href = match[5];
-      nodes.push(
-        <Text key={`${keyPrefix}-${i++}`} style={styles.link} onPress={() => void Linking.openURL(href)}>
-          {match[4]}
-        </Text>,
-      );
-    } else if (match[6] !== undefined) {
-      // A bare URL swallows the full stop or bracket after it; hand that back.
-      const href = trimUrl(match[6]);
-      nodes.push(
-        <Text key={`${keyPrefix}-${i++}`} style={styles.link} onPress={() => void Linking.openURL(href)}>
-          {href}
-        </Text>,
-      );
-      if (href.length < match[6].length) {
-        nodes.push(<Text key={`${keyPrefix}-${i++}`}>{match[6].slice(href.length)}</Text>);
-      }
-    }
-    last = match.index + match[0].length;
-  }
-  if (last < text.length) {
-    nodes.push(<Text key={`${keyPrefix}-${i++}`}>{text.slice(last)}</Text>);
-  }
-  return nodes.length > 0 ? nodes : [<Text key={`${keyPrefix}-0`}>{text}</Text>];
 }
 
 /**

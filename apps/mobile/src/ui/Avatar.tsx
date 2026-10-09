@@ -1,6 +1,6 @@
-import { memo } from "react";
+import { memo, useEffect, useRef, type ReactNode } from "react";
 import { Image } from "expo-image";
-import { Text, View } from "react-native";
+import { Animated, Easing, Text, View } from "react-native";
 import { isLiveMark } from "./DotStage";
 import { LivingMark, Mark, resolveMarkLook, type MarkMood } from "./Mark";
 import { palette } from "../theme/tokens";
@@ -27,6 +27,47 @@ function initials(label?: string): string {
     .map((part) => part[0]?.toUpperCase() ?? "")
     .join("");
   return letters || "?";
+}
+
+/** How much of its square the character fills. The rest is breathing room. */
+const MARK_FILL = 0.9;
+
+/**
+ * Makes a small mark look busy: a soft bob and squash while the agent works.
+ * Why: small marks are baked pictures, and a live 3D view per avatar is what
+ * made lists crawl. This runs on the native animation thread, so it costs the
+ * JS thread nothing, and it stops (and resets) the moment the work ends.
+ */
+function WorkingPulse({ active, children }: { active: boolean; children: ReactNode }) {
+  const beat = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!active) {
+      beat.setValue(0);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(beat, { toValue: 1, duration: 520, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        Animated.timing(beat, { toValue: 0, duration: 520, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [active, beat]);
+  if (!active) return <>{children}</>;
+  return (
+    <Animated.View
+      style={{
+        transform: [
+          { translateY: beat.interpolate({ inputRange: [0, 1], outputRange: [0, -2] }) },
+          { scaleX: beat.interpolate({ inputRange: [0, 1], outputRange: [1, 0.96] }) },
+          { scaleY: beat.interpolate({ inputRange: [0, 1], outputRange: [1, 1.06] }) },
+        ],
+      }}
+    >
+      {children}
+    </Animated.View>
+  );
 }
 
 type AvatarProps = {
@@ -79,7 +120,7 @@ function AvatarInner({
       markStyle: style,
       markGender: gender,
     });
-    const markSize = size * 0.72;
+    const markSize = Math.round(size * MARK_FILL);
     const frame = { width: size, height: size, alignItems: "center" as const, justifyContent: "center" as const };
     if (alive && isLiveMark(size)) {
       return (
@@ -98,14 +139,16 @@ function AvatarInner({
     }
     return (
       <View style={frame}>
-        <Mark
-          shape={look.shape}
-          color={look.color}
-          material={look.material}
-          style={look.style}
-          gender={look.gender}
-          size={markSize}
-        />
+        <WorkingPulse active={mood === "working"}>
+          <Mark
+            shape={look.shape}
+            color={look.color}
+            material={look.material}
+            style={look.style}
+            gender={look.gender}
+            size={markSize}
+          />
+        </WorkingPulse>
       </View>
     );
   }

@@ -7,6 +7,7 @@ import { Avatar } from "../ui/Avatar";
 import { GroupCluster } from "../ui/GroupCluster";
 import { IconChevron } from "../ui/icons";
 import { openFileBlock } from "./blocks";
+import { MarkdownText } from "./MarkdownText";
 import { collectShares, type SharedFile } from "./shares";
 
 const MEMBER_LIMIT = 20;
@@ -77,9 +78,13 @@ export function GroupInfoScreen({
           <View style={styles.body}>
             <Text style={styles.sectionLabel}>Team brief</Text>
             <View style={[styles.card, styles.briefCard]}>
-              <Text style={brief ? styles.briefText : styles.briefEmpty} selectable>
-                {brief || "No brief yet. Ask the lead to write one: the goal, who does what, and how work moves between teammates."}
-              </Text>
+              {brief ? (
+                <MarkdownText text={brief} links={false} />
+              ) : (
+                <Text style={styles.briefEmpty}>
+                  No brief yet. Ask the lead to write one: the goal, who does what, and how work moves between teammates.
+                </Text>
+              )}
             </View>
             <Text style={styles.sectionLabel}>Members</Text>
             <View style={styles.card}>
@@ -161,8 +166,16 @@ function createStyles(colors: ColorPalette) {
   briefCard: { paddingHorizontal: 14, paddingVertical: 12, marginBottom: 14 },
   briefText: { color: colors.text, fontSize: 15, lineHeight: 21 },
   briefEmpty: { color: colors.muted, fontSize: 14, lineHeight: 20 },
-  nameCard: { marginHorizontal: 16, marginTop: 10, backgroundColor: colors.bubble, borderRadius: 14, borderCurve: "continuous" },
-  name: { color: colors.text, fontSize: 17, fontWeight: "600", textAlign: "center", paddingVertical: 12 },
+  // A badge that hugs the name, not a full-width card.
+  nameCard: {
+    alignSelf: "center",
+    maxWidth: "80%",
+    marginTop: 10,
+    paddingHorizontal: 18,
+    backgroundColor: colors.bubble,
+    borderRadius: 999,
+  },
+  name: { color: colors.text, fontSize: 17, fontWeight: "600", textAlign: "center", paddingVertical: 8 },
   tabs: { flexDirection: "row", marginTop: 14, marginHorizontal: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
   tab: { flex: 1, alignItems: "center", paddingVertical: 8 },
   tabText: { color: colors.muted, fontSize: 15, fontWeight: "500" },

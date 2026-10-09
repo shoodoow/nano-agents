@@ -47,7 +47,7 @@ function ThemedStack() {
         <Stack.Screen name="group/[conversationId]" options={{ title: "Group" }} />
         <Stack.Screen name="approvals" options={{ title: "Approvals" }} />
         <Stack.Screen name="account" options={sheetScreenOptions("Account")} />
-        <Stack.Screen name="new-room" options={sheetScreenOptions("New chat")} />
+        <Stack.Screen name="new-room" options={sheetScreenOptions("New chat", "fitToContents")} />
       </Stack>
     </>
   );

@@ -6,6 +6,7 @@ import { useSession } from "../src/session/SessionProvider";
 import { Avatar } from "../src/ui/Avatar";
 import { IconPlus, IconSearch } from "../src/ui/icons";
 import { colors } from "../src/theme/tokens";
+import { Toast } from "../src/ui/Toast";
 
 export default function InboxRoute() {
   const navigation = useNavigation();
@@ -79,6 +80,7 @@ export default function InboxRoute() {
   }, [navigation, searching, session.pendingCount, session.account]);
 
   return (
+    <>
     <InboxScreen
       agents={session.agents}
       groups={session.groups}
@@ -89,5 +91,8 @@ export default function InboxRoute() {
       onHide={(agent) => void session.setRosterFlag(agent, { hidden: true }).catch(session.show)}
       note={session.note}
     />
+    {/* Errors already print in the inbox's own line. */}
+    <Toast tones={["success"]} />
+    </>
   );
 }

@@ -9,7 +9,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
 import { AttachMenu } from "./AttachMenu";
@@ -19,12 +18,16 @@ import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme
 import { useResolvedScheme } from "../theme/appearance";
 import { Avatar, colorFor } from "../ui/Avatar";
 import { CircleButton } from "../ui/CircleButton";
-import { AdaptiveSurface } from "../ui/AdaptiveSurface";
-import { IconPlus } from "../ui/icons";
+import { IconCopy, IconPlus, IconReplyAction, IconSelectText } from "../ui/icons";
 import { PillButton } from "../ui/PrimaryButton";
-import { ContextUsageRing } from "../ui/ContextUsageRing";
-import { BlockView } from "./blocks";
-import { Reactions } from "./Reactions";
+import * as Haptics from "expo-haptics";
+import { MessageBlocks } from "./blocks";
+import { isTableTouch } from "./MarkdownText";
+import { isVideoBlock } from "./media";
+import { Composer } from "./Composer";
+import { messagePlainText } from "./markdown";
+import { MessageMenu, ReactionChips, type BubbleFrame } from "./Reactions";
+import { SelectTextSheet, copyText } from "./SelectTextSheet";
 import { RoomActivityBar } from "./RoomActivityBar";
 import type { RoomActivityPhase } from "./room-activity";
 
@@ -61,51 +64,75 @@ export type ComposerAttachment = {
   name?: string;
 };
 
-const INPUT_MAX_HEIGHT = 120;
-/** Vertical padding inside the composer box — added to content height. */
-const INPUT_PADDING_Y = 11;
-const INPUT_MIN_HEIGHT = 44;
+/** How far a bubble can be pulled, and how far it must go before letting go replies. */
+const SWIPE_TRAVEL = 88;
+const SWIPE_TRIGGER = 64;
 
 /**
- * Wraps a bubble with pull-right-to-reply, Telegram style.
- * Why: horizontal drags past the threshold reply; vertical drags stay with
- * the list because activation requires dominant horizontal movement. The
- * bubble follows the finger up to 72px with a ↩ hint, then springs home.
+ * Wraps a bubble with pull-left-to-reply, Telegram style.
+ * Why left: a pull to the right is the system's go-back gesture, which won
+ * and closed the chat instead of replying. Horizontal drags past the
+ * threshold reply; vertical drags stay with the list because activation
+ * requires dominant horizontal movement. The bubble follows the finger; past
+ * the trigger a ↩ and a light tap say "let go to reply", then it springs home.
  * A stationary hold never activates it, so Pressable long-press (reactions)
- * keeps working.
+ * keeps working. A drag that starts on a table belongs to the table.
  * Input: swipe callback + children. Output: the gesture wrapper.
  */
-function SwipeableBubble({ onSwipe, children }: { onSwipe: () => void; children: ReactNode }) {
+function SwipeableBubble({
+  onSwipe,
+  onActive,
+  children,
+}: {
+  onSwipe: () => void;
+  /** Told when a pull starts and ends, so the list can hold still meanwhile. */
+  onActive: (active: boolean) => void;
+  children: ReactNode;
+}) {
   const x = useRef(new Animated.Value(0)).current;
   const [hint, setHint] = useState(false);
+  // Latest callbacks: the responder is built once and must not call stale ones.
+  const calls = useRef({ onSwipe, onActive });
+  calls.current = { onSwipe, onActive };
+  const armed = useRef(false);
+  const finish = (reply: boolean): void => {
+    calls.current.onActive(false);
+    if (reply) calls.current.onSwipe();
+    Animated.spring(x, { toValue: 0, useNativeDriver: true }).start();
+    armed.current = false;
+    setHint(false);
+  };
   const responder = useRef(
     PanResponder.create({
+      // Starts only on a clearly sideways pull (about 25° or flatter), so a
+      // scroll that drifts a little never turns into a reply.
       onMoveShouldSetPanResponder: (_event, gesture) =>
-        gesture.dx > 18 && gesture.dx > Math.abs(gesture.dy) * 1.6,
+        !isTableTouch() && gesture.dx < -14 && -gesture.dx > Math.abs(gesture.dy) * 2.2,
+      onPanResponderGrant: () => calls.current.onActive(true),
+      // Once the pull has started it keeps the touch; the list may not take it back.
+      onPanResponderTerminationRequest: () => false,
       onPanResponderMove: (_event, gesture) => {
-        const value = Math.max(0, Math.min(72, gesture.dx));
-        x.setValue(value);
-        setHint(value > 48);
-      },
-      onPanResponderRelease: (_event, gesture) => {
-        if (gesture.dx > 48) {
-          onSwipe();
+        const pulled = Math.max(0, Math.min(SWIPE_TRAVEL, -gesture.dx));
+        x.setValue(-pulled);
+        const ready = pulled >= SWIPE_TRIGGER;
+        if (ready !== armed.current) {
+          armed.current = ready;
+          setHint(ready);
+          if (ready && process.env.EXPO_OS === "ios") void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         }
-        Animated.spring(x, { toValue: 0, useNativeDriver: true }).start();
-        setHint(false);
       },
-      onPanResponderTerminate: () => {
-        Animated.spring(x, { toValue: 0, useNativeDriver: true }).start();
-        setHint(false);
-      },
+      onPanResponderRelease: () => finish(armed.current),
+      // If the system takes the touch anyway, a pull already past the mark still replies.
+      onPanResponderTerminate: () => finish(armed.current),
     }),
   ).current;
   return (
     <View style={styles.swipeWrap}>
-      {hint ? <Text style={styles.swipeHint}>↩</Text> : null}
-      <Animated.View style={{ transform: [{ translateX: x }] }} {...responder.panHandlers}>
+      <Animated.View style={[styles.swipeBody, { transform: [{ translateX: x }] }]} {...responder.panHandlers}>
         {children}
       </Animated.View>
+      {/* Out of the row's flow, so showing it never shifts the bubble. */}
+      {hint ? <Text style={styles.swipeHint}>↩</Text> : null}
     </View>
   );
 }
@@ -165,10 +192,10 @@ function RelayBadge({
 }
 
 /**
- * Shows one rich thread with a stretching composer and attachments.
- * Why: long SEO-style briefs need a multiline box that grows with the text
- * (capped so it never eats the thread); images/files attach via the + sheet
- * and ride the same send as blocks — no second input row.
+ * Shows one rich thread with the composer and attachments.
+ * Why: images/files attach via the + sheet and ride the same send as blocks —
+ * no second input row. Holding a bubble opens reactions plus Reply, Copy, and
+ * Select Text.
  * Input: agent, bubbles, draft/sending/typing/error, reply target,
  * attachments + sheet flag, and chat actions.
  * Output: the conversation screen.
@@ -253,20 +280,21 @@ export function ChatScreen({
   useResolvedScheme();
   const insets = useSafeAreaInsets();
   const [attachOpen, setAttachOpen] = useState(false);
-  // Telegram-style composer: the box grows line by line until the cap, then
-  // the text scrolls inside it. The measured height sizes the wrapper as well
-  // as the field, so the rounded box always encloses the text.
-  const [inputHeight, setInputHeight] = useState(INPUT_MIN_HEIGHT);
-  // Sending clears the draft; shrink back even if no size event follows.
-  useEffect(() => {
-    if (draft.length === 0) setInputHeight(INPUT_MIN_HEIGHT);
-  }, [draft]);
   const listRef = useRef<FlatList<Bubble>>(null);
   const composerBottom = Math.max(8, insets.bottom) + 52;
   const canSend = (draft.trim().length > 0 || attachments.length > 0) && !sending;
-  const [pickingFor, setPickingFor] = useState<string | null>(null);
+  // The held bubble and where it sits, so the menu opens right beside it.
+  const [held, setHeld] = useState<{ bubble: Bubble; frame: BubbleFrame } | null>(null);
+  const bubbleViews = useRef(new Map<string, View>());
+  const openMenu = (bubble: Bubble): void => {
+    bubbleViews.current.get(bubble.id)?.measureInWindow((x, y, width, height) => {
+      if (process.env.EXPO_OS === "ios") void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      setHeld({ bubble, frame: { x, y, width, height } });
+    });
+  };
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [relaySheet, setRelaySheet] = useState<Bubble | null>(null);
+  const [selectText, setSelectText] = useState<string | null>(null);
   const [teamChat, setTeamChat] = useState<TeamChatLine[] | null>(null);
   /** Opens the badge sheet and loads the team chat it came from, read-only. */
   const openRelaySheet = (bubble: Bubble) => {
@@ -289,11 +317,11 @@ export function ChatScreen({
     return map;
   }, [agent, members, roster]);
   useEffect(() => {
-    setPickingFor(null);
+    setHeld(null);
     setHighlightId(null);
     setAttachOpen(false);
     setRelaySheet(null);
-    setInputHeight(INPUT_MIN_HEIGHT);
+    setSelectText(null);
   }, [conversationId]);
 
   /** Scrolls the inverted thread to the parent of a swipe-reply. */
@@ -374,6 +402,10 @@ export function ChatScreen({
           const face = author ?? (item.agentId ? rosterFaces.get(item.agentId) ?? null : null);
           const highlighted = highlightId === item.id;
           const relay = item.relay;
+          // Photos and videos on their own stand without a bubble around them.
+          const bare =
+            !(item.replyTo && item.replyPreview) &&
+            blocks.every((block) => block.kind === "image" || (block.kind === "file" && isVideoBlock(block)));
           return (
             <View>
               {showTime ? <Text style={styles.time}>Today {item.time}</Text> : null}
@@ -393,7 +425,7 @@ export function ChatScreen({
                 {!item.mine ? (
                   <Avatar
                     id={item.agentId ?? item.author}
-                    size={32}
+                    size={36}
                     round
                     shape={face?.markShape ?? null}
                     color={face?.markColor ?? null}
@@ -410,13 +442,21 @@ export function ChatScreen({
                       {item.via ? <Text style={styles.viaInline}> · via {item.via}</Text> : null}
                     </Text>
                   ) : null}
-                  <SwipeableBubble onSwipe={() => onReply(item)}>
+                  <SwipeableBubble
+                    onSwipe={() => onReply(item)}
+                    onActive={(active) => listRef.current?.setNativeProps({ scrollEnabled: !active })}
+                  >
                     <Pressable
-                      onLongPress={() => setPickingFor((current) => (current === item.id ? null : item.id))}
+                      ref={(view) => {
+                        if (view) bubbleViews.current.set(item.id, view);
+                        else bubbleViews.current.delete(item.id);
+                      }}
+                      onLongPress={() => openMenu(item)}
                       delayLongPress={350}
                       style={[
                         styles.bubble,
                         item.mine ? styles.bubbleMine : styles.bubbleTheirs,
+                        bare ? styles.bubbleBare : null,
                         highlighted ? styles.bubbleHighlight : null,
                       ]}
                       accessibilityLabel={`${item.author}. ${item.body}`}
@@ -431,30 +471,19 @@ export function ChatScreen({
                           <Text style={styles.quote}>↩ {item.replyPreview}</Text>
                         </Pressable>
                       ) : null}
-                      {blocks.map((block, blockIndex) => (
-                        <BlockView
-                          key={blockIndex}
-                          block={block}
-                          messageId={item.id}
-                          onApprove={onApprove}
-                          onDeny={onDeny}
-                          onSubmitPoll={onPollSubmit}
-                          onQuestionPick={onQuestionPick}
-                          onSubmitSecret={onSecretSubmit}
-                          onOpenDesktop={onDesktop}
-                          onOpenAgent={onOpenAgent}
-                          fetchBlob={onFetchBlob}
-                        />
-                      ))}
-                      <Reactions
-                        reactions={item.reactions ?? []}
-                        picking={pickingFor === item.id}
-                        onTogglePicker={() => setPickingFor((current) => (current === item.id ? null : item.id))}
-                        onPick={(emoji) => {
-                          setPickingFor(null);
-                          onReact(item, emoji);
-                        }}
+                      <MessageBlocks
+                        blocks={blocks}
+                        messageId={item.id}
+                        onApprove={onApprove}
+                        onDeny={onDeny}
+                        onSubmitPoll={onPollSubmit}
+                        onQuestionPick={onQuestionPick}
+                        onSubmitSecret={onSecretSubmit}
+                        onOpenDesktop={onDesktop}
+                        onOpenAgent={onOpenAgent}
+                        fetchBlob={onFetchBlob}
                       />
+                      <ReactionChips reactions={item.reactions ?? []} onPick={(emoji) => onReact(item, emoji)} />
                     </Pressable>
                   </SwipeableBubble>
                 </View>
@@ -471,11 +500,6 @@ export function ChatScreen({
         <Text accessibilityRole="alert" style={styles.error}>
           {error}
         </Text>
-      ) : null}
-      {replyTo ? (
-        <Pressable style={styles.replyBar} onPress={onClearReply}>
-          <Text style={styles.replyText}>↩ {replyTo.body.slice(0, 80)} ✕</Text>
-        </Pressable>
       ) : null}
       {attachments.length > 0 ? (
         <View style={styles.chips}>
@@ -533,24 +557,22 @@ export function ChatScreen({
                     : `Message from ${relaySheet.author}`}
                 </Text>
                 <ScrollView style={styles.relaySheetBody} bounces={false}>
-                  {(relaySheet.blocks && relaySheet.blocks.length > 0
-                    ? relaySheet.blocks
-                    : [{ kind: "text" as const, markdown: relaySheet.body }]
-                  ).map((block, blockIndex) => (
-                    <BlockView
-                      key={blockIndex}
-                      block={block}
-                      messageId={relaySheet.id}
-                      onApprove={onApprove}
-                      onDeny={onDeny}
-                      onSubmitPoll={onPollSubmit}
-                      onQuestionPick={onQuestionPick}
-                      onSubmitSecret={onSecretSubmit}
-                      onOpenDesktop={onDesktop}
-                      onOpenAgent={onOpenAgent}
-                      fetchBlob={onFetchBlob}
-                    />
-                  ))}
+                  <MessageBlocks
+                    blocks={
+                      relaySheet.blocks && relaySheet.blocks.length > 0
+                        ? relaySheet.blocks
+                        : [{ kind: "text" as const, markdown: relaySheet.body }]
+                    }
+                    messageId={relaySheet.id}
+                    onApprove={onApprove}
+                    onDeny={onDeny}
+                    onSubmitPoll={onPollSubmit}
+                    onQuestionPick={onQuestionPick}
+                    onSubmitSecret={onSecretSubmit}
+                    onOpenDesktop={onDesktop}
+                    onOpenAgent={onOpenAgent}
+                    fetchBlob={onFetchBlob}
+                  />
                   {relaySheet.relay?.sourceConversationId && onLoadTeamChat ? (
                     <View style={styles.teamChat}>
                       <Text style={styles.teamChatTitle}>Where this came from · read only</Text>
@@ -577,6 +599,50 @@ export function ChatScreen({
           </Pressable>
         </Pressable>
       </Modal>
+      <MessageMenu
+        frame={held?.frame ?? null}
+        mine={held?.bubble.mine ?? false}
+        onClose={() => setHeld(null)}
+        onPick={(emoji) => {
+          const bubble = held?.bubble;
+          setHeld(null);
+          if (bubble) onReact(bubble, emoji);
+        }}
+        actions={
+          held
+            ? [
+                {
+                  label: "Reply",
+                  icon: <IconReplyAction />,
+                  onPress: () => {
+                    setHeld(null);
+                    onReply(held.bubble);
+                  },
+                },
+                {
+                  label: "Copy",
+                  icon: <IconCopy />,
+                  onPress: () => {
+                    setHeld(null);
+                    void copyText(messagePlainText(held.bubble.blocks, held.bubble.body));
+                  },
+                },
+                {
+                  label: "Select Text",
+                  icon: <IconSelectText />,
+                  onPress: () => {
+                    setHeld(null);
+                    // iOS drops a sheet presented while another modal is
+                    // still closing, so wait out the fade.
+                    const text = messagePlainText(held.bubble.blocks, held.bubble.body);
+                    setTimeout(() => setSelectText(text), 320);
+                  },
+                },
+              ]
+            : []
+        }
+      />
+      <SelectTextSheet text={selectText} onClose={() => setSelectText(null)} />
       <Modal visible={attachOpen} transparent animationType="fade" onRequestClose={() => setAttachOpen(false)}>
         <Pressable style={styles.attachBackdrop} onPress={() => setAttachOpen(false)} accessibilityLabel="Close attach menu">
           <View style={[styles.attachAnchor, { bottom: composerBottom }]} pointerEvents="box-none">
@@ -615,38 +681,17 @@ export function ChatScreen({
         <CircleButton label="Attach" active={attachOpen} onPress={() => setAttachOpen((open) => !open)}>
           <IconPlus />
         </CircleButton>
-        <AdaptiveSurface style={styles.inputSurface}>
-        <View style={[styles.inputWrap, { height: inputHeight }]}>
-          <TextInput
-            value={draft}
-            onChangeText={onDraft}
-            placeholder={`Message ${title}`}
-            placeholderTextColor={colors.muted}
-            keyboardAppearance="dark"
-            style={[
-              styles.input,
-              { height: inputHeight },
-              contextRing ? styles.inputWithRing : null,
-            ]}
-            multiline
-            maxLength={20000}
-            editable={!sending}
-            scrollEnabled
-            textAlignVertical="top"
-            onContentSizeChange={(event) => {
-              const contentHeight = event.nativeEvent.contentSize.height;
-              setInputHeight(
-                Math.max(INPUT_MIN_HEIGHT, Math.min(INPUT_MAX_HEIGHT, Math.ceil(contentHeight) + INPUT_PADDING_Y * 2)),
-              );
-            }}
-          />
-          {contextRing ? (
-            <View style={styles.inputRing} pointerEvents="box-none">
-              <ContextUsageRing share={contextRing.share} hint={contextRing.hint} />
-            </View>
-          ) : null}
-        </View>
-        </AdaptiveSurface>
+        <Composer
+          value={draft}
+          onChange={onDraft}
+          placeholder="Message"
+          replyText={replyTo ? messagePlainText(replyTo.blocks, replyTo.body).trim().split("\n")[0] || "Attachment" : null}
+          onClearReply={onClearReply}
+          contextRing={contextRing}
+          canSend={canSend}
+          sending={sending}
+          onSend={onSend}
+        />
         <PillButton label="Send" onPress={onSend} disabled={!canSend} busy={sending} />
       </View>
     </View>
@@ -702,10 +747,13 @@ function createStyles(colors: ColorPalette) {
   author: { fontSize: 14, fontWeight: "700", paddingLeft: 12 },
   viaInline: { color: colors.muted, fontWeight: "400", fontSize: 12 },
   swipeWrap: { flexDirection: "row", alignItems: "center", gap: 6 },
-  swipeHint: { color: colors.link, fontSize: 22, fontWeight: "700" },
+  // Lets the bubble narrow to the column instead of growing with a wide table.
+  swipeBody: { flexShrink: 1 },
+  swipeHint: { position: "absolute", right: 4, color: colors.link, fontSize: 22, fontWeight: "700" },
   bubble: { borderRadius: 18, paddingHorizontal: 14, paddingVertical: 10, gap: 6 },
   bubbleMine: { backgroundColor: colors.online, borderBottomRightRadius: 6 },
   bubbleTheirs: { backgroundColor: colors.bubble, borderBottomLeftRadius: 6 },
+  bubbleBare: { backgroundColor: "transparent", paddingHorizontal: 0, paddingVertical: 0 },
   relayWrap: { alignItems: "center", paddingHorizontal: 12, marginVertical: 4 },
   relayBadge: {
     flexDirection: "row",
@@ -773,36 +821,6 @@ function createStyles(colors: ColorPalette) {
   attachBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)" },
   attachAnchor: { position: "absolute", left: 10 },
   composer: { flexDirection: "row", alignItems: "flex-end", paddingHorizontal: 8, paddingBottom: 8, gap: 2 },
-  // The surface takes its height from the wrap, and the wrap from the text.
-  // With flex:1 here the wrap contributed no height, so the box stayed one
-  // line tall while the text grew out of it.
-  inputSurface: { flex: 1, borderRadius: 22, borderCurve: "continuous", overflow: "hidden" },
-  inputWrap: {
-    alignSelf: "stretch",
-    minHeight: INPUT_MIN_HEIGHT,
-    maxHeight: INPUT_MAX_HEIGHT,
-    borderRadius: 22,
-    position: "relative",
-    overflow: "hidden",
-  },
-  inputRing: {
-    position: "absolute",
-    right: 12,
-    top: 0,
-    bottom: 0,
-    justifyContent: "center",
-  },
-  input: {
-    minHeight: INPUT_MIN_HEIGHT,
-    maxHeight: INPUT_MAX_HEIGHT,
-    color: colors.text,
-    paddingHorizontal: 16,
-    paddingTop: INPUT_PADDING_Y,
-    paddingBottom: INPUT_PADDING_Y,
-    fontSize: 16,
-    backgroundColor: "transparent",
-  },
-  inputWithRing: { paddingRight: 38 },
 });
 }
 
