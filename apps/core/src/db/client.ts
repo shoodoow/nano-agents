@@ -1,6 +1,7 @@
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
+import { config } from "../config.js";
 import * as schema from "./schema.js";
 
 /**
@@ -11,6 +12,19 @@ import * as schema from "./schema.js";
 export function getDb(databaseUrl: string) {
   const sql = postgres(databaseUrl);
   return drizzle(sql, { schema });
+}
+
+let shared: ReturnType<typeof getDb> | undefined;
+
+/**
+ * The one database client this process shares.
+ * Why: each getDb call opens its own connection pool. Code that has no client
+ * handed to it used to open a new pool every time, and none were ever closed.
+ * Input: none. Output: the client for the configured database.
+ */
+export function sharedDb(): ReturnType<typeof getDb> {
+  shared ??= getDb(config.databaseUrl());
+  return shared;
 }
 
 /**

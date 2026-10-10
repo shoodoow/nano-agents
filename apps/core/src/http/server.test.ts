@@ -19,7 +19,7 @@ describe("server", () => {
     const server = await startServer(db, 0, async ({ messages }) => {
       const mentionedBea = messages.some((message) => textOf(message.content).includes("@Bea"));
       return mentionedBea ? "finished" : "@Bea your turn";
-    });
+    }, { openAccess: true });
     const address = server.address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${address.port}`;
     closeServer = () =>
@@ -49,11 +49,13 @@ describe("server", () => {
   it("hires an agent, updates pin, and returns a prompt that starts with identity", async () => {
     const accountResponse = await fetch(`${baseUrl}/accounts`, {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: "Desk" }),
     });
     const account = (await accountResponse.json()) as { id: string };
     const agentResponse = await fetch(`${baseUrl}/accounts/${account.id}/agents`, {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({
         name: "Ada",
         label: "Books",
@@ -68,12 +70,14 @@ describe("server", () => {
 
     const patched = await fetch(`${baseUrl}/agents/${agent.id}?accountId=${account.id}`, {
       method: "PATCH",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ notify: true, pinned: true, hidden: false }),
     });
     expect(await patched.json()).toMatchObject({ pinned: true });
 
     const marked = await fetch(`${baseUrl}/agents/${agent.id}?accountId=${account.id}`, {
       method: "PATCH",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ markShape: "round", markColor: "#FF8066", markMaterial: "plush", avatarUrl: null }),
     });
     expect(await marked.json()).toMatchObject({
@@ -85,6 +89,7 @@ describe("server", () => {
 
     const badMark = await fetch(`${baseUrl}/agents/${agent.id}?accountId=${account.id}`, {
       method: "PATCH",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ markShape: "heptagon" }),
     });
     expect(badMark.status).toBe(400);
@@ -96,6 +101,7 @@ describe("server", () => {
 
     const other = await fetch(`${baseUrl}/accounts`, {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: "Other" }),
     });
     const second = (await other.json()) as { id: string };
@@ -132,12 +138,14 @@ describe("server", () => {
 
     const bad = await fetch(`${baseUrl}/agents/${ada.id}/routines?accountId=${account.id}`, {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ conversationId: room.id, title: "Bad", instructions: "Bad", cron: "nonsense" }),
     });
     expect(bad.status).toBe(400);
 
     const paused = await fetch(`${baseUrl}/agents/${ada.id}/routines/${created.id}?accountId=${account.id}`, {
       method: "PATCH",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ paused: true }),
     });
     expect(((await paused.json()) as { paused: boolean }).paused).toBe(true);
@@ -159,6 +167,7 @@ describe("server", () => {
     expect(foreign).toEqual([]);
     const blocked = await fetch(`${baseUrl}/agents/${ada.id}/routines?accountId=${outsider.id}`, {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({
         conversationId: room.id,
         title: "Nope",
@@ -178,11 +187,13 @@ describe("server", () => {
     expect(secret).toEqual({ name: "CMO_PASSWORD", configured: true });
     const empty = await fetch(`${baseUrl}/accounts/${account.id}/secrets`, {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: "CMO_PASSWORD", secret: "" }),
     });
     expect(empty.status).toBe(400);
     const badName = await fetch(`${baseUrl}/accounts/${account.id}/secrets`, {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: "has space", secret: "x" }),
     });
     expect(badName.status).toBe(400);
@@ -194,6 +205,7 @@ describe("server", () => {
     expect(settings.autoReview).toBe(true);
     const patched = await fetch(`${baseUrl}/accounts/${account.id}/settings`, {
       method: "PATCH",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ autoReview: false }),
     });
     expect(((await patched.json()) as { autoReview: boolean }).autoReview).toBe(false);
@@ -240,6 +252,7 @@ describe("server", () => {
     });
     const sent = await fetch(`${baseUrl}/conversations/${room.id}/messages?accountId=${account.id}&sync=1`, {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ body: "@Ada start" }),
     });
     const stored = (await sent.json()) as { replies: { agentId: string; body: string }[] };
@@ -251,6 +264,7 @@ describe("server", () => {
     const other = await postJson<{ id: string }>(`${baseUrl}/accounts`, { name: "Outsider" });
     const blocked = await fetch(`${baseUrl}/conversations/${room.id}/messages?accountId=${other.id}&sync=1`, {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ body: "@Ada start" }),
     });
     expect(blocked.status).toBe(404);
@@ -267,6 +281,7 @@ describe("server", () => {
     });
     const sent = await fetch(`${baseUrl}/conversations/${room.id}/messages?accountId=${account.id}`, {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ body: "check octessa.com SEO" }),
     });
     expect(sent.status).toBe(202);
@@ -291,6 +306,7 @@ describe("server", () => {
     const big = `data:image/png;base64,${"A".repeat(2_000_000)}`;
     const sent = await fetch(`${baseUrl}/conversations/${room.id}/messages?accountId=${account.id}`, {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ blocks: [{ kind: "image", url: big, alt: "photo" }] }),
     });
     expect(sent.status).toBe(202);
@@ -302,11 +318,13 @@ describe("server", () => {
     const account = await postJson<{ id: string }>(`${baseUrl}/accounts`, { name: "Uploads" });
     const accepted = await fetch(`${baseUrl}/accounts/${account.id}/uploads`, {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ url: "https://cdn.example/pic.png", name: "pic.png" }),
     });
     expect(accepted.status).toBe(201);
     const rejected = await fetch(`${baseUrl}/accounts/${account.id}/uploads`, {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ url: "data:application/x-sh;base64,AAAA" }),
     });
     expect(rejected.status).toBe(400);
@@ -324,6 +342,7 @@ describe("server", () => {
     const big = `data:image/png;base64,${"B".repeat(300_000)}`;
     const sent = await fetch(`${baseUrl}/conversations/${room.id}/messages?accountId=${account.id}&sync=1`, {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ blocks: [{ kind: "image", url: big, alt: "photo" }] }),
     });
     expect(sent.status).toBe(201);
@@ -376,6 +395,7 @@ describe("server", () => {
     const extra = await postJson<{ id: string }>(`${baseUrl}/accounts/${account.id}/agents`, agent("Extra"));
     const rejected = await fetch(`${baseUrl}/conversations/${room.id}/members?accountId=${account.id}`, {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ agentId: extra.id }),
     });
     expect(rejected.status).toBe(409);
@@ -391,6 +411,7 @@ describe("server", () => {
     });
     const sent = await fetch(`${baseUrl}/conversations/${room.id}/messages?accountId=${account.id}&sync=1`, {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ body: "hello" }),
     });
     expect(sent.status).toBe(201);
@@ -422,6 +443,7 @@ describe("server", () => {
     expect(second.id).toBe(first.id);
     const bad = await fetch(`${baseUrl}/devices?accountId=${account.id}`, {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ expoPushToken: "" }),
     });
     expect(bad.status).toBe(400);
@@ -429,6 +451,32 @@ describe("server", () => {
       await fetch(`${baseUrl}/notifications?accountId=${account.id}`)
     ).json()) as unknown[];
     expect(Array.isArray(pending)).toBe(true);
+  });
+
+  it("pages a thread from its newest messages backwards", async () => {
+    const account = await postJson<{ id: string }>(`${baseUrl}/accounts`, { name: "Pages" });
+    const ada = await postJson<{ id: string }>(`${baseUrl}/accounts/${account.id}/agents`, agent("Ada"));
+    const room = await postJson<{ id: string }>(`${baseUrl}/accounts/${account.id}/conversations`, {
+      kind: "direct",
+      title: "pages",
+      ownerAgentId: ada.id,
+      memberAgentIds: [ada.id],
+    });
+    for (const body of ["one", "two", "three"]) {
+      await postJson(`${baseUrl}/conversations/${room.id}/messages?accountId=${account.id}&sync=1`, { body });
+    }
+    const list = async (query: string): Promise<{ id: string }[]> =>
+      (await (await fetch(`${baseUrl}/conversations/${room.id}/messages?accountId=${account.id}${query}`)).json()) as {
+        id: string;
+      }[];
+    const all = await list("");
+    expect(all.length).toBeGreaterThanOrEqual(6);
+    const ids = all.map((row) => row.id);
+    expect((await list("&limit=2")).map((row) => row.id)).toEqual(ids.slice(-2));
+    expect((await list(`&limit=3&before=${ids.at(-2)}`)).map((row) => row.id)).toEqual(ids.slice(-5, -2));
+    expect(await list(`&limit=3&before=${ids[0]}`)).toEqual([]);
+    const bad = await fetch(`${baseUrl}/conversations/${room.id}/messages?accountId=${account.id}&before=nope`);
+    expect(bad.status).toBe(400);
   });
 
   it("queues arrivals on a busy room instead of holding HTTP", async () => {
@@ -444,6 +492,7 @@ describe("server", () => {
     const wedge = await acquireRun(db, account.id, room.id, "turn", 0);
     const sent = await fetch(`${baseUrl}/conversations/${room.id}/messages?accountId=${account.id}`, {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ body: "while busy" }),
     });
     expect(sent.status).toBe(202);
@@ -519,7 +568,7 @@ async function readStream(url: string, want: number): Promise<{ cursor?: number 
 }
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
-  const response = await fetch(url, { method: "POST", body: JSON.stringify(body) });
+  const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   if (!response.ok) {
     throw new Error(await response.text());
   }

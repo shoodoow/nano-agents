@@ -2,6 +2,7 @@ import { JSDOM, VirtualConsole } from "jsdom";
 import { Readability, isProbablyReaderable } from "@mozilla/readability";
 import TurndownService from "turndown";
 import { exec } from "../linux/linux.js";
+import { isPrivateHost } from "../net/public-address.js";
 
 /** Suppresses jsdom's noisy "Could not parse CSS stylesheet" on modern pages. */
 function quietConsole(): VirtualConsole {
@@ -62,19 +63,7 @@ export function safeUrl(raw: string): string {
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
     throw new Error("Only https:// and http:// pages can be fetched.");
   }
-  const host = parsed.hostname.toLowerCase();
-  if (
-    host === "localhost" ||
-    host.endsWith(".localhost") ||
-    host.endsWith(".local") ||
-    host === "::1" ||
-    /^127\./.test(host) ||
-    /^10\./.test(host) ||
-    /^192\.168\./.test(host) ||
-    /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
-    /^169\.254\./.test(host) ||
-    /^0\.0\.0\.0$/.test(host)
-  ) {
+  if (isPrivateHost(parsed.hostname)) {
     throw new Error("That address is not fetchable (private or local range).");
   }
   if (raw.length > 2_048) {

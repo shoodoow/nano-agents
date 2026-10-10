@@ -348,8 +348,20 @@ const begin = () => {
   rfb.focus();
 };
 
+// This page is served without a session, so the socket address in the query
+// is not trusted: it may only point back at the server that served the page.
+const sameServer = (() => {
+  try {
+    return new URL(url).host === window.location.host;
+  } catch {
+    return false;
+  }
+})();
+
 if (!url) {
   post({ kind: "error", message: "Missing url." });
+} else if (!sameServer) {
+  post({ kind: "error", message: "The desktop address does not belong to this server." });
 } else {
   withSession(begin);
 }

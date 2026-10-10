@@ -434,7 +434,7 @@ export async function speakOnce(
   if (parsedReply.files.length > 0) {
     attachments = await inlineSharedOutputBlocks(
       accountId,
-      parsedReply.files.map((file) => ({ kind: "file" as const, url: file.url, name: file.name })) as never,
+      parsedReply.files.map((file) => ({ kind: "file" as const, url: file.url, name: file.name })),
       agent.linuxProfile ? accountHome(accountId, agent.linuxProfile) : undefined,
     ).catch(() => []);
   }
@@ -452,9 +452,9 @@ export async function speakOnce(
       conversationId,
       agentId,
       runId,
-      body: blocksToText(payload as never),
+      body: blocksToText(payload),
       kind: "rich",
-      payload: payload as never,
+      payload: payload,
       cacheReadTokens: result.cacheReadTokens,
       createdAt: nextTime(),
     })

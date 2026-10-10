@@ -1,4 +1,5 @@
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
+import { config } from "../config.js";
+import { createCipheriv, createDecipheriv, hkdfSync, randomBytes, scryptSync } from "node:crypto";
 import { providerKeySchema } from "@nano-agents/shared";
 import { and, eq } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
@@ -58,7 +59,7 @@ function assertSafeProviderUrl(value: string): void {
   if (url.username || url.password) {
     throw new Error("The provider URL cannot contain credentials.");
   }
-  if (process.env.NODE_ENV === "production" && url.protocol !== "https:") {
+  if (config.isProduction() && url.protocol !== "https:") {
     throw new Error("A production provider URL must use HTTPS.");
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") {
@@ -109,7 +110,26 @@ export function open(sealed: string): string {
   return Buffer.concat([decipher.update(Buffer.from(body, "base64url")), decipher.final()]).toString("utf8");
 }
 
+let derived: { secret: string; key: Buffer } | undefined;
+
+/**
+ * The vault key, derived once per secret.
+ * Why: scrypt is slow on purpose and runs on the main thread, and this used to
+ * run on every seal and open, so each model call stalled the whole server.
+ */
 function keyMaterial(): Buffer {
-  const secret = process.env.BETTER_AUTH_SECRET ?? "dev-only-secret-change-before-production-01";
-  return scryptSync(secret, "nano-provider-keys", 32);
+  const secret = config.authSecret();
+  if (derived?.secret !== secret) {
+    derived = { secret, key: scryptSync(secret, "nano-provider-keys", 32) };
+  }
+  return derived.key;
+}
+
+/**
+ * A signing key for one purpose, derived from the auth secret.
+ * Why: sessions, the vault and short-lived tokens must not share one raw key.
+ * Input: a fixed label naming the purpose. Output: 32 key bytes.
+ */
+export function signingKey(purpose: string): Buffer {
+  return Buffer.from(hkdfSync("sha256", config.authSecret(), "", purpose, 32));
 }

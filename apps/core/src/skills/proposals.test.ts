@@ -25,6 +25,7 @@ describe("proposals", () => {
     const saved = await propose(db, room.accountId, {
       agentId: room.agentId,
       kind: "memory",
+      headers: { "content-type": "application/json" },
       body: "Ship on Friday.",
       messageIds: [message.id],
     });
@@ -34,6 +35,7 @@ describe("proposals", () => {
       propose(db, room.accountId, {
         agentId: room.agentId,
         kind: "memory",
+        headers: { "content-type": "application/json" },
         body: "No source.",
         messageIds: [],
       }),
@@ -51,6 +53,7 @@ describe("proposals", () => {
     const saved = await propose(db, room.accountId, {
       agentId: room.agentId,
       kind: "skill",
+      headers: { "content-type": "application/json" },
       body: "---\nname: letters\ndescription: New.\n---\n\nNew body.\n",
       messageIds: [message.id],
     });
@@ -83,10 +86,11 @@ describe("proposals", () => {
     const saved = await propose(db, room.accountId, {
       agentId: room.agentId,
       kind: "prompt",
+      headers: { "content-type": "application/json" },
       body: "Sign every letter.",
       messageIds: [message.id],
     });
-    const server = await startServer(db, 0);
+    const server = await startServer(db, 0, undefined, { openAccess: true });
     const address = server.address() as AddressInfo;
     const baseUrl = `http://127.0.0.1:${address.port}`;
     const outsider = await createAccount(db, { name: "Outsider" });

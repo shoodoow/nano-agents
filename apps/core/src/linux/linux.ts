@@ -1,9 +1,10 @@
+import { config } from "../config.js";
 import { finished } from "node:stream/promises";
 import { PassThrough, type Duplex } from "node:stream";
 import Dockerode from "dockerode";
 import { and, eq } from "drizzle-orm";
 import type { Store } from "../db/client.js";
-import { getDb } from "../db/client.js";
+import { sharedDb } from "../db/client.js";
 import { agents, user } from "../db/schema.js";
 
 const image = "nano-agents-linux:1";
@@ -11,12 +12,37 @@ const memoryBytes = 10 * 1024 * 1024 * 1024;
 const storageSize = "50G";
 const toolchainRepairs = new Map<string, Promise<void>>();
 const containerNameByAccount = new Map<string, string>();
+const emailByAccount = new Map<string, string>();
 
 const docker = new Dockerode({
-  socketPath: process.env.DOCKER_SOCKET ?? "/var/run/docker.sock",
+  socketPath: config.dockerSocket(),
 });
 
-export type ExecResult = { stdout: string; code: number };
+export type ExecResult = { stdout: string; code: number; truncated: boolean };
+export type ExecBytesResult = { stdout: Buffer; code: number; truncated: boolean };
+
+export type ExecOptions = {
+  /** Output past this many bytes is dropped and the command's stream is closed. */
+  maxBytes?: number;
+  /** Stops waiting, and closes the stream, after this long. */
+  timeoutMs?: number;
+};
+
+/**
+ * Most output one command may hand back to the core.
+ * Why: output is held in the core's memory, and the core serves every
+ * account. Without a ceiling one `yes` or one `cat` of a huge file inside a
+ * container took the whole server down.
+ */
+export const DEFAULT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+
+/** Thrown when a command outlives the time its caller allowed. */
+export class ExecTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`The command did not finish within ${Math.round(timeoutMs / 1000)} seconds.`);
+    this.name = "ExecTimeoutError";
+  }
+}
 
 /** Docker demux can write after the hijack socket closes; swallow EPIPE so it never crashes core. */
 function swallowBrokenPipe(stream: PassThrough): void {
@@ -25,15 +51,64 @@ function swallowBrokenPipe(stream: PassThrough): void {
   });
 }
 
-function execCaptureStreams(): { stdout: PassThrough; stderr: PassThrough; chunks: Buffer[] } {
+/**
+ * Reads a started exec to its end, within the caller's byte and time limits.
+ * Input: the container, the exec, its attached stream, and the limits.
+ * Output: the combined output, the exit code, and whether output was cut.
+ * Reaching the byte limit closes the stream, which ends most commands with a
+ * broken pipe; the exit code is then whatever Docker has recorded so far.
+ */
+async function collectExec(
+  container: Dockerode.Container,
+  running: Dockerode.Exec,
+  stream: Duplex,
+  options: ExecOptions = {},
+): Promise<ExecBytesResult> {
+  const maxBytes = options.maxBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   const stdout = new PassThrough();
   const stderr = new PassThrough();
   swallowBrokenPipe(stdout);
   swallowBrokenPipe(stderr);
   const chunks: Buffer[] = [];
-  stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
-  stderr.on("data", (chunk: Buffer) => chunks.push(chunk));
-  return { stdout, stderr, chunks };
+  let size = 0;
+  let truncated = false;
+  let timedOut = false;
+  const keep = (chunk: Buffer): void => {
+    if (truncated) return;
+    const room = maxBytes - size;
+    if (chunk.length > room) {
+      if (room > 0) chunks.push(chunk.subarray(0, room));
+      size = maxBytes;
+      truncated = true;
+      stream.destroy();
+      return;
+    }
+    chunks.push(chunk);
+    size += chunk.length;
+  };
+  stdout.on("data", keep);
+  stderr.on("data", keep);
+  stream.on("error", () => {});
+  container.modem.demuxStream(stream, stdout, stderr);
+  const timer = options.timeoutMs
+    ? setTimeout(() => {
+        timedOut = true;
+        stream.destroy();
+      }, options.timeoutMs)
+    : undefined;
+  try {
+    await finished(stream);
+  } catch (error) {
+    // Closing the stream ourselves is the expected way out of both limits.
+    if (!truncated && !timedOut) throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+    stdout.destroy();
+    stderr.destroy();
+  }
+  if (timedOut) throw new ExecTimeoutError(options.timeoutMs ?? 0);
+  const info = await running.inspect();
+  return { stdout: Buffer.concat(chunks), code: info.ExitCode ?? (truncated ? 0 : 1), truncated };
 }
 
 /**
@@ -66,19 +141,21 @@ export function accountHome(_accountId: string, profile: string): string {
  * Input: the account id.
  * Output: the container id. A second call returns the container that is already running.
  */
-export async function createLinux(accountId: string, email?: string): Promise<string> {
+export async function createLinux(accountId: string, emailHint?: string): Promise<string> {
   await ensureImage();
-  const name = await resolveContainerName(accountId, email);
+  const name = await resolveContainerName(accountId, emailHint);
+  const email = await accountEmail(accountId, emailHint);
   const labels: Record<string, string> = { "nano.account": accountId };
   if (email) {
-    labels["nano.email"] = email.trim().toLowerCase();
+    labels["nano.email"] = email;
   }
-  if (process.env.NODE_ENV === "test") {
+  if (config.isTest()) {
     labels["nano.test"] = "1";
   }
   const existing = docker.getContainer(name);
   try {
     const info = await existing.inspect();
+    assertOwnContainer(accountId, email, name, info.Config?.Labels);
     if (!info.State.Running) {
       await existing.start();
     }
@@ -106,6 +183,7 @@ export async function createLinux(accountId: string, email?: string): Promise<st
     }
     // Lost the name race with a concurrent first-use: adopt the winner.
     const winner = await docker.getContainer(name).inspect();
+    assertOwnContainer(accountId, email, name, winner.Config?.Labels);
     if (!winner.State.Running) {
       await docker.getContainer(name).start();
     }
@@ -121,12 +199,18 @@ export async function createLinux(accountId: string, email?: string): Promise<st
 
 /**
  * Runs a command in an account container.
- * Input: the account id, the command argv, and an optional Linux user.
- * Output: the combined stdout and the exit code.
+ * Input: the account id, the command argv, an optional Linux user, environment entries, and limits.
+ * Output: the combined stdout, the exit code, and whether the output was cut at the byte limit.
  */
-export async function exec(accountId: string, command: string[], user = "root", env?: string[]): Promise<ExecResult> {
-  const result = await execBytes(accountId, command, user, env);
-  return { stdout: result.stdout.toString("utf8"), code: result.code };
+export async function exec(
+  accountId: string,
+  command: string[],
+  user = "root",
+  env?: string[],
+  options?: ExecOptions,
+): Promise<ExecResult> {
+  const result = await execBytes(accountId, command, user, env, options);
+  return { stdout: result.stdout.toString("utf8"), code: result.code, truncated: result.truncated };
 }
 
 /**
@@ -139,7 +223,8 @@ export async function execBytes(
   command: string[],
   user = "root",
   env?: string[],
-): Promise<{ stdout: Buffer; code: number }> {
+  options?: ExecOptions,
+): Promise<ExecBytesResult> {
   const container = docker.getContainer(await resolveContainerName(accountId));
   const running = await container.exec({
     Cmd: command,
@@ -149,14 +234,7 @@ export async function execBytes(
     AttachStderr: true,
   });
   const stream = await running.start({ hijack: true, stdin: false });
-  stream.on("error", () => {});
-  const { stdout, stderr, chunks } = execCaptureStreams();
-  container.modem.demuxStream(stream, stdout, stderr);
-  await finished(stream);
-  stdout.destroy();
-  stderr.destroy();
-  const info = await running.inspect();
-  return { stdout: Buffer.concat(chunks), code: info.ExitCode ?? 1 };
+  return collectExec(container, running, stream, options);
 }
 
 /**
@@ -173,7 +251,8 @@ export async function execStdin(
   stdin: Buffer,
   user = "root",
   env?: string[],
-): Promise<{ stdout: Buffer; code: number }> {
+  options?: ExecOptions,
+): Promise<ExecBytesResult> {
   const container = docker.getContainer(await resolveContainerName(accountId));
   const running = await container.exec({
     Cmd: command,
@@ -184,16 +263,9 @@ export async function execStdin(
     AttachStderr: true,
   });
   const stream = await running.start({ hijack: true, stdin: true });
-  stream.on("error", () => {});
-  const { stdout, stderr, chunks } = execCaptureStreams();
-  container.modem.demuxStream(stream, stdout, stderr);
   stream.write(stdin);
   stream.end();
-  await finished(stream);
-  stdout.destroy();
-  stderr.destroy();
-  const info = await running.inspect();
-  return { stdout: Buffer.concat(chunks), code: info.ExitCode ?? 1 };
+  return collectExec(container, running, stream, options);
 }
 
 /**
@@ -341,33 +413,90 @@ export function containerName(email: string): string {
   return `nano-${safe}`;
 }
 
+/**
+ * Picks the container name for one account and remembers it.
+ * Why: the readable name comes from the sign-in email, and two different
+ * emails can clean up to the same name (`o'brien@` and `o-brien@`). A name
+ * that already belongs to someone else is never reused: this account gets the
+ * name built from its own id instead, so no one is attached to another
+ * person's computer.
+ * Input: account id and an optional email. Output: the container name.
+ */
 async function resolveContainerName(accountId: string, emailHint?: string): Promise<string> {
   const cached = containerNameByAccount.get(accountId);
   if (cached) {
     return cached;
   }
-  if (emailHint?.trim()) {
-    const name = containerName(emailHint);
-    containerNameByAccount.set(accountId, name);
-    return name;
-  }
-  const databaseUrl = process.env.DATABASE_URL;
-  if (databaseUrl) {
-    const store = getDb(databaseUrl);
-    const [row] = await store
-      .select({ email: user.email })
-      .from(user)
-      .where(eq(user.accountId, accountId))
-      .limit(1);
-    if (row?.email) {
-      const name = containerName(row.email);
-      containerNameByAccount.set(accountId, name);
-      return name;
-    }
-  }
+  const email = await accountEmail(accountId, emailHint);
   const fallback = `nano-${accountId}`;
-  containerNameByAccount.set(accountId, fallback);
-  return fallback;
+  const preferred = email ? containerName(email) : fallback;
+  const name = (await ownedByAnother(accountId, email, preferred)) ? fallback : preferred;
+  containerNameByAccount.set(accountId, name);
+  return name;
+}
+
+/** The sign-in email for one account, lowercased, or undefined when it has no user row. */
+async function accountEmail(accountId: string, hint?: string): Promise<string | undefined> {
+  const known = hint?.trim() || emailByAccount.get(accountId);
+  if (known) {
+    const clean = known.toLowerCase();
+    emailByAccount.set(accountId, clean);
+    return clean;
+  }
+  const [row] = await sharedDb()
+    .select({ email: user.email })
+    .from(user)
+    .where(eq(user.accountId, accountId))
+    .limit(1);
+  const email = row?.email?.trim().toLowerCase();
+  if (email) emailByAccount.set(accountId, email);
+  return email || undefined;
+}
+
+/**
+ * True when a container's labels name a different owner.
+ * Why: the email label is the lasting identity. An account row can be made
+ * again for the same person (a database reset), and their computer must come
+ * back to them, so a matching email wins over a changed account id. Older
+ * containers without an email label are matched on the account id.
+ */
+export function isForeignContainer(
+  accountId: string,
+  email: string | undefined,
+  labels: Record<string, string> | undefined,
+): boolean {
+  const labelEmail = labels?.["nano.email"];
+  if (labelEmail && email) return labelEmail !== email;
+  const owner = labels?.["nano.account"];
+  return Boolean(owner) && owner !== accountId;
+}
+
+/** True when a container with this name exists and belongs to someone else. */
+async function ownedByAnother(accountId: string, email: string | undefined, name: string): Promise<boolean> {
+  try {
+    const info = await docker.getContainer(name).inspect();
+    return isForeignContainer(accountId, email, info.Config?.Labels);
+  } catch (error) {
+    if ((error as { statusCode?: number }).statusCode === 404) return false;
+    throw error;
+  }
+}
+
+/**
+ * Stops an account from using a container that belongs to someone else.
+ * Why: last line of defence for two first-use calls that raced to the same
+ * name. The cached name is dropped so the next call picks the id-based one.
+ */
+function assertOwnContainer(
+  accountId: string,
+  email: string | undefined,
+  name: string,
+  labels: Record<string, string> | undefined,
+): void {
+  if (isForeignContainer(accountId, email, labels)) {
+    containerNameByAccount.delete(accountId);
+    throw new Error(`Container ${name} belongs to another account. Retry to get this account's own computer.`);
+  }
 }
 
 /**

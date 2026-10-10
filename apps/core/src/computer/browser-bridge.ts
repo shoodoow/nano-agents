@@ -1,4 +1,4 @@
-import { cdpPortFor, resolveSession } from "../desktop/desktop.js";
+import { resolveSession, type Session } from "../desktop/desktop.js";
 import { exec, execStdin } from "../linux/linux.js";
 
 /** Tools the in-container bridge accepts. Names match the agent tool list. */
@@ -80,14 +80,14 @@ export function ensureBrowserScript(display: number, cdpPort: number): string {
 
 /**
  * Makes sure this agent's visible browser is up before a browser tool uses it.
- * Input: account id and Linux user. Output: `ready`, `started`, or throws with the reason.
+ * Input: account id and Linux user. Output: the desktop session it runs on, or throws with the reason.
  */
-export async function ensureBrowser(accountId: string, profile: string): Promise<"ready" | "started"> {
+export async function ensureBrowser(accountId: string, profile: string): Promise<Session> {
   // Chromium needs the desktop up before it can open a window the person can see.
   const session = await resolveSession(accountId, profile);
-  const result = await exec(accountId, ["bash", "-lc", ensureBrowserScript(session.display, cdpPortFor(profile))], profile);
+  const result = await exec(accountId, ["bash", "-lc", ensureBrowserScript(session.display, session.cdpPort)], profile);
   const line = result.stdout.trim().split("\n").at(-1) ?? "";
-  if (result.code === 0 && (line === "ready" || line === "started")) return line;
+  if (result.code === 0 && (line === "ready" || line === "started")) return session;
   throw new Error(`The browser did not start on the desktop. ${line.replace(/^failed:\s*/, "").slice(0, 300)}`.trim());
 }
 
@@ -133,8 +133,7 @@ export async function runBrowserTool(
 ): Promise<string> {
   // The visible browser is started here when it is not running, so no tool
   // call depends on the model launching Chromium correctly first.
-  await ensureBrowser(accountId, profile);
-  const cdpPort = cdpPortFor(profile);
+  const { cdpPort } = await ensureBrowser(accountId, profile);
   const body = JSON.stringify({
     ...JSON.parse(browserBridgeRequest(name, args)),
     cdpPort,

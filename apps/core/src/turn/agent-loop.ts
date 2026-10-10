@@ -4,7 +4,7 @@
  */
 import type { getDb, Store } from "../db/client.js";
 import type { TurnEvent } from "../rooms/send-message.js";
-import { messages } from "../db/schema.js";
+import type { messages } from "../db/schema.js";
 import type { AgentMode, GenerateResult, TurnInput } from "./types.js";
 import { ensureTracePlugins } from "./trace/bootstrap.js";
 import { createTraceSession } from "./trace/plugins.js";

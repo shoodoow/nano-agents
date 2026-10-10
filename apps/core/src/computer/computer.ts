@@ -51,7 +51,10 @@ export function assertShellSafe(command: string): void {
 export async function readFile(accountId: string, profile: string, path: string): Promise<string> {
   path = expandHome(accountId, profile, path);
   assertPath(accountId, path, profile);
-  const result = await exec(accountId, ["cat", path], profile);
+  const result = await exec(accountId, ["cat", "--", path], profile, undefined, { maxBytes: READ_MAX_BYTES });
+  if (result.truncated) {
+    return `${result.stdout}\n\n[file cut at ${READ_MAX_BYTES / 1_000_000} MB — read a part of it with head, tail or sed]`;
+  }
   if (result.code !== 0) {
     // A directory is a common first guess: answer with its listing instead of
     // an error the model would have to spend another step recovering from.
@@ -63,6 +66,14 @@ export async function readFile(accountId: string, profile: string, path: string)
   }
   return result.stdout;
 }
+
+/** Most of one file, or of one command's output, the core will hold in memory. */
+const READ_MAX_BYTES = 1_000_000;
+const BASH_MAX_OUTPUT_BYTES = 1_000_000;
+/** A foreground command that runs this long is stopped; long jobs belong in the background. */
+const BASH_TIMEOUT_SECONDS = 30 * 60;
+/** Exit code coreutils `timeout` uses when it stopped the command. */
+const TIMEOUT_EXIT_CODE = 124;
 
 const IMAGE_FILE = /\.(png|jpe?g|webp|gif|bmp)$/i;
 
@@ -85,15 +96,11 @@ export async function readImage(
 ): Promise<{ path: string; jpegBase64: string }> {
   path = expandHome(accountId, profile, path);
   assertPath(accountId, path, profile);
-  if (path.includes("'")) throw new Error("The image path is unsafe.");
   const out = `/tmp/view-${Date.now()}-${Math.round(Math.random() * 1e6)}.jpg`;
+  // Paths travel as arguments, never inside the script text, so no quoting can break.
   const made = await exec(
     accountId,
-    [
-      "sh",
-      "-c",
-      `ffmpeg -v error -y -i '${path}' -vf "scale='min(960,iw)':-2" -frames:v 1 -q:v 7 '${out}' 2>&1`,
-    ],
+    ["sh", "-c", `ffmpeg -v error -y -i "$1" -vf "scale='min(960,iw)':-2" -frames:v 1 -q:v 7 "$2" 2>&1`, "sh", path, out],
     profile,
   );
   if (made.code !== 0) throw new Error(made.stdout.slice(0, 300) || "The image could not be opened.");
@@ -111,10 +118,11 @@ export async function readImage(
 export async function writeFile(accountId: string, profile: string, path: string, body: string): Promise<void> {
   path = expandHome(accountId, profile, path);
   assertPath(accountId, path, profile);
-  const encoded = Buffer.from(body).toString("base64");
-  const result = await exec(accountId, ["bash", "-lc", `printf %s '${encoded}' | base64 -d > '${path}'`], profile);
+  // The body goes in on stdin: one argument is capped near 128KB by Linux, so a
+  // file passed on the command line failed once it grew past that.
+  const result = await execStdin(accountId, ["sh", "-c", 'cat > "$1"', "sh", path], Buffer.from(body), profile);
   if (result.code !== 0) {
-    throw new Error(result.stdout || "The file could not be written.");
+    throw new Error(result.stdout.toString("utf8") || "The file could not be written.");
   }
 }
 
@@ -130,7 +138,21 @@ export async function bash(accountId: string, profile: string, command: string):
   assertShellSafe(command);
   // Starts the desktop when it is down, so a GUI program launched here has a screen.
   const displayName = `:${(await resolveSession(accountId, profile)).display}`;
-  const result = await exec(accountId, ["bash", "-lc", command], profile, [`DISPLAY=${displayName}`]);
+  const result = await exec(
+    accountId,
+    ["timeout", "--kill-after=10", String(BASH_TIMEOUT_SECONDS), "bash", "-lc", command],
+    profile,
+    [`DISPLAY=${displayName}`],
+    { maxBytes: BASH_MAX_OUTPUT_BYTES },
+  );
+  if (result.truncated) {
+    return `${result.stdout}\n\n[output cut at ${BASH_MAX_OUTPUT_BYTES / 1_000_000} MB and the command was stopped — send long output to a file and read part of it]`;
+  }
+  if (result.code === TIMEOUT_EXIT_CODE) {
+    throw new Error(
+      `The command ran for ${BASH_TIMEOUT_SECONDS / 60} minutes and was stopped. Start long-running programs in the background (nohup ... &) and check on them later.\n${result.stdout}`.trim(),
+    );
+  }
   if (result.code !== 0) {
     throw new Error(result.stdout || "The command failed.");
   }
@@ -151,13 +173,13 @@ export async function screenshotImage(accountId: string, profile: string) {
   const dir = `${accountShared(accountId)}/screenshots/${profile}`;
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const path = `${dir}/shot-${stamp}.png`;
-  const mkdir = await exec(accountId, ["bash", "-lc", `mkdir -p '${dir}'`], profile);
+  const mkdir = await exec(accountId, ["mkdir", "-p", dir], profile);
   if (mkdir.code !== 0) {
     throw new Error(mkdir.stdout || "Could not create screenshots directory.");
   }
   const written = await execStdin(
     accountId,
-    ["bash", "-lc", `cat > '${path}'`],
+    ["sh", "-c", 'cat > "$1"', "sh", path],
     Buffer.from(shot.pngBase64, "base64"),
     profile,
   );

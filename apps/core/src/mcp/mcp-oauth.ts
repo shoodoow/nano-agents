@@ -4,6 +4,7 @@ import { mcpServers } from "../db/schema.js";
 import { catalogPlugin } from "./catalog.js";
 import { sealOAuth, type OAuthSecret } from "./credential.js";
 import { codeChallenge, codeVerifier, pluginCallbackUrl, savePending, takePending } from "./oauth-pending.js";
+import { publicFetch } from "../net/public-fetch.js";
 import { assertSafeMcpUrl } from "./url.js";
 
 type Database = ReturnType<typeof getDb>;
@@ -20,7 +21,7 @@ type AuthServer = {
  * Reads OAuth metadata for a public MCP server.
  * Input: the MCP URL. Output: authorize and token endpoints, or null when the server does not publish them.
  */
-export async function discoverMcpOAuth(mcpUrl: string, fetchImpl: FetchImpl = fetch): Promise<AuthServer | null> {
+export async function discoverMcpOAuth(mcpUrl: string, fetchImpl: FetchImpl = publicFetch): Promise<AuthServer | null> {
   assertSafeMcpUrl(mcpUrl);
   const resource = await resourceMetadataUrl(mcpUrl, fetchImpl);
   if (!resource) return null;
@@ -110,7 +111,7 @@ export async function finishMcpOAuth(db: Database, state: string, code: string):
   return { accountId: pending.accountId, slug: pending.slug };
 }
 
-export async function refreshOAuthSecret(oauth: OAuthSecret, fetchImpl: FetchImpl = fetch): Promise<OAuthSecret> {
+export async function refreshOAuthSecret(oauth: OAuthSecret, fetchImpl: FetchImpl = publicFetch): Promise<OAuthSecret> {
   assertSafeMcpUrl(oauth.tokenEndpoint);
   const token = await exchangeCode(
     oauth.tokenEndpoint,
@@ -134,7 +135,7 @@ export async function updateOAuthSecret(db: Database, rowId: string, oauth: OAut
 }
 
 async function registerClient(registrationEndpoint: string): Promise<string> {
-  const response = await fetch(registrationEndpoint, {
+  const response = await publicFetch(registrationEndpoint, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -153,7 +154,7 @@ async function registerClient(registrationEndpoint: string): Promise<string> {
 async function exchangeCode(
   tokenEndpoint: string,
   fields: Record<string, string>,
-  fetchImpl: FetchImpl = fetch,
+  fetchImpl: FetchImpl = publicFetch,
 ): Promise<{ access_token: string; refresh_token?: string; expires_in?: number }> {
   const response = await fetchImpl(tokenEndpoint, {
     method: "POST",

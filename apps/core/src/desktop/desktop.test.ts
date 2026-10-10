@@ -30,7 +30,7 @@ test("the core proxies the screen and takeover pauses the pointer", async () => 
   const other = await createAccount(db, { name: "Other" });
   const ada = await createAgent(db, account.id, hired("Ada"));
   const profile = await createProfile(db, account.id, ada.id);
-  const server = await startServer(db, 0);
+  const server = await startServer(db, 0, undefined, { openAccess: true });
   const address = server.address() as AddressInfo;
   const denied = await fetch(`http://127.0.0.1:${address.port}/accounts/${other.id}/screens/${profile}/takeover`, {
     method: "POST",

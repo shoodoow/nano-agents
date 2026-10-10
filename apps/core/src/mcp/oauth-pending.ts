@@ -1,3 +1,4 @@
+import { config } from "../config.js";
 import { createHash, randomBytes } from "node:crypto";
 
 export type PendingOAuth = {
@@ -48,6 +49,5 @@ export function takePending(id: string): PendingOAuth | null {
 }
 
 export function pluginCallbackUrl(): string {
-  const base = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:3000";
-  return `${base.replace(/\/$/, "")}/plugins/oauth/callback`;
+  return `${config.publicUrl().replace(/\/$/, "")}/plugins/oauth/callback`;
 }

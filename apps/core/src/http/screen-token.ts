@@ -10,7 +10,7 @@ type ScreenTokenPayload = {
  * Signs a short-lived token so the mobile WebView can open the screen socket
  * without planting HttpOnly session cookies (required on HTTPS).
  */
-export function mintScreenToken(accountId: string, profile: string, secret: string, ttlSeconds = 120): string {
+export function mintScreenToken(accountId: string, profile: string, secret: string | Buffer, ttlSeconds = 120): string {
   const payload = Buffer.from(
     JSON.stringify({
       accountId,
@@ -24,7 +24,7 @@ export function mintScreenToken(accountId: string, profile: string, secret: stri
 }
 
 /** Validates a screen token and returns its payload when still valid. */
-export function verifyScreenToken(token: string, secret: string): ScreenTokenPayload | null {
+export function verifyScreenToken(token: string, secret: string | Buffer): ScreenTokenPayload | null {
   const dot = token.indexOf(".");
   if (dot <= 0) {
     return null;

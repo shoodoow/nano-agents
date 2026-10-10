@@ -10,7 +10,7 @@ import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
 import { accounts, messages, toolApprovals } from "../db/schema.js";
 import { saveNotification } from "../notify/notify.js";
-import { saveSendMessage } from "../rooms/send-message.js";
+import { saveSendMessage, withWidgetProps } from "../rooms/send-message.js";
 import type { ToolContext } from "./tools/context.js";
 
 type Db = ReturnType<typeof getDb>;
@@ -259,6 +259,7 @@ export async function reviewToolCall(
     ],
     createdAt: ctx.nextTime(),
   });
+  await ctx.db.update(toolApprovals).set({ messageId: saved.id }).where(eq(toolApprovals.id, created.id));
   ctx.emittedMessages.push(saved);
   await ctx.emit({ type: "message", message: saved });
   const ping = await saveNotification(ctx.store, {
@@ -425,36 +426,30 @@ export async function markApprovalWidget(
   approvalId: string,
   decision: "approved" | "denied",
 ) {
-  const rows = await db
-    .select()
-    .from(messages)
-    .where(
-      and(
-        eq(messages.accountId, accountId),
-        eq(messages.conversationId, conversationId),
-        sql`${messages.payload}::text like ${`%${approvalId}%`}`,
-      ),
-    )
-    .orderBy(desc(messages.createdAt))
-    .limit(5);
+  const [approval] = await db
+    .select({ messageId: toolApprovals.messageId })
+    .from(toolApprovals)
+    .where(and(eq(toolApprovals.id, approvalId), eq(toolApprovals.accountId, accountId)));
+  const inRoom = and(eq(messages.accountId, accountId), eq(messages.conversationId, conversationId));
+  // Cards saved before approvals recorded their message are found the old
+  // way, by scanning the room for the approval id.
+  const rows = approval?.messageId
+    ? await db.select().from(messages).where(and(inRoom, eq(messages.id, approval.messageId)))
+    : await db
+        .select()
+        .from(messages)
+        .where(and(inRoom, sql`${messages.payload}::text like ${`%${approvalId}%`}`))
+        .orderBy(desc(messages.createdAt))
+        .limit(5);
   const match = rows.find((row) => {
-    if (!Array.isArray(row.payload)) return false;
-    return (row.payload as { kind?: string; widget?: string; props?: { approvalId?: string } }[]).some(
-      (block) => block.kind === "widget" && block.widget === "approval" && block.props?.approvalId === approvalId,
+    return (row.payload ?? []).some(
+      (block) => block.kind === "widget" && block.widget === "approval" && block.props.approvalId === approvalId,
     );
   });
-  if (!match || !Array.isArray(match.payload)) return null;
-  const next = (match.payload as Record<string, unknown>[]).map((block) => {
-    if (block.kind !== "widget" || block.widget !== "approval") return block;
-    const props =
-      block.props && typeof block.props === "object"
-        ? { ...(block.props as Record<string, unknown>), status: decision }
-        : { status: decision };
-    return { ...block, props };
-  });
+  if (!match?.payload) return null;
   const [updated] = await db
     .update(messages)
-    .set({ payload: next as never })
+    .set({ payload: withWidgetProps(match.payload, "approval", { status: decision }) })
     .where(and(eq(messages.id, match.id), eq(messages.accountId, accountId)))
     .returning();
   return updated ?? null;

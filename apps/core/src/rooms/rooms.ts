@@ -1,5 +1,5 @@
 import { memberAddSchema, messageCreateSchema, roomCreateSchema, sendMessageInputSchema } from "@nano-agents/shared";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { getDb, Store } from "../db/client.js";
 import {
   agents,
@@ -15,6 +15,7 @@ import {
   runs,
   summaryItems,
 } from "../db/schema.js";
+import type { MessageBlock } from "@nano-agents/shared";
 import { materializeBlocks } from "./uploads.js";
 
 type Database = ReturnType<typeof getDb>;
@@ -24,6 +25,20 @@ export class RoomCapacityError extends Error {
     super("A room cannot have more than 20 members");
     this.name = "RoomCapacityError";
   }
+}
+
+/**
+ * Finds one room on one account.
+ * Why: every room route starts by proving the room belongs to the caller; one
+ * lookup keeps that check identical everywhere.
+ * Input: store, account id, conversation id. Output: the room, or null outside the account.
+ */
+export async function findRoom(store: Store, accountId: string, conversationId: string) {
+  const [room] = await store
+    .select({ id: conversations.id, kind: conversations.kind, ownerAgentId: conversations.ownerAgentId })
+    .from(conversations)
+    .where(and(eq(conversations.id, conversationId), eq(conversations.accountId, accountId)));
+  return room ?? null;
 }
 
 /**
@@ -198,10 +213,7 @@ export async function deleteGroupRoom(
  */
 export async function addMember(db: Database, accountId: string, conversationId: string, input: unknown) {
   const data = memberAddSchema.parse(input);
-  const [room] = await db
-    .select({ id: conversations.id, kind: conversations.kind })
-    .from(conversations)
-    .where(and(eq(conversations.id, conversationId), eq(conversations.accountId, accountId)));
+  const room = await findRoom(db, accountId, conversationId);
   if (!room) {
     return null;
   }
@@ -241,11 +253,7 @@ export async function addMember(db: Database, accountId: string, conversationId:
  * Input: unknown JSON. Output: {text, blocks?, replyTo?}, or null outside account.
  */
 export async function readMessage(db: Database, accountId: string, conversationId: string, input: unknown) {
-  const [room] = await db
-    .select({ id: conversations.id })
-    .from(conversations)
-    .where(and(eq(conversations.id, conversationId), eq(conversations.accountId, accountId)));
-  if (!room) {
+  if (!(await findRoom(db, accountId, conversationId))) {
     return null;
   }
   if (typeof input === "object" && input !== null && "blocks" in input) {
@@ -287,11 +295,7 @@ export async function listConversations(db: Database, accountId: string) {
  * Input: db, account id, conversation id. Output: member rows, or null outside account.
  */
 export async function listMembers(db: Database, accountId: string, conversationId: string) {
-  const [room] = await db
-    .select({ id: conversations.id })
-    .from(conversations)
-    .where(and(eq(conversations.id, conversationId), eq(conversations.accountId, accountId)));
-  if (!room) {
+  if (!(await findRoom(db, accountId, conversationId))) {
     return null;
   }
   return db
@@ -316,17 +320,13 @@ export async function saveUserMessage(
   conversationId: string,
   input: {
     text: string;
-    blocks?: { kind: string; [key: string]: unknown }[] | null;
+    blocks?: MessageBlock[] | null;
     replyTo?: string | null;
     runId?: string | null;
     queued?: boolean;
   },
 ) {
-  const [room] = await db
-    .select({ id: conversations.id })
-    .from(conversations)
-    .where(and(eq(conversations.id, conversationId), eq(conversations.accountId, accountId)));
-  if (!room) {
+  if (!(await findRoom(db, accountId, conversationId))) {
     return null;
   }
   if (input.replyTo) {
@@ -367,12 +367,12 @@ export async function saveUserMessage(
   // the message itself is already durable so nothing is lost.
   if (input.blocks && input.blocks.length > 0) {
     try {
-      const landed = await materializeBlocks(accountId, saved.id, input.blocks as never);
+      const landed = await materializeBlocks(accountId, saved.id, input.blocks);
       const changed = JSON.stringify(landed) !== JSON.stringify(input.blocks);
       if (changed) {
         const [updated] = await db
           .update(messages)
-          .set({ payload: landed as never })
+          .set({ payload: landed })
           .where(and(eq(messages.id, saved.id), eq(messages.accountId, accountId)))
           .returning();
         if (updated) return updated;
@@ -462,18 +462,27 @@ export async function getMessage(db: Database, accountId: string, conversationId
  * Why: the phone renders blocks/images/widgets inline; body stays as text
  * fallback for search and legacy clients. Reactions are fetched separately to
  * keep the hot path small.
- * Input: a database client, the account id, and the conversation id.
+ * A page asks for the newest `limit` messages, or the `limit` just before
+ * one message, so an open chat never re-downloads its whole history.
+ * Input: a database client, the account id, the conversation id, and an optional page.
  * Output: the messages in time order with kind/payload/replyTo/via, or null outside account.
  */
-export async function listMessages(db: Database, accountId: string, conversationId: string) {
-  const [room] = await db
-    .select({ id: conversations.id })
-    .from(conversations)
-    .where(and(eq(conversations.id, conversationId), eq(conversations.accountId, accountId)));
-  if (!room) {
+export async function listMessages(
+  db: Database,
+  accountId: string,
+  conversationId: string,
+  page?: { limit?: number; before?: string },
+) {
+  if (!(await findRoom(db, accountId, conversationId))) {
     return null;
   }
-  const rows = await db
+  const inRoom = and(eq(messages.conversationId, conversationId), eq(messages.accountId, accountId));
+  // Compared inside Postgres: a timestamp read into JavaScript loses its
+  // microseconds, and two messages in the same millisecond would be skipped.
+  const older = page?.before
+    ? sql`(${messages.createdAt}, ${messages.id}) < (select m.created_at, m.id from messages m where m.id = ${page.before} and m.conversation_id = ${conversationId} and m.account_id = ${accountId})`
+    : undefined;
+  const query = db
     .select({
       id: messages.id,
       agentId: messages.agentId,
@@ -488,11 +497,19 @@ export async function listMessages(db: Database, accountId: string, conversation
       createdAt: messages.createdAt,
     })
     .from(messages)
-    .where(and(eq(messages.conversationId, conversationId), eq(messages.accountId, accountId)))
-    .orderBy(asc(messages.createdAt), asc(messages.id));
+    .where(and(inRoom, older));
+  const rows = page?.limit
+    ? (await query.orderBy(desc(messages.createdAt), desc(messages.id)).limit(clampPage(page.limit))).reverse()
+    : await query.orderBy(asc(messages.createdAt), asc(messages.id));
   // Shrink the wire: oversized data: URLs become lazy blobRefs. The stored
   // rows are untouched; the phone fetches bytes per image on demand.
   return rows.map((row) => ({ ...row, payload: stripBloatedBlocks(row.id, row.payload) }));
+}
+
+export const MAX_MESSAGE_PAGE = 200;
+
+function clampPage(limit: number): number {
+  return Math.min(Math.max(Math.floor(limit), 1), MAX_MESSAGE_PAGE);
 }
 
 /**
@@ -501,15 +518,13 @@ export async function listMessages(db: Database, accountId: string, conversation
  * Input: db, account id, conversation id. Output: reactions in time order.
  */
 export async function listReactions(db: Database, accountId: string, conversationId: string) {
-  const messageIds = await db
-    .select({ id: messages.id })
-    .from(messages)
-    .where(and(eq(messages.conversationId, conversationId), eq(messages.accountId, accountId)));
-  if (messageIds.length === 0) return [];
-  const ids = messageIds.map((m) => m.id);
-  return db
-    .select()
+  const rows = await db
+    .select({ reaction: reactions })
     .from(reactions)
-    .where(and(eq(reactions.accountId, accountId), inArray(reactions.messageId, ids)))
+    .innerJoin(messages, eq(messages.id, reactions.messageId))
+    .where(
+      and(eq(reactions.accountId, accountId), eq(messages.conversationId, conversationId), eq(messages.accountId, accountId)),
+    )
     .orderBy(asc(reactions.createdAt));
+  return rows.map((row) => row.reaction);
 }

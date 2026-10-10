@@ -1,3 +1,4 @@
+import { config } from "../config.js";
 import { and, eq } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
 import { accountGoogleOauth, mcpServers } from "../db/schema.js";
@@ -114,7 +115,7 @@ export async function installGooglePluginIfGranted(db: Database, accountId: stri
 /** Copies this plugin's skills into the account folder. A missing skills directory does not undo the connection. */
 function installCatalogSkills(db: Database, accountId: string, pluginId: string): void {
   const plugin = catalogPlugin(pluginId);
-  const root = process.env.SKILLS_DIR;
+  const root = config.skillsDir();
   if (!plugin?.skills.length || !root) return;
   try {
     for (const skill of plugin.skills) {

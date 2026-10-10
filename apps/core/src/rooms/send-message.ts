@@ -1,8 +1,8 @@
-import { type MessageBlock } from "@nano-agents/shared";
+import type { MessageBlock } from "@nano-agents/shared";
 import { reactionSchema, sendMessageInputSchema } from "@nano-agents/agent-tools";
 import { and, asc, eq } from "drizzle-orm";
 import type { Store } from "../db/client.js";
-import { agents, conversations, members, messages, notifications, reactions, runs } from "../db/schema.js";
+import { agents, conversations, members, messages, type notifications, reactions, type runs } from "../db/schema.js";
 import { mentionedIds } from "./mentions.js";
 import { appendEvent } from "./events.js";
 import { publish } from "./stream.js";
@@ -31,6 +31,22 @@ export type TurnEvent =
   | { type: "notify"; notification: typeof notifications.$inferSelect }
   | { type: "error"; error: string }
   | { type: "done" };
+
+/**
+ * Returns the blocks with new fields merged into every widget of one kind.
+ * Why: answering a question card or deciding an approval card changes the
+ * card that is already in the thread; both do it the same way.
+ * Input: a message's blocks, the widget name, and the fields to set.
+ */
+export function withWidgetProps(
+  blocks: MessageBlock[],
+  widget: Extract<MessageBlock, { kind: "widget" }>["widget"],
+  props: Record<string, unknown>,
+): MessageBlock[] {
+  return blocks.map((block) =>
+    block.kind === "widget" && block.widget === widget ? { ...block, props: { ...block.props, ...props } } : block,
+  );
+}
 
 /**
  * Converts rich blocks to plain text for summaries, FTS, and legacy clients.

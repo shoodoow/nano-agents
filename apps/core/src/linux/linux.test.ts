@@ -64,10 +64,11 @@ describe("linux", () => {
   it("creates one profile per member when a group is opened", async () => {    const account = await createAccount(db, { name: "Group" });
     const ada = await createAgent(db, account.id, hired("Ada"));
     const bea = await createAgent(db, account.id, hired("Bea"));
-    const server = await startServer(db, 0);
+    const server = await startServer(db, 0, undefined, { openAccess: true });
     const address = server.address() as AddressInfo;
     const response = await fetch(`http://127.0.0.1:${address.port}/accounts/${account.id}/conversations`, {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({
         kind: "group",
         title: "desk",

@@ -1,32 +1,29 @@
 import { describe, expect, it } from "vitest";
-import { agentDisplay, cdpPortFor, clampPoint, displayFor, displayName, novncPort, portsFor } from "./desktop.js";
+import { clampPoint, sessionForUid } from "./desktop.js";
 
 /**
  * Locks the single-source-of-truth display contract: agent tools, bash
  * DISPLAY, screenshots, and the noVNC viewer all derive the same :N and ports
- * purely from the username, so restarts can never desync viewer vs agent.
+ * from the profile's Linux user id, so restarts can never desync viewer vs
+ * agent and no two agents on one computer can share a screen.
  */
 describe("deterministic display", () => {
-  it("derives a stable display in range 10-79", () => {
-    expect(displayFor("uabc123")).toBe(displayFor("uabc123"));
-    expect(displayFor("uabc123")).toBeGreaterThanOrEqual(10);
-    expect(displayFor("uabc123")).toBeLessThanOrEqual(79);
-    expect(displayFor("uother")).not.toBe(displayFor("uabc123"));
+  it("derives a stable display and ports from the user id", () => {
+    expect(sessionForUid(1000)).toEqual({ display: 10, rfbPort: 5910, novncPort: 6910, cdpPort: 9210 });
+    expect(sessionForUid(1017)).toEqual(sessionForUid(1017));
   });
 
-  it("resolves identical display and ports for agent and viewer", () => {
-    const profile = "uabc123def45678";
-    expect(agentDisplay("acct-1", profile)).toBe(displayName(profile));
-    expect(novncPort("acct-1", profile)).toBe(portsFor(profile).novncPort);
-    expect(novncPort("acct-1", profile)).toBe(6900 + displayFor(profile));
-    expect(cdpPortFor(profile)).toBe(9200 + displayFor(profile));
+  it("gives every profile on a shared container its own display and ports", () => {
+    const sessions = Array.from({ length: 990 }, (_unused, slot) => sessionForUid(1000 + slot));
+    const ports = sessions.flatMap((session) => [session.rfbPort, session.novncPort, session.cdpPort]);
+    expect(new Set(sessions.map((session) => session.display)).size).toBe(990);
+    expect(new Set(ports).size).toBe(ports.length);
   });
 
-  it("gives each profile its own CDP port on a shared container", () => {
-    const ana = "uc0bf3479a7ba471c";
-    const melanie = "ua8488019b9ff4510";
-    expect(cdpPortFor(ana)).not.toBe(cdpPortFor(melanie));
-    expect(cdpPortFor(ana)).toBe(9200 + displayFor(ana));
+  it("refuses user ids outside the agent range", () => {
+    expect(() => sessionForUid(0)).toThrow(/no desktop slot/);
+    expect(() => sessionForUid(1990)).toThrow(/no desktop slot/);
+    expect(() => sessionForUid(Number.NaN)).toThrow(/no desktop slot/);
   });
 
   it("clamps grounding coordinates to 1280x800", () => {

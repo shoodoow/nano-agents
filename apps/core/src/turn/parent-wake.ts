@@ -5,7 +5,7 @@
 import type { getDb } from "../db/client.js";
 import { agents } from "../db/schema.js";
 import { takeOver } from "../desktop/desktop.js";
-import { publish } from "../rooms/stream.js";
+import { publish, type StreamEvent } from "../rooms/stream.js";
 import { claimDelivery, failuresSinceLastUser, workerFollowupCue } from "../rooms/subagents.js";
 import type { GenerateResult, TurnInput } from "./types.js";
 import { and, eq } from "drizzle-orm";
@@ -31,7 +31,7 @@ export async function resumeParentAfterWorker(
     body: string,
     generate?: (input: TurnInput) => Promise<GenerateResult>,
     skillsRoot?: string,
-    options?: { cue?: string; speakerId?: string; acquireTimeoutMs?: number; onEvent?: (event: unknown) => void },
+    options?: { cue?: string; speakerId?: string; acquireTimeoutMs?: number; onEvent?: (event: StreamEvent) => void },
   ) => Promise<unknown>,
 ): Promise<void> {
   const settledList = Array.isArray(input.settled) ? input.settled : [input.settled];
@@ -59,7 +59,7 @@ export async function resumeParentAfterWorker(
     cue,
     speakerId: input.parentAgentId,
     acquireTimeoutMs: 120_000,
-    onEvent: (event) => publish(input.accountId, input.conversationId, event as never),
+    onEvent: (event) => publish(input.accountId, input.conversationId, event),
   });
   await Promise.all(settledList.map((item) => claimDelivery(db, item.delegationId).catch(() => false)));
 }

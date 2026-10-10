@@ -3,7 +3,7 @@ import { pruneEvents } from "../rooms/events.js";
 import { publish } from "../rooms/stream.js";
 import { reclaimStaleRuns } from "../rooms/runs.js";
 import { reclaimStaleDelegations } from "../rooms/subagents.js";
-import { continueQueuedTurn, type TurnInput } from "../rooms/turn.js";
+import { continueQueuedTurn, type GenerateResult, type TurnInput } from "../rooms/turn.js";
 import { runDue } from "./routines.js";
 import { relayNotifications } from "../notify/relay.js";
 
@@ -17,7 +17,7 @@ export type SchedulerOptions = {
   staleMs?: number;
   eventRetentionDays?: number;
   skillsRoot?: string;
-  generate?: (input: TurnInput) => Promise<string | { text: string }>;
+  generate?: (input: TurnInput) => Promise<GenerateResult>;
   filterJob?: (job: { id: string; routineId: string; accountId: string }) => boolean;
   onTick?: (info: { jobs: number; queued: number; reclaimed: number; notified: number }) => void;
   onError?: (error: unknown, phase: string) => void;
@@ -61,7 +61,7 @@ export function startScheduler(db: Db, options: SchedulerOptions = {}): () => vo
               db,
               run.accountId,
               run.conversationId,
-              options.generate as never,
+              options.generate,
               options.skillsRoot,
               (event) => publish(run.accountId, run.conversationId, event),
             );
@@ -86,7 +86,7 @@ export function startScheduler(db: Db, options: SchedulerOptions = {}): () => vo
       try {
         for (;;) {
           const replies = await runDue(db, {
-            generate: options.generate as never,
+            generate: options.generate,
             skillsRoot: options.skillsRoot,
             publish: true,
             filterJob: options.filterJob,

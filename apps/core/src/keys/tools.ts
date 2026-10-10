@@ -1,3 +1,4 @@
+import { config } from "../config.js";
 import { and, eq } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
 import { open, seal } from "./keys.js";
@@ -21,8 +22,7 @@ export async function toolKeyFor(db: Database, accountId: string, tool: "brave" 
     const plain = open(row.secret).trim();
     if (plain) return plain;
   }
-  const env = tool === "brave" ? process.env.BRAVE_API_KEY : process.env.EXA_API_KEY;
-  return env?.trim() ? env.trim() : null;
+  return (tool === "brave" ? config.braveApiKey() : config.exaApiKey()) ?? null;
 }
 
 /**

@@ -1,3 +1,4 @@
+import { config } from "../config.js";
 import type { getDb } from "../db/client.js";
 import { catalogPlugin } from "./catalog.js";
 import { codeChallenge, codeVerifier, pluginCallbackUrl, savePending, takePending } from "./oauth-pending.js";
@@ -17,8 +18,8 @@ export async function startGoogleOAuth(
 ): Promise<{ installed: true } | { installed: false; url: string }> {
   const plugin = catalogPlugin(pluginId);
   if (!plugin) throw new Error("Unknown Google plugin.");
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  if (!clientId || !process.env.GOOGLE_CLIENT_SECRET) {
+  const clientId = config.googleClientId();
+  if (!clientId || !config.googleClientSecret()) {
     throw new Error("Google OAuth is not configured on this server.");
   }
   if (await installGooglePluginIfGranted(db, accountId, pluginId)) return { installed: true };
@@ -55,8 +56,8 @@ export async function startGoogleOAuth(
 export async function finishGoogleOAuth(db: Database, state: string, code: string): Promise<{ accountId: string; name: string }> {
   const pending = takePending(state);
   if (!pending || pending.kind !== "google" || !pending.pluginId) throw new Error("This plugin sign-in expired. Start it again.");
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const clientId = config.googleClientId();
+  const clientSecret = config.googleClientSecret();
   if (!clientId || !clientSecret) throw new Error("Google OAuth is not configured on this server.");
   const body = new URLSearchParams({
     client_id: clientId,
@@ -85,8 +86,8 @@ export async function finishGoogleOAuth(db: Database, state: string, code: strin
 
 /** Mints a short-lived access token on the core. The refresh token and client secret never enter the container. */
 export async function googleAccessToken(refreshToken: string): Promise<string> {
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const clientId = config.googleClientId();
+  const clientSecret = config.googleClientSecret();
   if (!clientId || !clientSecret) throw new Error("Google OAuth is not configured on this server.");
   const body = new URLSearchParams({
     client_id: clientId,

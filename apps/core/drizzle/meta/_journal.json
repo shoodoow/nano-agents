@@ -260,6 +260,13 @@
       "when": 1790893800000,
       "tag": "0036_worker-transcript",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1790980200000,
+      "tag": "0037_hot-path-indexes",
+      "breakpoints": true
     }
   ]
 }

@@ -12,7 +12,6 @@ import { catalogPlugin } from "./catalog.js";
 import { readSecret, sealOAuth, type OAuthSecret } from "./credential.js";
 import { refreshOAuthSecret, updateOAuthSecret } from "./mcp-oauth.js";
 import { dropGoogleTokenIfUnused } from "./plugins.js";
-import { closeMcpSession } from "./session.js";
 import type { McpToolCacheEntry } from "./types.js";
 import { assertSafeMcpUrl } from "./url.js";
 
@@ -59,7 +58,6 @@ export async function deleteMcpServer(db: Database, accountId: string, slug: str
     .from(mcpServers)
     .where(and(eq(mcpServers.accountId, accountId), eq(mcpServers.slug, slug)));
   if (!row) return;
-  await closeMcpSession(accountId, row.id);
   await db.delete(mcpServers).where(and(eq(mcpServers.accountId, accountId), eq(mcpServers.slug, slug)));
   if (row.kind === "google" && (await dropGoogleTokenIfUnused(db, accountId))) {
     await exec(accountId, ["rm", "-f", "/var/nano/mcp/secrets/google"]).catch(() => {});
@@ -84,7 +82,6 @@ export async function saveMcpServer(db: Database, accountId: string, input: unkn
 
   let toolsCache: McpToolCacheEntry[] = existing ? parseToolsCache(existing.toolsCache) : [];
   let lastError: string | null = null;
-  if (existing) await closeMcpSession(accountId, existing.id);
   try {
     const others = await db.select().from(mcpServers).where(eq(mcpServers.accountId, accountId));
     await syncRemoteSecrets(db, accountId, others.filter((row) => row.slug !== data.slug), {
@@ -145,7 +142,6 @@ export async function saveOAuthMcpServer(
     .select()
     .from(mcpServers)
     .where(and(eq(mcpServers.accountId, accountId), eq(mcpServers.slug, input.slug)));
-  if (existing) await closeMcpSession(accountId, existing.id);
   let toolsCache: McpToolCacheEntry[] = [];
   let lastError: string | null = null;
   try {

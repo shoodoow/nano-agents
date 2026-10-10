@@ -5,9 +5,9 @@ import { and, asc, desc, eq, inArray, lte } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
 import type { Store } from "../db/client.js";
 import { jobs, routines } from "../db/schema.js";
-import { acquireRun } from "../rooms/runs.js";
+import { acquireRun, RoomBusyError } from "../rooms/runs.js";
 import { publish } from "../rooms/stream.js";
-import { runTurn, type TurnInput } from "../rooms/turn.js";
+import { runTurn, type GenerateResult, type TurnInput } from "../rooms/turn.js";
 import type { StreamEvent } from "../rooms/stream.js";
 import { nextCronRun } from "./cron.js";
 
@@ -117,7 +117,7 @@ export async function claimJob(db: Database, jobId: string) {
 export async function runDue(
   db: ReturnType<typeof getDb>,
   generateOrOpts?: ((input: TurnInput) => Promise<string>) | {
-    generate?: (input: TurnInput) => Promise<string>;
+    generate?: (input: TurnInput) => Promise<GenerateResult>;
     onEvent?: (event: StreamEvent) => void;
     skillsRoot?: string;
     // Why: the scheduler has no room watchers of its own — live fanout for
@@ -169,7 +169,7 @@ export async function runDue(
       // instead of blocking the whole scheduler tick for minutes.
       runId = (await acquireRun(db, routine.accountId, routine.conversationId, "routine", 0)).id;
     } catch (error) {
-      if (error instanceof Error && /busy/.test(error.message)) {
+      if (error instanceof RoomBusyError) {
         await db.update(jobs).set({ status: "pending", runAt: new Date(Date.now() + 30_000) }).where(eq(jobs.id, job.id));
         return null;
       }
@@ -202,7 +202,7 @@ export async function runDue(
       instructions: routine.instructions,
       continuity,
     });
-    const replies = await runTurn(db, routine.accountId, routine.conversationId, cue, opts.generate as never, opts.skillsRoot, {
+    const replies = await runTurn(db, routine.accountId, routine.conversationId, cue, opts.generate, opts.skillsRoot, {
       existingRunId: runId,
       kind: "routine",
       cue,

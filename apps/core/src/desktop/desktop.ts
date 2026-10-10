@@ -3,12 +3,21 @@ import type { Store } from "../db/client.js";
 import { agents } from "../db/schema.js";
 import { exec, execBytes } from "../linux/linux.js";
 
-type Session = { display: number; rfbPort: number; novncPort: number };
+export type Session = { display: number; rfbPort: number; novncPort: number; cdpPort: number };
 
 export const DESKTOP_WIDTH = 1280;
 export const DESKTOP_HEIGHT = 800;
 
+/** Linux gives the first agent user id 1000; the first agent desktop is :10. */
+const FIRST_UID = 1000;
+const FIRST_DISPLAY = 10;
+/** Keeps the three port ranges (VNC, noVNC, DevTools) from running into each other. */
+const MAX_PROFILES = 990;
+/** How long a desktop that just answered is trusted before it is probed again. */
+const READY_TTL_MS = 10_000;
+
 const sessions = new Map<string, Session>();
+const readyUntil = new Map<string, number>();
 const held = new Set<string>();
 // One computer-use task per screen at a time: bots run in
 // parallel across profiles, but serialize on their own display so mouse +
@@ -16,84 +25,85 @@ const held = new Set<string>();
 const computerLocks = new Map<string, Promise<void>>();
 
 /**
- * Derives the deterministic X display for a Linux profile.
- * Why: the old incrementing counter reset on process restart, so a restarted
- * core assigned a fresh :N while the container still ran Xvfb on the old one.
- * The bot then screenshotted one display while the viewer proxied another —
- * the classic blank-viewer mismatch. Hashing the username makes the agent
- * display, the viewer display, and every restart agree by construction.
- * Input: the Linux username (e.g. uabc123). Output: display 10-79.
+ * Derives the display and ports for one Linux user id.
+ * Why: every agent on an account shares one container, so each needs its own
+ * screen. The display used to be a hash of the username into 70 slots, and
+ * with ten agents two of them landed on the same screen half the time. A
+ * Linux user id is unique inside the container and survives a core restart,
+ * so the agent tools, bash DISPLAY, screenshots and the viewer still agree by
+ * construction, and no two agents can share a screen.
+ * Input: the user id. Output: the display and its VNC, noVNC and DevTools ports.
  */
-export function displayFor(profile: string): number {
-  let hash = 2166136261;
-  for (let i = 0; i < profile.length; i += 1) {
-    hash ^= profile.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
+export function sessionForUid(uid: number): Session {
+  const slot = uid - FIRST_UID;
+  if (!Number.isInteger(slot) || slot < 0 || slot >= MAX_PROFILES) {
+    throw new Error(`Linux user id ${uid} has no desktop slot (this computer holds ${MAX_PROFILES} agent desktops).`);
   }
-  return 10 + (Math.abs(hash) % 70);
+  const display = FIRST_DISPLAY + slot;
+  return { display, rfbPort: 5900 + display, novncPort: 6900 + display, cdpPort: 9200 + display };
 }
 
 /**
- * Returns the display name for a profile without any I/O.
- * Why: bash, screenshot, and the noVNC proxy must all resolve the same :N
- * even before the desktop has started. Pure function of the username.
- * Input: the Linux username. Output: e.g. ":42".
+ * Looks up one profile's display and ports, without starting anything.
+ * Input: account id + Linux username. Output: the session. One `id -u` the
+ * first time, then remembered until a probe finds the desktop gone.
  */
-export function displayName(profile: string): string {
-  return `:${displayFor(profile)}`;
-}
-
-/**
- * Returns the RFB/noVNC ports for a profile without any I/O.
- * Why: ports derive from the display, so viewer and agent can never disagree.
- * Input: the Linux username. Output: {rfbPort, novncPort} on 127.0.0.1.
- */
-export function portsFor(profile: string): { rfbPort: number; novncPort: number } {
-  const display = displayFor(profile);
-  return { rfbPort: 5900 + display, novncPort: 6900 + display };
-}
-
-/**
- * Chrome DevTools port for one Linux profile.
- * Why: every agent on an account shares one container; a single :9222 lets
- * browser_* tools drive another agent's Chromium while the viewer shows a
- * different display. Tie CDP to the same display number bash already uses.
- * Input: Linux username. Output: localhost port 9210–9279.
- */
-export function cdpPortFor(profile: string): number {
-  return 9200 + displayFor(profile);
+async function sessionFor(accountId: string, profile: string): Promise<Session> {
+  const known = sessions.get(key(accountId, profile));
+  if (known) return known;
+  const id = await exec(accountId, ["id", "-u", profile]);
+  if (id.code !== 0) {
+    throw new Error("This agent has no Linux user on the account computer yet.");
+  }
+  const session = sessionForUid(Number(id.stdout.trim()));
+  sessions.set(key(accountId, profile), session);
+  return session;
 }
 
 /**
  * Starts this profile's virtual display, VNC, and noVNC inside the account Linux.
- * Why: idempotent and deterministic — the display/ports come from displayFor()
- * so restarts reconcile to the same :N instead of allocating a new one. The
- * fast path only probes (xset + novnc port) with zero side effects, because
- * re-running the full setup would warp the pointer back to center and restart
- * VNC under the viewer on every screenshot. Full setup runs solely when the
- * probe fails (fresh desktop or dead server).
+ * Why: idempotent and deterministic — the display/ports come from
+ * sessionForUid() so restarts reconcile to the same :N instead of allocating
+ * a new one. A desktop that answered in the last few seconds is trusted
+ * without asking again, because every click and keypress comes through here.
+ * Otherwise the fast path only probes (owner + xset + novnc port) with zero
+ * side effects, because re-running the full setup would warp the pointer back
+ * to center and restart VNC under the viewer on every screenshot. Full setup
+ * runs solely when the probe fails (fresh desktop or dead server).
  * Input: the account id and the Linux username.
  * Output: the display number and the noVNC port bound on 127.0.0.1 inside the container.
  */
 export async function startDesktop(accountId: string, profile: string): Promise<Session> {
-  const display = displayFor(profile);
-  const { rfbPort, novncPort } = portsFor(profile);
-  const session = { display, rfbPort, novncPort };
-  // Fast reconcile: X alive and noVNC listening means viewer, agent tools, and
-  // bash DISPLAY already agree — return without touching pointer or servers.
-  const probe = await exec(accountId, [
-    "sh",
-    "-c",
-    `xset -display :${display} q >/dev/null 2>&1 && nc -z 127.0.0.1 ${novncPort}`,
-  ]);
+  const sessionKey = key(accountId, profile);
+  const fresh = sessions.get(sessionKey);
+  if (fresh && (readyUntil.get(sessionKey) ?? 0) > Date.now()) {
+    return fresh;
+  }
+  let session = await sessionFor(accountId, profile);
+  // Fast reconcile: X alive, owned by this profile, and noVNC listening means
+  // viewer, agent tools, and bash DISPLAY already agree — return without
+  // touching pointer or servers.
+  const probe = await exec(accountId, ["sh", "-c", probeScript(session, profile)]);
   if (probe.code === 0) {
-    sessions.set(key(accountId, profile), session);
+    readyUntil.set(sessionKey, Date.now() + READY_TTL_MS);
     return session;
   }
+  // A recreated container hands out user ids afresh, so read this one again.
+  sessions.delete(sessionKey);
+  readyUntil.delete(sessionKey);
+  session = await sessionFor(accountId, profile);
+  const { display } = session;
+  const root = `/tmp/desktop-${display}`;
   const ready = await exec(accountId, [
     "bash",
     "-lc",
     [
+      // A display left running for another profile (an older core numbered
+      // displays differently) is shut down, not shared.
+      `if [ -f /tmp/.X${display}-lock ] && [ "$(cat ${root}/owner 2>/dev/null)" != ${shellQuote(profile)} ]; then`,
+      `  kill $(tr -cd 0-9 < /tmp/.X${display}-lock) 2>/dev/null || true; sleep 0.4`,
+      `  rm -f /tmp/.X${display}-lock /tmp/.X11-unix/X${display}`,
+      `fi`,
       `if ! xset -display :${display} q >/dev/null 2>&1; then`,
       `  if [ -f /tmp/.X${display}-lock ]; then kill $(tr -cd 0-9 < /tmp/.X${display}-lock) || true; sleep 0.4; fi`,
       `  rm -f /tmp/.X${display}-lock /tmp/.X11-unix/X${display}`,
@@ -101,18 +111,19 @@ export async function startDesktop(accountId: string, profile: string): Promise<
       `  for i in $(seq 1 50); do xset -display :${display} q >/dev/null 2>&1 && break; sleep 0.1; done`,
       `  xset -display :${display} q >/dev/null`,
       `fi`,
-      `mkdir -p /tmp/desktop-${display}`,
-      `convert -size 1280x800 gradient:'#3a3a3a-#121212' -fill '#d0d0d0' -draw 'ellipse 640,820 420,280 0,360' /tmp/desktop-${display}/wallpaper.png`,
-      `convert -size 48x48 xc:'#3c4043' -fill '#8ab4f8' -draw 'circle 24,24 24,8' /tmp/desktop-${display}/chrome.png`,
-      `convert -size 48x48 xc:'#3c4043' -fill '#e8eaed' -draw 'rectangle 10,16 38,36' /tmp/desktop-${display}/files.png`,
-      `convert -size 48x48 xc:'#202124' -fill '#e8eaed' -draw 'rectangle 12,22 20,26' -draw 'rectangle 24,22 36,26' /tmp/desktop-${display}/bash.png`,
-      `cat > /tmp/desktop-${display}/jwmrc << 'EOF'\n${jwmConfig(display, cdpPortFor(profile))}\nEOF`,
+      `mkdir -p ${root}`,
+      `printf %s ${shellQuote(profile)} > ${root}/owner`,
+      `convert -size 1280x800 gradient:'#3a3a3a-#121212' -fill '#d0d0d0' -draw 'ellipse 640,820 420,280 0,360' ${root}/wallpaper.png`,
+      `convert -size 48x48 xc:'#3c4043' -fill '#8ab4f8' -draw 'circle 24,24 24,8' ${root}/chrome.png`,
+      `convert -size 48x48 xc:'#3c4043' -fill '#e8eaed' -draw 'rectangle 10,16 38,36' ${root}/files.png`,
+      `convert -size 48x48 xc:'#202124' -fill '#e8eaed' -draw 'rectangle 12,22 20,26' -draw 'rectangle 24,22 36,26' ${root}/bash.png`,
+      `cat > ${root}/jwmrc << 'EOF'\n${jwmConfig(display, session.cdpPort)}\nEOF`,
       `xsetroot -display :${display} -solid '#1a1a1a' || true`,
       `xsetroot -display :${display} -cursor_name left_ptr || true`,
-      `timeout 3 display -window root /tmp/desktop-${display}/wallpaper.png >/tmp/desktop-${display}/wall.log 2>&1 || true`,
-      `echo ${Buffer.from(serveDesktop(display, session.rfbPort, session.novncPort)).toString("base64")} | base64 -d > /tmp/desktop-${display}/serve.sh`,
-      `sh /tmp/desktop-${display}/serve.sh`,
-      `nohup bash -lc ${shellQuote(bootDesktop(display, profile))} >/tmp/desktop-${display}/boot.log 2>&1 &`,
+      `timeout 3 display -window root ${root}/wallpaper.png >${root}/wall.log 2>&1 || true`,
+      `echo ${Buffer.from(serveDesktop(display, session.rfbPort, session.novncPort)).toString("base64")} | base64 -d > ${root}/serve.sh`,
+      `sh ${root}/serve.sh`,
+      `nohup bash -lc ${shellQuote(bootDesktop(display, profile))} >${root}/boot.log 2>&1 &`,
       `for i in $(seq 1 50); do nc -z 127.0.0.1 ${session.novncPort} && exit 0; sleep 0.1; done`,
       `cat /tmp/xvfb-${display}.log /tmp/vnc-${display}.log /tmp/novnc-${display}.log`,
       "exit 1",
@@ -121,15 +132,24 @@ export async function startDesktop(accountId: string, profile: string): Promise<
   if (ready.code !== 0) {
     throw new Error(ready.stdout || "The desktop did not start.");
   }
-  sessions.set(key(accountId, profile), session);
+  readyUntil.set(sessionKey, Date.now() + READY_TTL_MS);
   return session;
+}
+
+/** Shell test that passes only when this profile's own desktop is up and serving. */
+function probeScript(session: Session, profile: string): string {
+  return (
+    `[ "$(cat /tmp/desktop-${session.display}/owner 2>/dev/null)" = ${shellQuote(profile)} ] && ` +
+    `xset -display :${session.display} q >/dev/null 2>&1 && nc -z 127.0.0.1 ${session.novncPort}`
+  );
 }
 
 /**
  * Resolves the single source of truth session for a profile.
  * Why: every consumer — agent tools, bash DISPLAY, screenshot, and the noVNC
- * proxy — must agree on the same :N and ports. Deterministic derivation means
- * no allocation state to lose on restart; startDesktop reconciles the server.
+ * proxy — must agree on the same :N and ports. They come from the profile's
+ * Linux user id, so there is no allocation state to lose on restart;
+ * startDesktop reconciles the server.
  * Input: account id + profile. Output: session (starts the desktop if needed).
  */
 export async function resolveSession(accountId: string, profile: string): Promise<Session> {
@@ -369,30 +389,6 @@ export async function profileOnAccount(
     .from(agents)
     .where(and(eq(agents.accountId, accountId), eq(agents.linuxProfile, profile)));
   return Boolean(agent);
-}
-
-/**
- * Returns the noVNC port for a profile.
- * Why: deterministic from the display, so the viewer resolves the same port
- * even after a core restart with an empty session cache. Never null — the
- * proxy calls startDesktop first, which guarantees the server is listening.
- * Input: the account id and the Linux username (account unused, kept for symmetry).
- * Output: the port on 127.0.0.1 inside the container.
- */
-export function novncPort(_accountId: string, profile: string): number | null {
-  return portsFor(profile).novncPort;
-}
-
-/**
- * Returns the X display for a profile.
- * Why: deterministic display name — agent tools, bash DISPLAY, screenshots,
- * and the viewer all share this one function, so mismatch is impossible by
- * construction. Never null.
- * Input: the account id and the Linux username (account unused, kept for symmetry).
- * Output: a display name such as ":42".
- */
-export function agentDisplay(_accountId: string, profile: string): string | null {
-  return displayName(profile);
 }
 
 function assertAgent(accountId: string, profile: string): void {

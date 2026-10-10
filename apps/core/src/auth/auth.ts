@@ -1,3 +1,4 @@
+import { config } from "../config.js";
 import { expo } from "@better-auth/expo";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
@@ -15,14 +16,10 @@ const localWebOrigins = ["http://127.0.0.1:8081", "http://localhost:8081"];
  * Output: the Expo web origins. Production returns none.
  */
 export function localBrowserOrigins(): string[] {
-  if (process.env.NODE_ENV === "production") {
+  if (config.isProduction()) {
     return [];
   }
-  const extra = (process.env.BETTER_AUTH_TRUSTED_ORIGINS ?? "")
-    .split(",")
-    .map((origin) => origin.trim())
-    .filter(Boolean);
-  return [...localWebOrigins, ...extra];
+  return [...localWebOrigins, ...config.trustedOrigins()];
 }
 
 /**
@@ -31,10 +28,10 @@ export function localBrowserOrigins(): string[] {
  * Output: the Better Auth instance mounted at /api/auth. A new Google user gets one tenant id.
  */
 export function createAuth(db: Database) {
-  const googleId = process.env.GOOGLE_CLIENT_ID;
-  const googleSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const baseURL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:3000";
-  if (process.env.NODE_ENV === "production") {
+  const googleId = config.googleClientId();
+  const googleSecret = config.googleClientSecret();
+  const baseURL = config.publicUrl();
+  if (config.isProduction()) {
     if (!googleId || !googleSecret) {
       throw new Error("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are required.");
     }
@@ -42,10 +39,7 @@ export function createAuth(db: Database) {
       throw new Error("BETTER_AUTH_URL must use HTTPS in production.");
     }
   }
-  const extraOrigins = (process.env.BETTER_AUTH_TRUSTED_ORIGINS ?? "")
-    .split(",")
-    .map((origin) => origin.trim())
-    .filter(Boolean);
+  const extraOrigins = config.trustedOrigins();
   let publicOrigin: string | undefined;
   try {
     publicOrigin = new URL(baseURL).origin;
@@ -55,7 +49,7 @@ export function createAuth(db: Database) {
   return betterAuth({
     baseURL,
     advanced: { trustedProxyHeaders: true },
-    secret: authSecret(),
+    secret: config.authSecret(),
     database: drizzleAdapter(db, {
       provider: "pg",
       schema: { user, session, account, verification },
@@ -64,13 +58,15 @@ export function createAuth(db: Database) {
     // The Expo browser drops the state cookie set on the redirect to Google. The callback still matches the state stored in the verification table.
     account: {
       skipStateCookieCheck: true,
+      // Google tokens from sign-in are stored sealed, like every other secret here.
+      encryptOAuthTokens: true,
     },
     plugins: [expo()],
     trustedOrigins: [
       "nano-agents://",
       ...(publicOrigin ? [publicOrigin] : []),
       ...extraOrigins,
-      ...(process.env.NODE_ENV === "production"
+      ...(config.isProduction()
         ? []
         : [
             "http://127.0.0.1:8081",
@@ -97,15 +93,4 @@ export function createAuth(db: Database) {
       },
     },
   });
-}
-
-function authSecret(): string {
-  const secret = process.env.BETTER_AUTH_SECRET;
-  if (secret) {
-    return secret;
-  }
-  if (process.env.NODE_ENV === "production") {
-    throw new Error("BETTER_AUTH_SECRET is required.");
-  }
-  return "dev-only-secret-change-before-production-01";
 }

@@ -1,5 +1,6 @@
 import { boolean, bigserial, check, index, integer, jsonb, pgTable, primaryKey, text, timestamp, unique, uniqueIndex, uuid, vector } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+import type { MessageBlock } from "@nano-agents/shared";
 
 /** Embedding width for semantic recall (OpenAI text-embedding-3-small). */
 export const EMBEDDING_DIMS = 1536;
@@ -72,7 +73,10 @@ export const conversations = pgTable(
     brief: text("brief"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [check("conversations_kind_check", sql`${table.kind} in ('direct', 'group')`)],
+  (table) => [
+    check("conversations_kind_check", sql`${table.kind} in ('direct', 'group')`),
+    index("conversations_account_index").on(table.accountId),
+  ],
 );
 
 export const members = pgTable(
@@ -106,7 +110,7 @@ export const messages = pgTable(
     // Rich protocol (Phase 08): text rows keep kind=text with null payload;
     // send_message rows store kind=rich plus a JSONB blocks array for images/widgets.
     kind: text("kind").notNull().default("text"),
-    payload: jsonb("payload"),
+    payload: jsonb("payload").$type<MessageBlock[]>(),
     // Optional swipe-reply parent. Null means top-level. No FK to allow
     // backfill ordering; ownership is enforced in application code per account.
     replyTo: uuid("reply_to"),
@@ -132,6 +136,9 @@ export const messages = pgTable(
     check("messages_kind_check", sql`${table.kind} in ('text', 'rich')`),
     check("messages_relay_kind_check", sql`${table.relayKind} is null or ${table.relayKind} in ('from', 'to')`),
     index("messages_queued_index").on(table.conversationId, table.createdAt).where(sql`${table.queued} = true`),
+    index("messages_room_time_index").on(table.conversationId, table.createdAt),
+    // The generated `search` tsvector columns on messages, summary_items and
+    // memories, and their GIN indexes, are defined in drizzle/0034 only.
   ],
 );
 
@@ -197,7 +204,11 @@ export const delegations = pgTable(
     delivered: boolean("delivered").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [check("delegations_status_check", sql`${table.status} in ('running', 'done', 'failed')`)],
+  (table) => [
+    check("delegations_status_check", sql`${table.status} in ('running', 'done', 'failed')`),
+    index("delegations_room_time_index").on(table.conversationId, table.createdAt),
+    index("delegations_running_heartbeat_index").on(table.heartbeatAt).where(sql`${table.status} = 'running'`),
+  ],
 );
 
 export const memoryKinds = ["fact", "person", "org", "project", "preference", "decision", "commitment", "profile"] as const;
@@ -234,6 +245,7 @@ export const summaryItems = pgTable(
   (table) => [
     check("summary_items_key_check", sql`${table.key} in ('decisions', 'actions', 'open', 'entities', 'corrections', 'topics')`),
     index("summary_items_embedding_index").using("hnsw", table.embedding.op("vector_cosine_ops")),
+    index("summary_items_room_level_index").on(table.conversationId, table.level, table.createdAt),
   ],
 );
 
@@ -289,10 +301,15 @@ export const toolApprovals = pgTable(
     inputHash: text("input_hash").notNull(),
     summary: text("summary").notNull(),
     status: text("status").notNull().default("pending"),
+    // The chat card that shows this approval, so deciding it can update the card directly.
+    messageId: uuid("message_id").references(() => messages.id, { onDelete: "set null" }),
     usedAt: timestamp("used_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [check("tool_approvals_status_check", sql`${table.status} in ('pending', 'approved', 'denied')`)],
+  (table) => [
+    check("tool_approvals_status_check", sql`${table.status} in ('pending', 'approved', 'denied')`),
+    index("tool_approvals_account_status_index").on(table.accountId, table.status, table.createdAt),
+  ],
 );
 
 export const proposals = pgTable(
@@ -371,7 +388,10 @@ export const jobs = pgTable(
     result: text("result"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [check("jobs_status_check", sql`${table.status} in ('pending', 'running', 'done', 'failed')`)],
+  (table) => [
+    check("jobs_status_check", sql`${table.status} in ('pending', 'running', 'done', 'failed')`),
+    index("jobs_status_run_at_index").on(table.status, table.runAt),
+  ],
 );
 
 // Run ledger (Phase 11): one row per turn invocation (user message or
@@ -408,6 +428,8 @@ export const runs = pgTable(
     check("runs_status_check", sql`${table.status} in ('running', 'done', 'failed')`),
     // Room serialization without a 2h lock: at most one running run per room.
     uniqueIndex("runs_one_running_per_conversation").on(table.conversationId).where(sql`${table.status} = 'running'`),
+    index("runs_room_time_index").on(table.conversationId, table.createdAt),
+    index("runs_running_heartbeat_index").on(table.heartbeatAt).where(sql`${table.status} = 'running'`),
   ],
 );
 
@@ -535,6 +557,7 @@ export const notifications = pgTable(
   (table) => [
     check("notifications_urgency_check", sql`${table.urgency} in ('info', 'action-needed')`),
     check("notifications_status_check", sql`${table.status} in ('pending', 'sent', 'failed')`),
+    index("notifications_account_status_index").on(table.accountId, table.status, table.createdAt),
   ],
 );
 

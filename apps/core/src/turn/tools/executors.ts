@@ -15,9 +15,7 @@ import {
   notifyInputSchema,
   reactionSchema,
   rememberFactToolInputSchema,
-  routineCreateInputSchema,
   routineIdSchema,
-  routineUpdateInputSchema,
   sendMessageInputSchema,
   spawnWorkerToolInputSchema,
   subagentCreateSchema,
@@ -545,7 +543,7 @@ async function executeMessageAgent(ctx: ToolContext, input: Record<string, unkno
       cue,
       speakerId: target.id,
       acquireTimeoutMs: 300_000,
-      onEvent: (event) => publish(accountId, room.id, event as never),
+      onEvent: (event) => publish(accountId, room.id, event),
     }).catch(() => {});
   })();
   if (wantsReply) {
@@ -653,7 +651,7 @@ async function askTeammateInGroup(
         cue,
         speakerId,
         acquireTimeoutMs: 600_000,
-        onEvent: (event) => publish(accountId, conversationId, event as never),
+        onEvent: (event) => publish(accountId, conversationId, event),
       });
     try {
       const [lead] = await db.select({ name: agents.name, label: agents.label }).from(agents).where(eq(agents.id, leadId));

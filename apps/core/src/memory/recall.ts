@@ -8,6 +8,7 @@
  * alongside it. With no key the embedding columns simply stay null.
  * DB: reads/writes summary_items.embedding and memories.embedding.
  */
+import { config } from "../config.js";
 import { createOpenAI } from "@ai-sdk/openai";
 import { embed, embedMany, type EmbeddingModel } from "ai";
 import { and, eq, isNull, sql } from "drizzle-orm";
@@ -34,14 +35,14 @@ const MAX_DISTANCE = 0.6;
  * falls back to full-text search, so chat never depends on it.
  */
 async function accountEmbedder(db: Db, accountId: string): Promise<EmbeddingModel | null> {
-  const provider = (process.env.EMBEDDING_PROVIDER ?? "openai").trim() || "openai";
+  const provider = config.embeddingProvider();
   if (!isOpenAiCompatibleProvider(provider)) return null;
   const credential = await keyFor(db, accountId, provider).catch(() => null);
   if (!credential) return null;
   const key = credential.apiKey.trim();
   if (!key) return null;
   const base = credential.baseUrl?.trim();
-  const model = (process.env.EMBEDDING_MODEL ?? EMBED_MODEL).trim() || EMBED_MODEL;
+  const model = config.embeddingModel() ?? EMBED_MODEL;
   return createOpenAI({ apiKey: key, ...(base ? { baseURL: base } : {}) }).textEmbeddingModel(model);
 }
 

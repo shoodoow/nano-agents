@@ -33,6 +33,11 @@ async function google(path, token, init = {}) {
   return text ? JSON.parse(text) : {};
 }
 
+/** One header value on one line, so a recipient or subject cannot add headers of its own. */
+function headerValue(value) {
+  return String(value ?? "").replace(/[\r\n]+/g, " ").trim();
+}
+
 function clip(value) {
   const text = typeof value === "string" ? value : JSON.stringify(value);
   return text.length > 8000 ? `${text.slice(0, 8000)}\n[truncated]` : text;
@@ -54,7 +59,7 @@ async function gmail(tool, args, token) {
     return { id: full.id, snippet: full.snippet ?? "", body: clip(plainPart(full.payload) || full.snippet || "") };
   }
   if (tool === "create_draft") {
-    const raw = Buffer.from(`To: ${args.to}\r\nSubject: ${args.subject}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${args.body}`).toString("base64url");
+    const raw = Buffer.from(`To: ${headerValue(args.to)}\r\nSubject: ${headerValue(args.subject)}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${args.body}`).toString("base64url");
     const draft = await google("/gmail/v1/users/me/drafts", token, { method: "POST", body: JSON.stringify({ message: { raw } }) });
     return { id: draft.id, message: "Draft created. It was not sent." };
   }
@@ -66,7 +71,7 @@ async function gmail(tool, args, token) {
       });
       return { id: sent.id, message: "Sent." };
     }
-    const raw = Buffer.from(`To: ${args.to}\r\nSubject: ${args.subject}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${args.body}`).toString("base64url");
+    const raw = Buffer.from(`To: ${headerValue(args.to)}\r\nSubject: ${headerValue(args.subject)}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${args.body}`).toString("base64url");
     const sent = await google("/gmail/v1/users/me/messages/send", token, { method: "POST", body: JSON.stringify({ raw }) });
     return { id: sent.id, message: "Sent." };
   }

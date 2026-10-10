@@ -8,6 +8,14 @@ export const RUN_POLL_MS = 200;
 export const RUN_ACQUIRE_TIMEOUT_MS = 120_000;
 export const RUN_STALE_MS = 120_000;
 
+/** Thrown when a room already has a turn running and the caller would not wait. */
+export class RoomBusyError extends Error {
+  constructor() {
+    super("The room is busy with another turn. Try again shortly.");
+    this.name = "RoomBusyError";
+  }
+}
+
 /**
  * Finds the running run on one room, if any.
  * Why: room serialization moved off the row lock onto the ledger — every
@@ -28,7 +36,7 @@ export async function findRunningRun(store: Store, accountId: string, conversati
  * fresh history per speaker). Poll-wait preserves the old lock-queue behavior
  * without holding a Postgres transaction open for the whole turn.
  * Input: db, account/conversation ids, kind, timeout/poll overrides.
- * Output: the claimed running run. Throws "room is busy" past the timeout.
+ * Output: the claimed running run. Throws RoomBusyError past the timeout.
  */
 export async function acquireRun(
   db: Db,
@@ -50,7 +58,7 @@ export async function acquireRun(
     } catch (error) {
       if (!isUniqueViolation(error)) throw error;
       if (Date.now() - started > timeoutMs) {
-        throw new Error("The room is busy with another turn. Try again shortly.");
+        throw new RoomBusyError();
       }
       await sleep(pollMs);
     }

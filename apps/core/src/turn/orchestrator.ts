@@ -1,3 +1,4 @@
+import type { MessageBlock } from "@nano-agents/shared";
 /**
  * Room turn orchestration: run ledger, speaker queue, queue drain.
  * DB: runs, messages, events (via TurnEmitter).
@@ -36,7 +37,7 @@ export async function runTurn(
   db: Db,
   accountId: string,
   conversationId: string,
-  body: string | { text: string; blocks?: { kind: string; [key: string]: unknown }[] | null; replyTo?: string | null },
+  body: string | { text: string; blocks?: MessageBlock[] | null; replyTo?: string | null },
   generate?: (input: TurnInput) => Promise<GenerateResult>,
   skillsRoot?: string,
   options?: TurnOptions,
@@ -180,7 +181,7 @@ export async function runTurn(
             cue,
             speakerId,
             acquireTimeoutMs: 600_000,
-            onEvent: (event) => publish(accountId, roomId, event as never),
+            onEvent: (event) => publish(accountId, roomId, event),
           }),
       ).catch(() => {});
     }
@@ -194,7 +195,7 @@ export async function runTurn(
             cue,
             speakerId,
             acquireTimeoutMs: 600_000,
-            onEvent: (event) => publish(accountId, roomId, event as never),
+            onEvent: (event) => publish(accountId, roomId, event),
           }),
       ).catch(() => {});
     }

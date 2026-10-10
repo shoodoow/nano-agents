@@ -64,6 +64,11 @@ export function mimeForName(name: string): string {
   return MIME_BY_EXTENSION[extension] ?? "application/octet-stream";
 }
 
+/** The Linux user that owns a home directory such as /home/uabc123. */
+function profileOfHome(home?: string): string | undefined {
+  return home?.startsWith("/home/") ? home.slice("/home/".length).split("/")[0] || undefined : undefined;
+}
+
 /** True when a file block's url is a path on the account computer the agent may send. */
 function isComputerPath(url: string, home?: string): boolean {
   return url.startsWith("/shared/") || (Boolean(home) && url.startsWith(`${home}/`));
@@ -90,9 +95,14 @@ export async function inlineSharedOutputBlocks(
     if (block.url.includes("\0") || block.url.split("/").includes("..")) {
       throw new Error("Attachment path is invalid.");
     }
-    const bytes = await execBytes(accountId, ["cat", "--", block.url]);
-    if (bytes.code !== 0) throw new Error(`Could not read attachment ${block.url}. Check the path exists.`);
-    if (bytes.stdout.length > MAX_OUTBOUND_FILE_BYTES) {
+    // Read as the sending agent, so a link pointing into someone else's home
+    // is refused by Linux, and stop one byte past the limit instead of pulling
+    // a file of any size into the core's memory.
+    const bytes = await execBytes(accountId, ["cat", "--", block.url], profileOfHome(home) ?? "root", undefined, {
+      maxBytes: MAX_OUTBOUND_FILE_BYTES + 1,
+    });
+    if (bytes.code !== 0 && !bytes.truncated) throw new Error(`Could not read attachment ${block.url}. Check the path exists.`);
+    if (bytes.truncated || bytes.stdout.length > MAX_OUTBOUND_FILE_BYTES) {
       throw new Error(`Attachment ${block.name} is larger than 5 MB. Send a smaller export.`);
     }
     const mime = block.mime || mimeForName(block.name || block.url);
