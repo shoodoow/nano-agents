@@ -10,5 +10,5 @@ text.txt
 *.log
 .tool-trace.log
 apps/mobile/design/*.PNG
-apps/mobile/.expo/dev/logs/start.log
+apps/mobile/.expo/
 skills/accounts/*/

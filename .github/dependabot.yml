@@ -1,0 +1,20 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      expo:
+        patterns: ["expo", "expo-*", "@expo/*", "react-native", "react-native-*"]
+      ai-sdk:
+        patterns: ["ai", "@ai-sdk/*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /apps/core/linux
+    schedule:
+      interval: monthly

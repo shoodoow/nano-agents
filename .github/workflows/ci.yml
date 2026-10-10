@@ -6,9 +6,17 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     services:
       postgres:
         image: pgvector/pgvector:0.8.6-pg18-trixie
@@ -39,8 +47,11 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
       - run: pnpm build
       - run: pnpm --filter core db:migrate
       - run: pnpm --filter mobile typecheck
       - run: pnpm --filter mobile test
+      # Core tests start real account computers, so the image has to exist.
+      - run: docker build -t nano-agents-linux:1 apps/core/linux
       - run: pnpm --filter core test

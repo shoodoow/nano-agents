@@ -8,10 +8,14 @@
   },
   "scripts": {
     "build": "tsc -b --pretty false",
+    "lint": "biome lint",
+    "typecheck": "pnpm build && pnpm --filter mobile typecheck",
+    "test": "pnpm --filter mobile test && pnpm --filter core test",
     "db:migrate": "pnpm --filter core db:migrate",
     "db:reset": "pnpm --filter core db:reset"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
     "typescript": "7.0.2"
   }
 }
