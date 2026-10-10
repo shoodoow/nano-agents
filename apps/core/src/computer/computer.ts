@@ -12,6 +12,7 @@ import {
 } from "../desktop/desktop.js";
 import { accountShared, exec, execBytes, execStdin } from "../linux/linux.js";
 import { expandHome, assertInside } from "./find.js";
+import { noted } from "../log/logger.js";
 
 // Why: the agent must work on its assigned desktop — the one the viewer shows
 // — never boot a private X server on another display (the blank-viewer
@@ -105,7 +106,7 @@ export async function readImage(
   );
   if (made.code !== 0) throw new Error(made.stdout.slice(0, 300) || "The image could not be opened.");
   const bytes = await execBytes(accountId, ["cat", out], profile);
-  await exec(accountId, ["rm", "-f", out], profile).catch(() => {});
+  await exec(accountId, ["rm", "-f", out], profile).catch(noted("Removing a temporary image"));
   if (bytes.code !== 0 || bytes.stdout.length === 0) throw new Error("The image could not be opened.");
   return { path, jpegBase64: bytes.stdout.toString("base64") };
 }

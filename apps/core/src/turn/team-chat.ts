@@ -14,6 +14,7 @@ import { appendEvent } from "../rooms/events.js";
 import { mirrorGroupSpeechToOwnerDm } from "../rooms/send-message.js";
 import { publish } from "../rooms/stream.js";
 import { prompt } from "../prompt/prompts.js";
+import { noted } from "../log/logger.js";
 
 type Db = ReturnType<typeof getDb>;
 type MessageRow = typeof messages.$inferSelect;
@@ -322,6 +323,6 @@ export async function relayAwaitedReply(
       asked: request.body.replace(/\s+/g, " ").trim().slice(0, 600),
       answer: answer.body.slice(0, 6_000),
     });
-    await startTurn(backTo, cue, asker).catch(() => {});
+    await startTurn(backTo, cue, asker).catch(noted("Starting the turn that carries a teammate's answer back"));
   }
 }

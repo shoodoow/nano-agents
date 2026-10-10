@@ -7,7 +7,9 @@ import { isPrivateHost } from "../net/public-address.js";
 /** Suppresses jsdom's noisy "Could not parse CSS stylesheet" on modern pages. */
 function quietConsole(): VirtualConsole {
   const console = new VirtualConsole();
-  console.on("jsdomError", () => {});
+  console.on("jsdomError", () => {
+    // Stylesheet parse noise from the page; not a failure of the fetch.
+  });
   return console;
 }
 

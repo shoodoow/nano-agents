@@ -18,6 +18,7 @@ import { keyFor } from "../keys/keys.js";
 import { isOpenAiCompatibleProvider } from "../model/get-model.js";
 import { RECALL_K } from "../turn/constants.js";
 import { hitLine, mergeRanked, searchFacts, searchSummaries, searchTerms, type MemoryHit } from "./search.js";
+import { noted } from "../log/logger.js";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -82,7 +83,7 @@ async function embedRows(
   for (let i = 0; i < rows.length; i++) {
     const vector = embeddings[i];
     if (!vector) continue;
-    await db.update(table).set({ embedding: vector }).where(eq(table.id, rows[i]!.id)).catch(() => {});
+    await db.update(table).set({ embedding: vector }).where(eq(table.id, rows[i]!.id)).catch(noted("Saving an embedding"));
   }
 }
 

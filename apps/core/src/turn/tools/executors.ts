@@ -70,6 +70,7 @@ import { normalizeSendMessageInput } from "./normalize-send-message.js";
 import { validateWorkerTask } from "./worker-task.js";
 import type { ToolContext } from "./context.js";
 import { ZodError } from "zod";
+import { noted } from "../../log/logger.js";
 
 export type ToolExecutor = (ctx: ToolContext, input: Record<string, unknown>) => Promise<unknown>;
 
@@ -108,7 +109,7 @@ async function executeRememberFact(ctx: ToolContext, input: Record<string, unkno
     messageId: await memorySourceId(ctx, parsed.messageId),
     agentId: parsed.scope === "agent" ? ctx.agentId : null,
   });
-  await embedSummaryBacklog(ctx.db, ctx.accountId, ctx.conversationId).catch(() => {});
+  await embedSummaryBacklog(ctx.db, ctx.accountId, ctx.conversationId).catch(noted("Embedding new summaries"));
   return { memoryId: saved.id, scope: saved.scope, body: saved.body };
 }
 
@@ -124,7 +125,7 @@ async function executeCorrectMemory(ctx: ToolContext, input: Record<string, unkn
     messageId: await memorySourceId(ctx, parsed.messageId),
     agentId: parsed.scope === "agent" ? ctx.agentId : null,
   });
-  await embedSummaryBacklog(ctx.db, ctx.accountId, ctx.conversationId).catch(() => {});
+  await embedSummaryBacklog(ctx.db, ctx.accountId, ctx.conversationId).catch(noted("Embedding new summaries"));
   return { memoryId: saved.id, scope: saved.scope, body: saved.body };
 }
 
@@ -464,7 +465,7 @@ export async function executeDelegate(
         .update(delegations)
         .set({ status: "failed", result: message.slice(0, 20_000) })
         .where(eq(delegations.id, row.id))
-        .catch(() => {});
+        .catch(noted("Marking a delegation as failed"));
     });
   return { delegationId: row.id, status: "started", conversationId: target.conversationId };
 }
@@ -544,7 +545,7 @@ async function executeMessageAgent(ctx: ToolContext, input: Record<string, unkno
       speakerId: target.id,
       acquireTimeoutMs: 300_000,
       onEvent: (event) => publish(accountId, room.id, event),
-    }).catch(() => {});
+    }).catch(noted("A delegated teammate's turn"));
   })();
   if (wantsReply) {
     // Waiting on another agent is a handoff: the turn ends and the answer wakes this agent.
@@ -674,11 +675,9 @@ async function askTeammateInGroup(
         .update(delegations)
         .set({ status: "failed", result: reason.slice(0, 20_000) })
         .where(eq(delegations.id, row.id))
-        .catch(() => {});
+        .catch(noted("Marking a delegation as failed"));
       // A teammate that cannot run must not look like one that is "on it".
-      await start(originId, prompt("cues", "team-failed", { teammate: label, reason: reason.slice(0, 400) }), leadId).catch(
-        () => {},
-      );
+      await start(originId, prompt("cues", "team-failed", { teammate: label, reason: reason.slice(0, 400) }), leadId).catch(noted("Starting the turn that reports a failed teammate"));
     }
   })();
   return {

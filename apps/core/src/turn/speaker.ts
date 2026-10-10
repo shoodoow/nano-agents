@@ -28,6 +28,7 @@ import type { GenerateResult, TurnInput } from "./types.js";
 import { tailSlice, unwrapGenerateResult } from "./util.js";
 import { createTraceSession } from "./trace/plugins.js";
 import { randomUUID } from "node:crypto";
+import { noted } from "../log/logger.js";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -372,9 +373,7 @@ export async function speakOnce(
   let result: ReturnType<typeof unwrapGenerateResult>;
   try {
     result = unwrapGenerateResult(await generateWithStore());
-    await saveWorkLog(db, { accountId, conversationId, agentId, runId, cue, entries: result.workLog ?? [] }).catch(
-      () => {},
-    );
+    await saveWorkLog(db, { accountId, conversationId, agentId, runId, cue, entries: result.workLog ?? [] }).catch(noted("Saving the work log"));
     if (usage && result.usage) {
       usage.input += result.usage.inputTokens ?? 0;
       usage.output += result.usage.outputTokens ?? 0;

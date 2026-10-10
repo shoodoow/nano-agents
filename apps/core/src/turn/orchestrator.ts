@@ -17,6 +17,7 @@ import { registerWorkerLifecycle } from "./handlers/worker-lifecycle.js";
 import { speakOnce } from "./speaker.js";
 import { compactConversation } from "../memory/compact-turn.js";
 import type { GenerateResult, TurnInput, TurnOptions } from "./types.js";
+import { noted } from "../log/logger.js";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -58,7 +59,7 @@ export async function runTurn(
   const runId =
     options?.existingRunId ??
     (await acquireRun(db, accountId, conversationId, options?.kind ?? "turn", options?.acquireTimeoutMs)).id;
-  await heartbeatRun(db, runId).catch(() => {});
+  await heartbeatRun(db, runId).catch(noted("Run heartbeat"));
 
   const emitter = new TurnEmitter(db, {
     accountId,
@@ -94,7 +95,7 @@ export async function runTurn(
   }
 
   const beat = setInterval(() => {
-    void heartbeatRun(db, runId).catch(() => {});
+    void heartbeatRun(db, runId).catch(noted("Run heartbeat"));
   }, HEARTBEAT_MS);
   (beat as unknown as { unref?: () => void }).unref?.();
 
@@ -135,7 +136,7 @@ export async function runTurn(
         runKind: options?.kind,
         usage,
       });
-      await heartbeatRun(db, runId).catch(() => {});
+      await heartbeatRun(db, runId).catch(noted("Run heartbeat"));
       // A teammate who finishes without naming who is next leaves the work
       // sitting. The lead is the one driving, so the floor goes back to them.
       const leadDriving = ownerSpoke || (Boolean(options?.cue) && options?.kind !== "routine");
@@ -183,7 +184,7 @@ export async function runTurn(
             acquireTimeoutMs: 600_000,
             onEvent: (event) => publish(accountId, roomId, event),
           }),
-      ).catch(() => {});
+      ).catch(noted("A queued follow-up turn"));
     }
     // An answer another agent is waiting for goes back to that agent's chat.
     if (room.kind === "direct" && room.ownerAgentId && !generate && saved.length > 0) {
@@ -197,17 +198,17 @@ export async function runTurn(
             acquireTimeoutMs: 600_000,
             onEvent: (event) => publish(accountId, roomId, event),
           }),
-      ).catch(() => {});
+      ).catch(noted("A queued follow-up turn"));
     }
     return saved;
   } catch (error) {
     const message = error instanceof Error ? error.message : "The turn failed.";
-    await failRun(db, runId, message).catch(() => {});
+    await failRun(db, runId, message).catch(noted("Marking a run as failed"));
     await emit({ type: "error", error: message });
     throw error;
   } finally {
     clearInterval(beat);
-    await continueQueuedTurn(db, accountId, conversationId, generate, skillsRoot, options?.onEvent).catch(() => {});
+    await continueQueuedTurn(db, accountId, conversationId, generate, skillsRoot, options?.onEvent).catch(noted("Continuing the queued turn"));
   }
 }
 
@@ -230,7 +231,7 @@ export async function continueQueuedTurn(
       .update(messages)
       .set({ queued: true })
       .where(and(eq(messages.id, latest.id), eq(messages.accountId, accountId)))
-      .catch(() => {});
+      .catch(noted("Putting a message back in the queue"));
     if (error instanceof Error && /busy/.test(error.message)) return false;
     throw error;
   }

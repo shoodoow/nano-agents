@@ -4,6 +4,7 @@ import { agents, devices } from "../db/schema.js";
 import { hasWatchers } from "../rooms/stream.js";
 import { listPendingNotifications, markNotificationFailed, markNotificationSent, shouldPush } from "./notify.js";
 import { checkPushReceipts, sendExpoPush } from "./push.js";
+import { noted } from "../log/logger.js";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -97,7 +98,7 @@ export async function relayNotifications(
         db,
         note.id,
         error instanceof Error ? error.message : "Relay failed.",
-      ).catch(() => {});
+      ).catch(noted("Marking a notification as failed"));
       counts.failed += 1;
     }
   }

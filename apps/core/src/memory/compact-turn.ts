@@ -17,6 +17,7 @@ import { foldAged } from "./compaction.js";
 import { embedSummaryBacklog } from "./recall.js";
 import { refreshProfile, rollUp } from "./rollup.js";
 import { llmFoldSummarizer, llmWriter } from "./summarize-fold.js";
+import { noted } from "../log/logger.js";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -44,14 +45,14 @@ export async function compactConversation(db: Db, accountId: string, conversatio
     if (folded.length === 0 && !folded.factsSaved) return;
     const write = llmWriter(deps);
     if (folded.factsSaved && folded.lastMessageId) {
-      await refreshProfile(db, accountId, write, folded.lastMessageId).catch(() => {});
+      await refreshProfile(db, accountId, write, folded.lastMessageId).catch(noted("Refreshing the profile after a fold"));
     }
     // A fold is the only moment new summary lines appear, so it is the only
     // moment a period can become due. One digest per level per turn.
     await rollUp(db, accountId, conversationId, write, 1).catch(() => null);
     await rollUp(db, accountId, conversationId, write, 2).catch(() => null);
     // Backfill embeddings for anything new so semantic recall can reach it later.
-    await embedSummaryBacklog(db, accountId, conversationId).catch(() => {});
+    await embedSummaryBacklog(db, accountId, conversationId).catch(noted("Embedding new summaries"));
   } catch {
     // Compaction is best-effort; never let it break a turn.
   }

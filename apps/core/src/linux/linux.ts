@@ -96,7 +96,9 @@ async function collectExec(
   };
   stdout.on("data", keep);
   stderr.on("data", keep);
-  stream.on("error", () => {});
+  stream.on("error", () => {
+    // The read ends through the stream's close; without a listener the error would crash the process.
+  });
   container.modem.demuxStream(stream, stdout, stderr);
   const timer = options.timeoutMs
     ? setTimeout(() => {

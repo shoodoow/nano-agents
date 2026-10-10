@@ -40,6 +40,7 @@ import {
   transcriptForStorage,
 } from "./worker-loop.js";
 import { RoomCapacityError } from "./rooms.js";
+import { noted } from "../log/logger.js";
 
 /** Visible teammates from hire_subagent (hidden background workers do not count). */
 export const MAX_TEAMMATES_PER_PARENT = 10;
@@ -987,7 +988,7 @@ export async function runWorker(
       })
       .where(and(eq(delegations.id, input.delegationId), eq(delegations.status, "running")))
       .returning({ id: delegations.id })
-      .catch(() => {});
+      .catch(noted("Saving a worker's usage"));
     if (!Array.isArray(updated) || updated.length === 0) return;
     try {
       input.onSettled?.({ workerId: input.childId, task: input.task, result: report, status });
@@ -1067,7 +1068,7 @@ export async function runWorker(
               ...(state === "resumed" ? { progress: "Working." } : {}),
             })
             .where(and(eq(delegations.id, input.delegationId), eq(delegations.status, "running")))
-            .catch(() => {});
+            .catch(noted("Saving a worker's heartbeat"));
         },
       },
     };
@@ -1187,7 +1188,7 @@ export async function runWorker(
           target: workerTranscripts.delegationId,
           set: { messages: stored, steps: totalSteps, meta, updatedAt: new Date() },
         })
-        .catch(() => {});
+        .catch(noted("Saving a worker's transcript"));
     };
     await saveTranscript();
     await db
@@ -1308,7 +1309,7 @@ export async function runWorker(
               .update(delegations)
               .set({ progress: checkpoint, heartbeatAt: new Date() })
               .where(and(eq(delegations.id, input.delegationId), eq(delegations.status, "running")))
-              .catch(() => {});
+              .catch(noted("Saving a worker's progress"));
             lastInputTokens = step.usage?.inputTokens ?? lastInputTokens;
             await workerTrace.emit({
               type: "model.step.finish",

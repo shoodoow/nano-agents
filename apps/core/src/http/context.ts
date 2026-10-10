@@ -1,8 +1,6 @@
 import { fromNodeHeaders } from "better-auth/node";
 import type { NextFunction, Request, Response } from "express";
-import pino from "pino";
 import type { createAuth } from "../auth/auth.js";
-import { config } from "../config.js";
 import type { getDb } from "../db/client.js";
 import type { GenerateResult, TurnInput } from "../rooms/turn.js";
 
@@ -23,10 +21,7 @@ export type Guard = ReturnType<typeof requireSession>;
 
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export const logger = pino({
-  level: config.logLevel(),
-  redact: ["req.headers.cookie", "req.headers.authorization", "res.headers['set-cookie']"],
-});
+export { logger } from "../log/logger.js";
 
 /**
  * Requires the signed-in user to own the account in the path or query.

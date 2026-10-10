@@ -8,6 +8,7 @@ import type { getDb } from "../../db/client.js";
 import { delegations } from "../../db/schema.js";
 import { subscribeTurnBus } from "../events/bus.js";
 import { resumeParentAfterWorker } from "../parent-wake.js";
+import { noted } from "../../log/logger.js";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -96,7 +97,7 @@ export function registerWorkerLifecycle(
         },
         runTurn,
       );
-    })().catch(() => {});
+    })().catch(noted("Starting the turn that reports finished workers"));
   };
 
   subscribeTurnBus(async (event) => {
@@ -119,7 +120,8 @@ export function registerWorkerLifecycle(
       return;
     }
     const pending: PendingWake = {
-      timer: setTimeout(() => {}, 0),
+      // A placeholder so the field is always a timer; arm() replaces it below.
+      timer: setTimeout(() => undefined, 0),
       firstAt: Date.now(),
       accountId: event.accountId,
       conversationId: event.conversationId,
