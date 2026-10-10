@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Modal, Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
+import { darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
 import type { Reaction } from "../api";
 
 // Server allowlist (shared reactionSchema) — the only emoji that may be sent.

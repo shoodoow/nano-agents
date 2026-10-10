@@ -2,7 +2,7 @@ import { useLayoutEffect, useState } from "react";
 import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useNavigation } from "expo-router";
 import type { MessageBlock, RosterAgent } from "../api";
-import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
+import { darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
 import { Avatar } from "../ui/Avatar";
 import { GroupCluster } from "../ui/GroupCluster";
 import { IconChevron } from "../ui/icons";

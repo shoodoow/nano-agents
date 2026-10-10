@@ -19,7 +19,6 @@ import { formatLastRun, formatNextRunRelative, formatRunHistoryWhen, formatSched
 import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
 import { Feather } from "@expo/vector-icons";
 import { IconCheck, IconChevron, IconClock, IconDoc, IconMore, IconShare } from "../ui/icons";
-import type { MarkMaterial, MarkShape } from "@nano-agents/shared";
 import { warmMarkThumbs } from "../ui/DotStage";
 import {
   LivingMark,

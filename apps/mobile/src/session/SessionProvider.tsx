@@ -34,9 +34,9 @@ import { installOAuthReturnHandler } from "../auth-oauth-return";
 import * as WebBrowser from "expo-web-browser";
 import { coreBaseUrl } from "../core-url";
 import { pluginSlug } from "../account/PluginsPage";
-import { ChatScreen, type Bubble } from "../chat/ChatScreen";
+import type { Bubble } from "../chat/ChatScreen";
 import type { RoomActivityPhase } from "../chat/room-activity";
-import { DotBakery, hydrateMarkThumbCache, warmMarkThumbs } from "../ui/DotStage";
+import { hydrateMarkThumbCache, warmMarkThumbs } from "../ui/DotStage";
 import { resolveMarkLook } from "../ui/Mark";
 import { documentPickerOptions } from "../media/documentPickerOptions";
 import { cameraPickerOptions, imageLibraryPickerOptions } from "../media/imagePickerOptions";
@@ -115,6 +115,17 @@ function toBubbles(
   }
   return rows.map((row) => toBubble(row, byId, byMessage, roster));
 }
+
+/** Messages loaded when a chat opens, and per step back through its history. */
+const THREAD_PAGE = 60;
+/** Messages re-read on each sync of an open chat; older rows stay as loaded. */
+const SYNC_PAGE = 30;
+/** How often an open chat re-reads the server: quickly while an agent is working, rarely when idle. */
+const SYNC_ACTIVE_MS = 2000;
+const SYNC_IDLE_MS = 15000;
+/** How often the phone asks for pings it has not shown yet (the open chat hears its own at once over the stream). */
+const NOTIFICATION_POLL_MS = 10000;
+const SERVER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function sortBubbles(bubbles: Bubble[]): Bubble[] {
   return [...bubbles].sort((left, right) => left.sortAt.localeCompare(right.sortAt) || left.id.localeCompare(right.id));
@@ -362,7 +373,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       }
     };
     void pull();
-    const timer = setInterval(() => void pull(), 4000);
+    const timer = setInterval(() => void pull(), NOTIFICATION_POLL_MS);
     return () => {
       stopped = true;
       clearInterval(timer);
@@ -445,10 +456,40 @@ export function SessionProvider({ children }: { children: ReactNode }) {
    */
   async function loadThread(roomId: string, roster: RosterAgent[]): Promise<Bubble[]> {
     const [history, taps] = await Promise.all([
-      core.listMessages(accountId.trim(), roomId),
+      core.listMessages(accountId.trim(), roomId, { limit: THREAD_PAGE }),
       core.listReactions(accountId.trim(), roomId),
     ]);
+    olderRef.current = { roomId, more: history.length >= THREAD_PAGE, loading: false };
     return toBubbles(history, taps, roster);
+  }
+
+  // Whether the open chat has history above what is loaded.
+  const olderRef = useRef<{ roomId: string; more: boolean; loading: boolean }>({ roomId: "", more: false, loading: false });
+
+  /**
+   * Loads the page of messages above the oldest one on screen.
+   * Why: a chat opens on its recent messages only; the rest arrives as the
+   * person scrolls up, so a long thread costs nothing until it is read.
+   * Input: none (uses the open chat). Output: nothing.
+   */
+  async function loadOlderMessages(): Promise<void> {
+    const roomId = conversationId;
+    const state = olderRef.current;
+    if (!roomId || state.roomId !== roomId || !state.more || state.loading) return;
+    const oldest = messagesRef.current.find((bubble) => SERVER_ID.test(bubble.id));
+    if (!oldest) return;
+    state.loading = true;
+    try {
+      const [history, taps] = await Promise.all([
+        core.listMessages(accountId.trim(), roomId, { limit: THREAD_PAGE, before: oldest.id }),
+        core.listReactions(accountId.trim(), roomId),
+      ]);
+      if (olderRef.current.roomId !== roomId) return;
+      olderRef.current.more = history.length >= THREAD_PAGE;
+      mergeThread(toBubbles(history, taps, agentsRef.current));
+    } finally {
+      state.loading = false;
+    }
   }
 
   /**
@@ -505,7 +546,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       };
       const before = new Map(current.map((bubble) => [bubble.id, bubble]));
       const byId = new Set(fresh.map((bubble) => bubble.id));
-      // The open chat polls every 2s. An unchanged row keeps its old object,
+      // The open chat re-reads its recent messages often. An unchanged row keeps its old object,
       // and an unchanged thread keeps the old array, so React skips the
       // render entirely instead of redrawing every bubble each tick.
       const merged = fresh.map((bubble) => {
@@ -548,7 +589,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const pull = async (): Promise<void> => {
       try {
         const [history, taps] = await Promise.all([
-          core.listMessages(account, liveRoomId),
+          core.listMessages(account, liveRoomId, { limit: SYNC_PAGE }),
           core.listReactions(account, liveRoomId),
         ]);
         if (stopped) return;
@@ -575,8 +616,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         // A missed tick retries. The thread on screen stays as it is.
       }
     };
-    void pull();
-    const timer = setInterval(() => void pull(), 2000);
+    // The stream below asks for a sync the moment anything happens, so this
+    // loop is only the safety net: quick while a turn runs, slow when idle.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const loop = async (): Promise<void> => {
+      await pull();
+      if (stopped) return;
+      timer = setTimeout(() => void loop(), turnActiveRef.current ? SYNC_ACTIVE_MS : SYNC_IDLE_MS);
+    };
+    void loop();
     const unsubscribe = core.subscribeMessages(account, liveRoomId, (event) => {
       if (event.message || event.reaction || event.type === "done" || event.type === "run" || event.type === "error") {
         void pull();
@@ -604,7 +652,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     });
     return () => {
       stopped = true;
-      clearInterval(timer);
+      if (timer) clearTimeout(timer);
       unsubscribe();
     };
   }, [liveRoomId, accountId]);
@@ -640,9 +688,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
     const [memberRows, history, taps] = await Promise.all([
       core.listMembers(id, room.id).catch(() => [{ agentId: owner.id }]),
-      core.listMessages(id, room.id),
+      core.listMessages(id, room.id, { limit: THREAD_PAGE }),
       core.listReactions(id, room.id),
     ]);
+    olderRef.current = { roomId: room.id, more: history.length >= THREAD_PAGE, loading: false };
     const kind = room.kind === "group" ? ("group" as const) : ("direct" as const);
     const names = memberRows.map((member) => roster.find((row) => row.id === member.agentId)?.name ?? "Agent");
     const opened = {
@@ -1333,6 +1382,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     pickCamera,
     pickFile,
     toggleReaction,
+    loadOlderMessages,
     loadTeamChat,
     persistAutoReview,
     refreshProposals,
@@ -1440,6 +1490,7 @@ type SessionValue = {
   pickCamera: () => Promise<void>;
   pickFile: () => Promise<void>;
   toggleReaction: (conversationId: string, bubble: Bubble, emoji: string) => Promise<void>;
+  loadOlderMessages: () => Promise<void>;
   loadTeamChat: (conversationId: string) => Promise<{ id: string; author: string; time: string; body: string }[]>;
   persistAutoReview: (value: boolean) => Promise<void>;
   refreshProposals: (proposalId?: string, accept?: boolean) => Promise<void>;

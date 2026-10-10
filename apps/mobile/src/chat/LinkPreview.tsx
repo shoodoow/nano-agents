@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { Image } from "expo-image";
-import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
+import { darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
 import { IconGlobe } from "../ui/icons";
-import { hostOf, originOf, parseLinkMeta, type LinkMeta } from "./link-meta";
+import { hostOf, isPreviewable, originOf, parseLinkMeta, type LinkMeta } from "./link-meta";
 
 // One page fetch per link for the life of the process, shared by every bubble
 // that shows it. `resolved` lets a re-mounted row paint the card with no flash.
@@ -17,9 +17,9 @@ const NOT_A_PAGE =
 function loadLinkMeta(url: string): Promise<LinkMeta> {
   const known = pending.get(url);
   if (known) return known;
-  const fallback: LinkMeta = { title: null, site: null, icon: `${originOf(url)}/favicon.ico` };
+  const fallback: LinkMeta = { title: null, site: null, icon: isPreviewable(url) ? `${originOf(url)}/favicon.ico` : null };
   const request = (async (): Promise<LinkMeta> => {
-    if (NOT_A_PAGE.test(url)) return fallback;
+    if (NOT_A_PAGE.test(url) || !isPreviewable(url)) return fallback;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 6000);
     try {

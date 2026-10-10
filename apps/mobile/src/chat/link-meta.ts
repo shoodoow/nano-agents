@@ -5,6 +5,20 @@ export function hostOf(url: string): string {
   return (/^https?:\/\/([^/?#:]+)/i.exec(url)?.[1] ?? url).replace(/^www\./i, "");
 }
 
+/**
+ * True when a link is safe for the phone to fetch by itself for a preview.
+ * Why: an agent, or a web page an agent read, chooses the links in a chat. A
+ * preview must not make the phone call a device on the home network or send
+ * an unencrypted request, so only https to a named public host is fetched.
+ */
+export function isPreviewable(url: string): boolean {
+  if (!/^https:\/\//i.test(url)) return false;
+  const host = hostOf(url).toLowerCase();
+  if (!host.includes(".") || host.startsWith("[")) return false;
+  if (/^\d+(\.\d+){3}$/.test(host)) return false;
+  return !/(^|\.)(localhost|local|internal|lan|home|arpa)$/.test(host);
+}
+
 export function originOf(url: string): string {
   return /^(https?:\/\/[^/?#]+)/i.exec(url)?.[1] ?? url;
 }

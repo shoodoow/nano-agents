@@ -1,6 +1,6 @@
 import { StyleSheet, Text, View } from "react-native";
 import type { RosterAgent } from "../api";
-import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
+import { darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
 import { Avatar } from "../ui/Avatar";
 import { roomActivityLabel, type RoomActivityPhase } from "./room-activity";
 

@@ -118,6 +118,7 @@ export default function ChatRoute() {
       onQuestionPick={(messageId, pick) => void session.answerQuestion(chat.conversationId, messageId, pick).catch(session.show)}
       onSecretSubmit={(name, secret) => session.saveVaultSecret(name, secret)}
       onLoadTeamChat={session.loadTeamChat}
+      onLoadOlder={() => void session.loadOlderMessages().catch(session.show)}
       onReact={(bubble, emoji) => void session.toggleReaction(chat.conversationId, bubble, emoji).catch(session.show)}
       onApprove={(approvalId) => {
         if (approvalId) void session.decideToolRow(approvalId, true).catch(session.show);

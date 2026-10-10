@@ -6,7 +6,7 @@ import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { createCore } from "../api";
 import type { RosterAgent } from "../api";
 import { authClient } from "../auth";
-import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
+import { darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
 import { useResolvedScheme } from "../theme/appearance";
 import { Avatar } from "../ui/Avatar";
 import { CircleButton } from "../ui/CircleButton";

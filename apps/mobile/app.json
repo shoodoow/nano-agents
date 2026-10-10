@@ -21,7 +21,6 @@
     "android": {
       "package": "com.nanoagents.app",
       "softwareKeyboardLayoutMode": "pan",
-      "usesCleartextTraffic": true,
       "intentFilters": [
         {
           "action": "VIEW",

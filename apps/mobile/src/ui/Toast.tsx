@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Animated, StyleSheet, Text } from "react-native";
 import * as Haptics from "expo-haptics";
 import { useSession } from "../session/SessionProvider";
-import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
+import { darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
 import { IconToastDone, IconToastWarn } from "./icons";
 
 export type ToastMessage = { id: number; at: number; text: string; tone: "success" | "error" };

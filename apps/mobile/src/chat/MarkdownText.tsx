@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { Linking, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
-import { colors, darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
+import { darkColors, onPaletteChange, type ColorPalette } from "../theme/tokens";
 import { LinkPreview } from "./LinkPreview";
 import { extractUrls, parseMarkdownBlocks, trimUrl } from "./markdown";
 import { copyText } from "./SelectTextSheet";

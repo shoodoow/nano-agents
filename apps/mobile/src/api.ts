@@ -202,6 +202,8 @@ export function contextUsageShare(info: ChatContextInfo): number {
   return Math.min(1, Math.max(0, share));
 }
 
+export type MessagePage = { limit?: number; before?: string };
+
 export type StreamEvent = {
   type: string;
   message?: RichMessage;
@@ -249,7 +251,8 @@ export type CoreClient = {
   listConversations: (accountId: string) => Promise<{ id: string; kind: string; title: string; ownerAgentId: string; brief?: string | null }[]>;
   listMembers: (accountId: string, conversationId: string) => Promise<{ agentId: string }[]>;
   chatContext: (accountId: string, conversationId: string) => Promise<ChatContextInfo>;
-  listMessages: (accountId: string, conversationId: string) => Promise<RichMessage[]>;
+  /** The whole thread, or with a page: the newest `limit` messages, or the `limit` just before one message. */
+  listMessages: (accountId: string, conversationId: string, page?: MessagePage) => Promise<RichMessage[]>;
   blob: (accountId: string, conversationId: string, messageId: string, index: number) => Promise<{
     url?: string;
     previewUrl?: string;
@@ -336,7 +339,7 @@ export function createCore(baseUrl = coreBaseUrl(), fetchImpl: typeof fetch = fe
     listConversations: (accountId) => listConversations(baseUrl, accountId, fetchImpl),
     listMembers: (accountId, conversationId) => listMembers(baseUrl, accountId, conversationId, fetchImpl),
     chatContext: (accountId, conversationId) => chatContext(baseUrl, accountId, conversationId, fetchImpl),
-    listMessages: (accountId, conversationId) => listMessages(baseUrl, accountId, conversationId, fetchImpl),
+    listMessages: (accountId, conversationId, page) => listMessages(baseUrl, accountId, conversationId, fetchImpl, page),
     blob: (accountId, conversationId, messageId, index) =>
       fetchBlob(baseUrl, accountId, conversationId, messageId, index, fetchImpl),
     listReactions: (accountId, conversationId) => listReactions(baseUrl, accountId, conversationId, fetchImpl),
@@ -537,8 +540,12 @@ async function listMessages(
   accountId: string,
   conversationId: string,
   fetchImpl: typeof fetch,
+  page?: MessagePage,
 ): Promise<RichMessage[]> {
-  return readJson(fetchImpl, `${baseUrl}/conversations/${conversationId}/messages?accountId=${accountId}`);
+  const query = new URLSearchParams({ accountId });
+  if (page?.limit) query.set("limit", String(page.limit));
+  if (page?.before) query.set("before", page.before);
+  return readJson(fetchImpl, `${baseUrl}/conversations/${conversationId}/messages?${query.toString()}`);
 }
 
 /**

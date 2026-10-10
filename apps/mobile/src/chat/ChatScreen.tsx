@@ -232,6 +232,7 @@ export function ChatScreen({
   onDeny,
   onFetchBlob,
   onLoadTeamChat,
+  onLoadOlder,
   onBack,
   onDesktop,
   onAgentMenu,
@@ -271,6 +272,8 @@ export function ChatScreen({
   onFetchBlob: (messageId: string, index: number) => Promise<{ url?: string; previewUrl?: string }>;
   /** Loads a team chat's recent messages for the read-only badge sheet. */
   onLoadTeamChat?: (conversationId: string) => Promise<TeamChatLine[]>;
+  /** Called when the person scrolls up to the oldest loaded message. */
+  onLoadOlder?: () => void;
   onBack: () => void;
   onDesktop: () => void;
   onAgentMenu: () => void;
@@ -368,6 +371,9 @@ export function ChatScreen({
         inverted
         data={thread}
         keyExtractor={(message) => message.id}
+        // The list is inverted, so its "end" is the top: the oldest message.
+        onEndReached={onLoadOlder}
+        onEndReachedThreshold={0.5}
         contentContainerStyle={styles.thread}
         contentInsetAdjustmentBehavior="automatic"
         keyboardShouldPersistTaps="handled"

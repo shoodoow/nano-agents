@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hostOf, parseLinkMeta } from "./link-meta";
+import { hostOf, isPreviewable, parseLinkMeta } from "./link-meta";
 import { extractUrls, messagePlainText, trimUrl } from "./markdown";
 
 describe("parseLinkMeta", () => {
@@ -56,5 +56,22 @@ describe("messagePlainText", () => {
 
   it("uses the body when there are no blocks", () => {
     expect(messagePlainText(null, "hello")).toBe("hello");
+  });
+});
+
+describe("isPreviewable", () => {
+  it("lets the phone fetch only https pages on named public hosts", () => {
+    expect(isPreviewable("https://example.com/post")).toBe(true);
+    for (const url of [
+      "http://example.com/",
+      "https://192.168.1.1/admin",
+      "https://[::1]/",
+      "https://router/",
+      "https://printer.local/",
+      "https://nas.lan/",
+      "https://api.internal/x",
+    ]) {
+      expect(isPreviewable(url), url).toBe(false);
+    }
   });
 });

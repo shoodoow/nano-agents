@@ -146,13 +146,11 @@ export function NewRoomSheet({
                 disabled={!chatReady}
                 busy={busy}
                 onPress={() => {
-                  console.log("[new-room] Create chat pressed", { name, role, job, provider, modelId, busy });
                   setBusy(true);
                   setError(null);
                   void onCreateChat(name.trim(), role.trim(), job.trim(), provider, modelId.trim())
                     .catch((failure: unknown) => {
                       const message = failure instanceof Error ? failure.message : "Could not create the chat.";
-                      console.warn("[new-room] Create chat failed:", message);
                       setError(message);
                     })
                     .finally(() => setBusy(false));
@@ -180,13 +178,11 @@ export function NewRoomSheet({
                 disabled={!groupReady}
                 busy={busy}
                 onPress={() => {
-                  console.log("[new-room] Create group pressed", { title, picked, busy });
                   setBusy(true);
                   setError(null);
                   void onCreateGroup(title.trim(), picked)
                     .catch((failure: unknown) => {
                       const message = failure instanceof Error ? failure.message : "Could not create the group.";
-                      console.warn("[new-room] Create group failed:", message);
                       setError(message);
                     })
                     .finally(() => setBusy(false));
