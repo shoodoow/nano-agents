@@ -71,11 +71,32 @@ export const config = {
   skillsDir: (): string | undefined => read("SKILLS_DIR"),
   dockerSocket: (): string => read("DOCKER_SOCKET") ?? "/var/run/docker.sock",
   /**
-   * Whether account containers are closed off from private addresses.
-   * On unless CONTAINER_FIREWALL=off. Turning it off lets every agent reach
-   * this machine's database and local network.
+   * The Docker runtime account containers are created with, for example
+   * "kata" on a Linux server. Unset uses Docker's default (runc), which is
+   * what a Mac can run.
    */
-  containerFirewall: (): boolean => !["off", "0", "false"].includes(read("CONTAINER_FIREWALL") ?? ""),
+  containerRuntime: (): string | undefined => read("CONTAINER_RUNTIME"),
+  /**
+   * How account containers are closed off from private addresses.
+   * "netns": rules inside each container's network namespace (the default).
+   * "host": rules on the host for one shared account network; the default
+   * when CONTAINER_RUNTIME names a virtual-machine runtime, whose traffic
+   * does not pass the namespace rules.
+   * "off": no rules. Every agent can then reach this machine's database and
+   * local network.
+   */
+  containerFirewall: (): "netns" | "host" | "off" => {
+    const value = read("CONTAINER_FIREWALL")?.toLowerCase();
+    if (value === "off" || value === "0" || value === "false") return "off";
+    if (value === "host" || value === "netns") return value;
+    const runtime = read("CONTAINER_RUNTIME");
+    return runtime && runtime !== "runc" ? "host" : "netns";
+  },
+  /** Name servers for containers on the host-ruled account network, where Docker's own resolver is not reachable from a virtual machine. */
+  containerDns: (): string[] => {
+    const servers = list("CONTAINER_DNS");
+    return servers.length > 0 ? servers : ["1.1.1.1", "8.8.8.8"];
+  },
 
   braveApiKey: (): string | undefined => read("BRAVE_API_KEY"),
   exaApiKey: (): string | undefined => read("EXA_API_KEY"),

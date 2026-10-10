@@ -6,7 +6,7 @@ import { and, eq } from "drizzle-orm";
 import type { Store } from "../db/client.js";
 import { sharedDb } from "../db/client.js";
 import { agents, user } from "../db/schema.js";
-import { applyFirewall } from "./firewall.js";
+import { ACCOUNT_NETWORK, applyFirewall, applyHostFirewall, ensureAccountNetwork } from "./firewall.js";
 
 const image = "nano-agents-linux:1";
 const memoryBytes = 10 * 1024 * 1024 * 1024;
@@ -18,6 +18,9 @@ const emailByAccount = new Map<string, string>();
 const firewalled = new Map<string, { startedAt: string; checkedAt: number }>();
 const firewallRuns = new Map<string, Promise<void>>();
 const FIREWALL_RECHECK_MS = 60_000;
+/** When the host-side rules were last installed, and the install in flight. */
+let hostRulesAt = 0;
+let hostRulesRun: Promise<void> | null = null;
 
 const docker = new Dockerode({
   socketPath: config.dockerSocket(),
@@ -175,6 +178,7 @@ export async function createLinux(accountId: string, emailHint?: string): Promis
     }
   }
   try {
+    if (config.containerFirewall() === "host") await ensureAccountNetwork(docker);
     const container = await docker.createContainer({
       name,
       Image: image,
@@ -208,25 +212,34 @@ export async function createLinux(accountId: string, emailHint?: string): Promis
 /**
  * Closes a running account container's network to private addresses.
  * Why: a container on Docker's bridge can otherwise reach the machine the
- * core runs on (its database and API) and other accounts' containers. The
- * rules live in the container's network namespace and are lost when it
- * restarts, so they are tied to the container's start time and confirmed
- * again once a minute, or at once when the caller passes {now: true}.
+ * core runs on (its database and API) and other accounts' containers.
+ * With "netns" rules, they live in the container's network namespace and
+ * are lost when it restarts, so they are tied to its start time. With
+ * "host" rules, they live on the host for the shared account network, and
+ * the container is moved onto that network. Either way the result is
+ * confirmed again once a minute, or at once when the caller passes {now: true}.
  * Input: the container name. Output: nothing. Throws when the rules could
  * not be installed, so no command runs in an open container.
  */
 async function ensureFirewall(name: string, options?: { now?: boolean }): Promise<void> {
-  if (!config.containerFirewall()) return;
+  const mode = config.containerFirewall();
+  if (mode === "off") return;
   const known = firewalled.get(name);
   if (known && !options?.now && Date.now() - known.checkedAt < FIREWALL_RECHECK_MS) return;
   const active = firewallRuns.get(name);
   if (active) return active;
+  const labels: Record<string, string> = config.isTest() ? { "nano.test": "1" } : {};
   const run = (async () => {
     const info = await docker.getContainer(name).inspect();
     if (!info.State.Running) return;
+    assertRuntime(name, info.HostConfig?.Runtime);
     const startedAt = info.State.StartedAt;
+    if (mode === "host") {
+      await ensureHostRules(labels, options?.now ?? false);
+      await moveToAccountNetwork(name, Object.keys(info.NetworkSettings?.Networks ?? {}));
+    }
     if (firewalled.get(name)?.startedAt !== startedAt) {
-      await applyFirewall(docker, image, name, config.isTest() ? { "nano.test": "1" } : {});
+      if (mode === "netns") await applyFirewall(docker, image, name, labels);
       await removeLegacyTokens(name);
     }
     firewalled.set(name, { startedAt, checkedAt: Date.now() });
@@ -235,6 +248,45 @@ async function ensureFirewall(name: string, options?: { now?: boolean }): Promis
   });
   firewallRuns.set(name, run);
   return run;
+}
+
+/**
+ * Refuses a container made with a different runtime than the one configured.
+ * Why: a runtime cannot be changed on an existing container. Running an
+ * old plain container after the operator asked for virtual machines would
+ * quietly give less isolation than they believe they have.
+ */
+function assertRuntime(name: string, actual: string | undefined): void {
+  const wanted = config.containerRuntime();
+  if (!wanted || !actual || actual === wanted) return;
+  throw new Error(
+    `Container ${name} was created with the ${actual} runtime, but CONTAINER_RUNTIME is ${wanted}. Remove the container so it is created again, or unset CONTAINER_RUNTIME.`,
+  );
+}
+
+/** Installs the host-side rules, at most once a minute unless asked for now. One install runs at a time. */
+async function ensureHostRules(labels: Record<string, string>, now: boolean): Promise<void> {
+  if (!now && Date.now() - hostRulesAt < FIREWALL_RECHECK_MS) return;
+  if (hostRulesRun) return hostRulesRun;
+  const run = (async () => {
+    await ensureAccountNetwork(docker);
+    await applyHostFirewall(docker, image, labels);
+    hostRulesAt = Date.now();
+  })().finally(() => {
+    if (hostRulesRun === run) hostRulesRun = null;
+  });
+  hostRulesRun = run;
+  return run;
+}
+
+/** Attaches a container to the account network and detaches it from every other one. */
+async function moveToAccountNetwork(name: string, current: string[]): Promise<void> {
+  if (!current.includes(ACCOUNT_NETWORK)) {
+    await docker.getNetwork(ACCOUNT_NETWORK).connect({ Container: name });
+  }
+  for (const other of current) {
+    if (other !== ACCOUNT_NETWORK) await docker.getNetwork(other).disconnect({ Container: name, Force: true });
+  }
 }
 
 /**
@@ -581,6 +633,8 @@ export function accountContainerHostConfig(accountId: string): Dockerode.HostCon
     // Raw sockets would let one container answer for another's address on the shared bridge.
     CapDrop: ["NET_RAW"],
     PidsLimit: 8192,
+    ...(config.containerRuntime() ? { Runtime: config.containerRuntime() } : {}),
+    ...(config.containerFirewall() === "host" ? { NetworkMode: ACCOUNT_NETWORK, Dns: config.containerDns() } : {}),
   };
 }
 

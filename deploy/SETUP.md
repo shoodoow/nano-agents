@@ -330,3 +330,30 @@ Laptop + tunnel is fine for **personal dev**; for anything shared or always-on, 
 | `~/.cloudflared/config.yml` | Tunnel ingress |
 | `deploy/cloudflared/config.example.yml` | Template for tunnel config |
 | `docker-compose.yml` | Local Postgres |
+
+## Stronger isolation with Kata Containers (Linux servers)
+
+With plain Docker every account's container shares the server's kernel. For a
+server that strangers can sign up on, run each container in its own small
+virtual machine instead.
+
+1. Use a Linux server with KVM (`ls /dev/kvm`). Docker Desktop on a Mac has
+   no KVM, so a Mac stays on plain Docker; nothing needs to be set there.
+2. Install Kata Containers and register it with Docker as a runtime. Check
+   the name Docker lists: `docker info --format '{{json .Runtimes}}'`.
+3. Set `CONTAINER_RUNTIME` in `apps/core/.env` to that name and restart the core.
+
+What changes when it is set:
+
+- New account containers are created with that runtime. A container made
+  earlier with another runtime is refused with a message, because a runtime
+  cannot be changed afterwards: remove it and it is created again. Files in
+  agents' home folders live in the container and are lost with it.
+- The network rules move from each container to the host, on one bridge
+  (`nano0`) all account containers share. They are installed by a short
+  helper container that uses the host network with the `NET_ADMIN` capability.
+- Containers use the name servers in `CONTAINER_DNS` (default 1.1.1.1 and 8.8.8.8).
+
+The host-side rules can be tried without Kata by setting
+`CONTAINER_FIREWALL=host`. That path is tested on plain Docker. Starting
+containers under Kata itself has not been run by the project's tests.

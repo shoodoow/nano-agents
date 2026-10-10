@@ -32,8 +32,10 @@ disclosure timeline with you.
   public internet only: the machine the core runs on, its local network, cloud
   metadata addresses and other accounts' containers are blocked by firewall
   rules the container cannot change (`CONTAINER_FIREWALL=off` removes them).
-  Containers still share the host kernel, so a kernel exploit is not
-  contained until a stronger runtime is in place.
+  With plain Docker, containers share the host kernel, so a kernel exploit is
+  not contained. Set `CONTAINER_RUNTIME` to a virtual-machine runtime such as
+  Kata Containers on a Linux server to give each account its own kernel; see
+  `deploy/SETUP.md`.
 - **Auto-review.** Approval cards catch common destructive commands so a
   model's mistake waits for a person. It is a pattern list and can be worked
   around; it is not a security control against a hostile agent.
