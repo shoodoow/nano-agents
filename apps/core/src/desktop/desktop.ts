@@ -124,7 +124,9 @@ export async function startDesktop(accountId: string, profile: string): Promise<
       `echo ${Buffer.from(serveDesktop(display, session.rfbPort, session.novncPort)).toString("base64")} | base64 -d > ${root}/serve.sh`,
       `sh ${root}/serve.sh`,
       `nohup bash -lc ${shellQuote(bootDesktop(display, profile))} >${root}/boot.log 2>&1 &`,
-      `for i in $(seq 1 50); do nc -z 127.0.0.1 ${session.novncPort} && exit 0; sleep 0.1; done`,
+      // The viewer port opens before the screen server behind it; a viewer that
+      // connects in between is dropped, so both must be listening.
+      `for i in $(seq 1 50); do nc -z 127.0.0.1 ${session.rfbPort} && nc -z 127.0.0.1 ${session.novncPort} && exit 0; sleep 0.1; done`,
       `cat /tmp/xvfb-${display}.log /tmp/vnc-${display}.log /tmp/novnc-${display}.log`,
       "exit 1",
     ].join("\n"),
@@ -140,7 +142,7 @@ export async function startDesktop(accountId: string, profile: string): Promise<
 function probeScript(session: Session, profile: string): string {
   return (
     `[ "$(cat /tmp/desktop-${session.display}/owner 2>/dev/null)" = ${shellQuote(profile)} ] && ` +
-    `xset -display :${session.display} q >/dev/null 2>&1 && nc -z 127.0.0.1 ${session.novncPort}`
+    `xset -display :${session.display} q >/dev/null 2>&1 && nc -z 127.0.0.1 ${session.rfbPort} && nc -z 127.0.0.1 ${session.novncPort}`
   );
 }
 
