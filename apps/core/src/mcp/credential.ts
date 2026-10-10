@@ -2,7 +2,7 @@ import { open, seal } from "../keys/keys.js";
 
 const MARK = "oauth1.";
 
-/** Refresh material for a user-supplied MCP. The cage only ever receives accessToken. */
+/** Refresh material for a user-supplied MCP. Kept sealed on the core; no part of it is given to the container. */
 export type OAuthSecret = {
   refreshToken: string;
   accessToken: string;
@@ -17,7 +17,7 @@ export function sealOAuth(value: OAuthSecret): string {
 
 /**
  * Opens a stored connector secret.
- * Input: the sealed value. Output: a bearer ready for the cage, plus oauth material when the secret is a refresh bundle.
+ * Input: the sealed value. Output: a bearer ready to send, plus oauth material when the secret is a refresh bundle.
  * An expired access token comes back as an empty bearer so the caller can refresh it on the core.
  */
 export function readSecret(sealed: string): { bearer: string; oauth: OAuthSecret | null } {

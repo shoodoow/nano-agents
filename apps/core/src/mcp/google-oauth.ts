@@ -84,7 +84,7 @@ export async function finishGoogleOAuth(db: Database, state: string, code: strin
   return { accountId: pending.accountId, name: plugin.name };
 }
 
-/** Mints a short-lived access token on the core. The refresh token and client secret never enter the container. */
+/** Mints a short-lived access token on the core. No Google token or client secret is given to the container. */
 export async function googleAccessToken(refreshToken: string): Promise<string> {
   const clientId = config.googleClientId();
   const clientSecret = config.googleClientSecret();

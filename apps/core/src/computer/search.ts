@@ -79,62 +79,62 @@ async function runProvider(
   input: { braveKey?: string | null; exaKey?: string | null },
 ): Promise<WebSearchOutcome> {
   if (provider === "brave") {
-    const raw = await curlGet(
-      accountId,
-      profile,
-      `${BRAVE_URL}?q=${encodeURIComponent(query)}&count=${count}`,
-      [`X-Subscription-Token: ${input.braveKey}`],
-    );
+    const raw = await keyedRequest(`${BRAVE_URL}?q=${encodeURIComponent(query)}&count=${count}`, {
+      headers: { "X-Subscription-Token": input.braveKey ?? "" },
+    });
     const error = parseApiError(raw);
     return { provider, results: parseBraveResponse(raw).slice(0, count), error };
   }
   if (provider === "exa") {
-    const raw = await curlPost(accountId, profile, EXA_URL, input.exaKey ?? "", {
-      query,
-      numResults: count,
-      type: "auto",
-      livecrawl: "fallback",
-      contents: {
-        text: { maxCharacters: 2_500 },
-        summary: { query },
-        highlights: { maxCharacters: 1_000, query },
-      },
+    const raw = await keyedRequest(EXA_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": input.exaKey ?? "" },
+      body: JSON.stringify({
+        query,
+        numResults: count,
+        type: "auto",
+        livecrawl: "fallback",
+        contents: {
+          text: { maxCharacters: 2_500 },
+          summary: { query },
+          highlights: { maxCharacters: 1_000, query },
+        },
+      }),
     });
     const error = parseApiError(raw);
     return { provider, results: parseExaResponse(raw).slice(0, count), error };
   }
-  const raw = await curlGet(accountId, profile, `${DUCK_URL}?q=${encodeURIComponent(query)}`, []);
+  const raw = await curlGet(accountId, profile, `${DUCK_URL}?q=${encodeURIComponent(query)}`);
   return { provider, results: parseDuckLite(raw).slice(0, count) };
 }
 
-async function curlGet(accountId: string, profile: string, url: string, headers: string[]): Promise<string> {
-  const args = ["curl", "-sS", "--max-time", String(SEARCH_TIMEOUT), "--max-redirs", "3"];
-  for (const header of headers) args.push("-H", header);
-  args.push(url);
+/**
+ * Fetches a keyless search page from inside the account's container.
+ * Why there: the request then leaves from the account's own computer, not
+ * from the core's address.
+ */
+async function curlGet(accountId: string, profile: string, url: string): Promise<string> {
+  const args = ["curl", "-sS", "--max-time", String(SEARCH_TIMEOUT), "--max-redirs", "3", url];
   const result = await exec(accountId, args, profile);
   return result.stdout.slice(0, 200_000);
 }
 
-async function curlPost(accountId: string, profile: string, url: string, apiKey: string, body: unknown): Promise<string> {
-  const args = [
-    "curl",
-    "-sS",
-    "--max-time",
-    String(SEARCH_TIMEOUT),
-    "--max-redirs",
-    "3",
-    "-X",
-    "POST",
-    url,
-    "-H",
-    "Content-Type: application/json",
-    "-H",
-    `x-api-key: ${apiKey}`,
-    "--data",
-    JSON.stringify(body),
-  ];
-  const result = await exec(accountId, args, profile);
-  return result.stdout.slice(0, 200_000);
+/**
+ * Calls a search API that needs a key, from the core.
+ * Why not in the container: the key may be the server's own, shared by every
+ * account. A command line inside a container is readable by every agent
+ * there, so the key must never appear in one. The address is one of the
+ * fixed provider addresses above, never one a person supplied.
+ * Input: the provider URL and the request. Output: the response text, or
+ * error JSON that parseApiError reads when the provider could not be reached.
+ */
+async function keyedRequest(url: string, init: RequestInit): Promise<string> {
+  try {
+    const response = await fetch(url, { ...init, signal: AbortSignal.timeout(SEARCH_TIMEOUT * 1000) });
+    return (await response.text()).slice(0, 200_000);
+  } catch (error) {
+    return JSON.stringify({ error: error instanceof Error ? error.message : "The search provider did not answer." });
+  }
 }
 
 /** Surfaces provider error JSON instead of silent empty lists. */

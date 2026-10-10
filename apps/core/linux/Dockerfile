@@ -33,6 +33,6 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /opt/nano
-COPY browser-bridge.mjs mcp-bridge.mjs google-bridge.mjs /opt/nano/
+COPY browser-bridge.mjs /opt/nano/
 
 CMD ["sleep", "infinity"]

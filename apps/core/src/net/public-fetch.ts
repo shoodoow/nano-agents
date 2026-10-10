@@ -29,47 +29,55 @@ export function publicLookup(hostname: string, options: object, callback: Lookup
   });
 }
 
-const dispatcher = new Agent({
-  connect: { lookup: publicLookup as never, timeout: TIMEOUT_MS },
-  headersTimeout: TIMEOUT_MS,
-  bodyTimeout: TIMEOUT_MS,
-});
+export type PublicFetchLimits = { timeoutMs: number; maxBodyBytes: number };
 
 /**
- * fetch for URLs a person or a remote server supplied, made from the core host.
+ * Builds a fetch for URLs a person or a remote server supplied, made from the core host.
  * Why: the core sits next to the database and the Docker socket, so a request
  * it makes on someone's behalf must only ever reach the public internet.
- * Input: the same arguments as fetch. Output: the response, with a body
- * capped at 1MB. Throws for a private target, a timeout, or a larger body.
+ * Input: how long one request may take and how large its body may be.
+ * Output: a fetch whose response body is already read and capped. It throws
+ * for a private target, a timeout, or a larger body.
  */
-export const publicFetch: typeof fetch = async (input, init) => {
-  const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
-  if (url.protocol !== "https:" && url.protocol !== "http:") {
-    throw new Error("Only http and https addresses can be fetched.");
-  }
-  if (isPrivateHost(url.hostname)) {
-    throw new Error("That address is private or local.");
-  }
-  const response = (await undiciFetch(url, {
-    ...(init as object),
-    dispatcher,
-    signal: init?.signal ?? AbortSignal.timeout(TIMEOUT_MS),
-  })) as unknown as Response;
-  const declared = Number(response.headers.get("content-length") ?? 0);
-  if (declared > MAX_BODY_BYTES) {
-    throw new Error("The response is too large.");
-  }
-  const body = await readCapped(response);
-  return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
-};
+export function createPublicFetch(limits: PublicFetchLimits): typeof fetch {
+  const { timeoutMs, maxBodyBytes } = limits;
+  const dispatcher = new Agent({
+    connect: { lookup: publicLookup as never, timeout: TIMEOUT_MS },
+    headersTimeout: timeoutMs,
+    bodyTimeout: timeoutMs,
+  });
+  return async (input, init) => {
+    const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
+    if (url.protocol !== "https:" && url.protocol !== "http:") {
+      throw new Error("Only http and https addresses can be fetched.");
+    }
+    if (isPrivateHost(url.hostname)) {
+      throw new Error("That address is private or local.");
+    }
+    const response = (await undiciFetch(url, {
+      ...(init as object),
+      dispatcher,
+      signal: init?.signal ?? AbortSignal.timeout(timeoutMs),
+    })) as unknown as Response;
+    const declared = Number(response.headers.get("content-length") ?? 0);
+    if (declared > maxBodyBytes) {
+      throw new Error("The response is too large.");
+    }
+    const body = await readCapped(response, maxBodyBytes);
+    return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+  };
+}
 
-async function readCapped(response: Response): Promise<ArrayBuffer | null> {
+/** The default: ten seconds and 1MB, for sign-in discovery and page fetches. */
+export const publicFetch: typeof fetch = createPublicFetch({ timeoutMs: TIMEOUT_MS, maxBodyBytes: MAX_BODY_BYTES });
+
+async function readCapped(response: Response, maxBodyBytes: number): Promise<ArrayBuffer | null> {
   if (!response.body || response.status === 204 || response.status === 304) return null;
   const chunks: Uint8Array[] = [];
   let total = 0;
   for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
     total += chunk.byteLength;
-    if (total > MAX_BODY_BYTES) {
+    if (total > maxBodyBytes) {
       throw new Error("The response is too large.");
     }
     chunks.push(chunk);

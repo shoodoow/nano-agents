@@ -227,6 +227,7 @@ async function ensureFirewall(name: string, options?: { now?: boolean }): Promis
     const startedAt = info.State.StartedAt;
     if (firewalled.get(name)?.startedAt !== startedAt) {
       await applyFirewall(docker, image, name, config.isTest() ? { "nano.test": "1" } : {});
+      await removeLegacyTokens(name);
     }
     firewalled.set(name, { startedAt, checkedAt: Date.now() });
   })().finally(() => {
@@ -234,6 +235,21 @@ async function ensureFirewall(name: string, options?: { now?: boolean }): Promis
   });
   firewallRuns.set(name, run);
   return run;
+}
+
+/**
+ * Deletes plugin tokens that older versions wrote into the container.
+ * Why: plugin calls are now made by the core, so nothing reads these files,
+ * and a token left on disk is one an agent could still copy.
+ */
+async function removeLegacyTokens(name: string): Promise<void> {
+  const container = docker.getContainer(name);
+  const running = await container.exec({ Cmd: ["rm", "-rf", "/var/nano/mcp"], User: "root", AttachStdout: true, AttachStderr: true });
+  const stream = await running.start({ hijack: true, stdin: false });
+  const result = await collectExec(container, running, stream);
+  if (result.code !== 0) {
+    throw new Error(`Old plugin tokens could not be removed from ${name}. ${result.stdout.toString("utf8").trim()}`);
+  }
 }
 
 /** The account's container, with its network rules confirmed. */

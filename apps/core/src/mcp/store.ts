@@ -6,9 +6,8 @@ import { and, eq } from "drizzle-orm";
 import type { getDb } from "../db/client.js";
 import { mcpServers } from "../db/schema.js";
 import { seal } from "../keys/keys.js";
-import { listMcpToolsInCage, syncMcpConfig } from "../computer/mcp-bridge.js";
-import { createLinux, exec } from "../linux/linux.js";
 import { catalogPlugin } from "./catalog.js";
+import { callMcpTool, listMcpTools } from "./client.js";
 import { readSecret, sealOAuth, type OAuthSecret } from "./credential.js";
 import { refreshOAuthSecret, updateOAuthSecret } from "./mcp-oauth.js";
 import { dropGoogleTokenIfUnused } from "./plugins.js";
@@ -59,11 +58,7 @@ export async function deleteMcpServer(db: Database, accountId: string, slug: str
     .where(and(eq(mcpServers.accountId, accountId), eq(mcpServers.slug, slug)));
   if (!row) return;
   await db.delete(mcpServers).where(and(eq(mcpServers.accountId, accountId), eq(mcpServers.slug, slug)));
-  if (row.kind === "google" && (await dropGoogleTokenIfUnused(db, accountId))) {
-    await exec(accountId, ["rm", "-f", "/var/nano/mcp/secrets/google"]).catch(() => {});
-  }
-  const remaining = await db.select().from(mcpServers).where(eq(mcpServers.accountId, accountId));
-  await syncRemoteSecrets(db, accountId, remaining).catch(() => {});
+  if (row.kind === "google") await dropGoogleTokenIfUnused(db, accountId);
 }
 
 export async function saveMcpServer(db: Database, accountId: string, input: unknown): Promise<StoredMcpServer> {
@@ -75,29 +70,17 @@ export async function saveMcpServer(db: Database, accountId: string, input: unkn
     .from(mcpServers)
     .where(and(eq(mcpServers.accountId, accountId), eq(mcpServers.slug, data.slug)));
   const typed = data.secret.trim()
-    ? { secret: seal(data.secret.trim()), cageBearer: data.secret.trim() }
+    ? { secret: seal(data.secret.trim()), bearer: data.secret.trim() }
     : existing?.secret
-      ? { secret: existing.secret, cageBearer: await bearerForRow(db, existing) }
-      : { secret: seal(""), cageBearer: "" };
+      ? { secret: existing.secret, bearer: await bearerForRow(db, existing) }
+      : { secret: seal(""), bearer: "" };
 
   let toolsCache: McpToolCacheEntry[] = existing ? parseToolsCache(existing.toolsCache) : [];
   let lastError: string | null = null;
   try {
-    const others = await db.select().from(mcpServers).where(eq(mcpServers.accountId, accountId));
-    await syncRemoteSecrets(db, accountId, others.filter((row) => row.slug !== data.slug), {
-      slug: data.slug,
-      url: data.url,
-      secret: typed.cageBearer,
-    });
-    const listed = await listMcpToolsInCage(accountId, data.slug);
-    if ("error" in listed) {
-      lastError = listed.error;
-      toolsCache = [];
-    } else {
-      toolsCache = listed;
-    }
+    toolsCache = await listMcpTools(data.url, typed.bearer);
   } catch (error) {
-    lastError = error instanceof Error ? error.message : "Could not reach the MCP bridge in this account's computer.";
+    lastError = error instanceof Error ? error.message : "Could not reach the MCP server.";
     toolsCache = [];
   }
 
@@ -130,7 +113,7 @@ export async function mcpRowsForAccount(db: Database, accountId: string): Promis
 }
 
 /**
- * Stores an OAuth refresh bundle for one custom MCP and publishes only the access token into that account's container.
+ * Stores an OAuth refresh bundle for one custom MCP and reads the server's tool list.
  */
 export async function saveOAuthMcpServer(
   db: Database,
@@ -145,20 +128,9 @@ export async function saveOAuthMcpServer(
   let toolsCache: McpToolCacheEntry[] = [];
   let lastError: string | null = null;
   try {
-    const others = await db.select().from(mcpServers).where(eq(mcpServers.accountId, accountId));
-    await syncRemoteSecrets(db, accountId, others.filter((row) => row.slug !== input.slug), {
-      slug: input.slug,
-      url: input.url,
-      secret: input.oauth.accessToken,
-    });
-    const listed = await listMcpToolsInCage(accountId, input.slug);
-    if ("error" in listed) {
-      lastError = listed.error;
-    } else {
-      toolsCache = listed;
-    }
+    toolsCache = await listMcpTools(input.url, input.oauth.accessToken);
   } catch (error) {
-    lastError = error instanceof Error ? error.message : "Could not reach the MCP bridge in this account's computer.";
+    lastError = error instanceof Error ? error.message : "Could not reach the MCP server.";
   }
   const values = {
     accountId,
@@ -179,11 +151,35 @@ export async function saveOAuthMcpServer(
   return toStored(row!);
 }
 
+const MAX_TOOL_OUTPUT = 20_000;
+
 /**
- * Returns the bearer the container should send. Refreshes an expired MCP access token on the core first.
+ * Calls one tool on an account's custom MCP server.
+ * Why the row is read again here: a long turn can outlive an access token.
+ * Reading the stored secret at call time uses the newest token, and a refresh
+ * made by an earlier call is not repeated with a refresh token already spent.
+ * Input: database, account id, server slug, tool name and arguments.
+ * Output: the result as JSON text, or a plain sentence when the call failed.
  */
-export async function bearerForMcpRow(db: Database, row: typeof mcpServers.$inferSelect): Promise<string> {
-  return bearerForRow(db, row);
+export async function runMcpTool(
+  db: Database,
+  accountId: string,
+  slug: string,
+  toolName: string,
+  args: Record<string, unknown>,
+): Promise<string> {
+  const [row] = await db
+    .select()
+    .from(mcpServers)
+    .where(and(eq(mcpServers.accountId, accountId), eq(mcpServers.slug, slug), eq(mcpServers.enabled, true)));
+  if (!row || row.kind === "google") return `No MCP server named ${slug} is connected.`;
+  try {
+    const result = await callMcpTool(row.url, await bearerForRow(db, row), toolName, args);
+    const text = JSON.stringify(result);
+    return text.length > MAX_TOOL_OUTPUT ? `${text.slice(0, MAX_TOOL_OUTPUT)}\n[truncated]` : text;
+  } catch (error) {
+    return error instanceof Error ? error.message : "The MCP server did not answer.";
+  }
 }
 
 async function bearerForRow(
@@ -198,20 +194,4 @@ async function bearerForRow(
   const next = await refreshOAuthSecret(opened.oauth);
   await updateOAuthSecret(db, row.id, next);
   return next.accessToken;
-}
-
-async function syncRemoteSecrets(
-  db: Database,
-  accountId: string,
-  rows: (typeof mcpServers.$inferSelect)[],
-  extra?: { slug: string; url: string; secret: string },
-): Promise<void> {
-  const remote = [];
-  for (const row of rows) {
-    if (row.kind === "google") continue;
-    remote.push({ slug: row.slug, url: row.url, secret: await bearerForRow(db, row) });
-  }
-  if (extra) remote.push(extra);
-  await createLinux(accountId);
-  await syncMcpConfig(accountId, remote);
 }

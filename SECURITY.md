@@ -26,8 +26,9 @@ disclosure timeline with you.
   made, not just by name.
 - **Agent computers.** Each account has one Linux container. Agents on the
   same account share it and have administrator rights inside it, so they are
-  not isolated from each other, and plugin access tokens placed in the
-  container are readable by them. A container can open connections to the
+  not isolated from each other. No stored secret is given to a container:
+  plugin and Google calls, and web searches that use an API key, are made by
+  the core. A container can open connections to the
   public internet only: the machine the core runs on, its local network, cloud
   metadata addresses and other accounts' containers are blocked by firewall
   rules the container cannot change (`CONTAINER_FIREWALL=off` removes them).

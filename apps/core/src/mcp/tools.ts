@@ -4,10 +4,9 @@
 import { jsonSchema, tool } from "ai";
 import type { getDb } from "../db/client.js";
 import type { ToolContext } from "../turn/tools/context.js";
-import { runGoogleTool } from "../computer/google-bridge.js";
-import { runMcpTool } from "../computer/mcp-bridge.js";
 import { catalogPlugin } from "./catalog.js";
-import { mcpRowsForAccount } from "./store.js";
+import { runGoogleTool } from "./google-api.js";
+import { mcpRowsForAccount, runMcpTool } from "./store.js";
 import type { McpToolCacheEntry } from "./types.js";
 
 type Db = ReturnType<typeof getDb>;
@@ -66,11 +65,8 @@ export async function appendMcpTools(
         description: (entry.description || `MCP ${row.slug}/${entry.name}`) + askFirst,
         inputSchema: mcpInputSchema(entry) as never,
         execute: wrapExecute(fullName, async (input) => {
-          if (!ctx.linuxProfile) {
-            return { error: "Connectors run inside this account's computer, which is not ready yet." };
-          }
           if (row.kind === "google") return runGoogleTool(ctx.db, ctx.accountId, row.slug, entry.name, input);
-          return runMcpTool(ctx.accountId, row.slug, entry.name, input);
+          return runMcpTool(ctx.db, ctx.accountId, row.slug, entry.name, input);
         }) as never,
       });
     }
