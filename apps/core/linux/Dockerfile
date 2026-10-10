@@ -29,6 +29,7 @@ RUN apt-get update \
     imagemagick \
     socat \
     netcat-openbsd \
+    iptables \
   && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /opt/nano

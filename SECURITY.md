@@ -27,9 +27,12 @@ disclosure timeline with you.
 - **Agent computers.** Each account has one Linux container. Agents on the
   same account share it and have administrator rights inside it, so they are
   not isolated from each other, and plugin access tokens placed in the
-  container are readable by them. The container itself is a standard Docker
-  container on the default network: treat it as a convenience boundary, not a
-  hardened sandbox, until a stronger runtime is in place.
+  container are readable by them. A container can open connections to the
+  public internet only: the machine the core runs on, its local network, cloud
+  metadata addresses and other accounts' containers are blocked by firewall
+  rules the container cannot change (`CONTAINER_FIREWALL=off` removes them).
+  Containers still share the host kernel, so a kernel exploit is not
+  contained until a stronger runtime is in place.
 - **Auto-review.** Approval cards catch common destructive commands so a
   model's mistake waits for a person. It is a pattern list and can be worked
   around; it is not a security control against a hostile agent.

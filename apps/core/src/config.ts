@@ -70,6 +70,12 @@ export const config = {
 
   skillsDir: (): string | undefined => read("SKILLS_DIR"),
   dockerSocket: (): string => read("DOCKER_SOCKET") ?? "/var/run/docker.sock",
+  /**
+   * Whether account containers are closed off from private addresses.
+   * On unless CONTAINER_FIREWALL=off. Turning it off lets every agent reach
+   * this machine's database and local network.
+   */
+  containerFirewall: (): boolean => !["off", "0", "false"].includes(read("CONTAINER_FIREWALL") ?? ""),
 
   braveApiKey: (): string | undefined => read("BRAVE_API_KEY"),
   exaApiKey: (): string | undefined => read("EXA_API_KEY"),

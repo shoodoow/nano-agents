@@ -6,6 +6,7 @@ import { and, eq } from "drizzle-orm";
 import type { Store } from "../db/client.js";
 import { sharedDb } from "../db/client.js";
 import { agents, user } from "../db/schema.js";
+import { applyFirewall } from "./firewall.js";
 
 const image = "nano-agents-linux:1";
 const memoryBytes = 10 * 1024 * 1024 * 1024;
@@ -13,6 +14,10 @@ const storageSize = "50G";
 const toolchainRepairs = new Map<string, Promise<void>>();
 const containerNameByAccount = new Map<string, string>();
 const emailByAccount = new Map<string, string>();
+/** Per container: the start the network rules were installed for, and when that was last confirmed. */
+const firewalled = new Map<string, { startedAt: string; checkedAt: number }>();
+const firewallRuns = new Map<string, Promise<void>>();
+const FIREWALL_RECHECK_MS = 60_000;
 
 const docker = new Dockerode({
   socketPath: config.dockerSocket(),
@@ -159,6 +164,7 @@ export async function createLinux(accountId: string, emailHint?: string): Promis
     if (!info.State.Running) {
       await existing.start();
     }
+    await ensureFirewall(name, { now: true });
     await ensureMemory(existing, info.HostConfig?.Memory ?? 0);
     await ensureBaseToolchain(accountId);
     return info.Id;
@@ -176,6 +182,7 @@ export async function createLinux(accountId: string, emailHint?: string): Promis
       HostConfig: accountContainerHostConfig(accountId),
     });
     await container.start();
+    await ensureFirewall(name, { now: true });
   } catch (error) {
     const status = (error as { statusCode?: number }).statusCode;
     if (status !== 409) {
@@ -187,6 +194,7 @@ export async function createLinux(accountId: string, emailHint?: string): Promis
     if (!winner.State.Running) {
       await docker.getContainer(name).start();
     }
+    await ensureFirewall(name, { now: true });
     return winner.Id;
   }
   await ensureBaseToolchain(accountId);
@@ -195,6 +203,44 @@ export async function createLinux(accountId: string, emailHint?: string): Promis
     throw new Error(made.stdout || "The shared directory was not created.");
   }
   return docker.getContainer(name).inspect().then((info) => info.Id);
+}
+
+/**
+ * Closes a running account container's network to private addresses.
+ * Why: a container on Docker's bridge can otherwise reach the machine the
+ * core runs on (its database and API) and other accounts' containers. The
+ * rules live in the container's network namespace and are lost when it
+ * restarts, so they are tied to the container's start time and confirmed
+ * again once a minute, or at once when the caller passes {now: true}.
+ * Input: the container name. Output: nothing. Throws when the rules could
+ * not be installed, so no command runs in an open container.
+ */
+async function ensureFirewall(name: string, options?: { now?: boolean }): Promise<void> {
+  if (!config.containerFirewall()) return;
+  const known = firewalled.get(name);
+  if (known && !options?.now && Date.now() - known.checkedAt < FIREWALL_RECHECK_MS) return;
+  const active = firewallRuns.get(name);
+  if (active) return active;
+  const run = (async () => {
+    const info = await docker.getContainer(name).inspect();
+    if (!info.State.Running) return;
+    const startedAt = info.State.StartedAt;
+    if (firewalled.get(name)?.startedAt !== startedAt) {
+      await applyFirewall(docker, image, name, config.isTest() ? { "nano.test": "1" } : {});
+    }
+    firewalled.set(name, { startedAt, checkedAt: Date.now() });
+  })().finally(() => {
+    if (firewallRuns.get(name) === run) firewallRuns.delete(name);
+  });
+  firewallRuns.set(name, run);
+  return run;
+}
+
+/** The account's container, with its network rules confirmed. */
+async function accountContainer(accountId: string): Promise<Dockerode.Container> {
+  const name = await resolveContainerName(accountId);
+  await ensureFirewall(name);
+  return docker.getContainer(name);
 }
 
 /**
@@ -225,7 +271,7 @@ export async function execBytes(
   env?: string[],
   options?: ExecOptions,
 ): Promise<ExecBytesResult> {
-  const container = docker.getContainer(await resolveContainerName(accountId));
+  const container = await accountContainer(accountId);
   const running = await container.exec({
     Cmd: command,
     User: user,
@@ -253,7 +299,7 @@ export async function execStdin(
   env?: string[],
   options?: ExecOptions,
 ): Promise<ExecBytesResult> {
-  const container = docker.getContainer(await resolveContainerName(accountId));
+  const container = await accountContainer(accountId);
   const running = await container.exec({
     Cmd: command,
     User: user,
@@ -274,7 +320,7 @@ export async function execStdin(
  * Output: nothing. Bytes flow both ways until either side closes.
  */
 export async function pipeExec(accountId: string, command: string[], socket: Duplex, preamble?: Buffer): Promise<void> {
-  const container = docker.getContainer(await resolveContainerName(accountId));
+  const container = await accountContainer(accountId);
   const running = await container.exec({
     Cmd: command,
     AttachStdin: true,
@@ -516,6 +562,9 @@ export function accountContainerHostConfig(accountId: string): Dockerode.HostCon
     StorageOpt: { size: storageSize },
     Binds: binds,
     Privileged: false,
+    // Raw sockets would let one container answer for another's address on the shared bridge.
+    CapDrop: ["NET_RAW"],
+    PidsLimit: 8192,
   };
 }
 

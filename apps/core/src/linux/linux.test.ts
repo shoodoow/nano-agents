@@ -85,6 +85,32 @@ describe("linux", () => {
     expect(new Set(rows.map((row) => row.linuxProfile)).size).toBe(2);
   });
 
+  it("closes the network to this machine and to other accounts, and keeps the internet", async () => {
+    const docker = new Dockerode({ socketPath: process.env.DOCKER_SOCKET ?? "/var/run/docker.sock" });
+    const first = await createAccount(db, { name: "Fenced" });
+    const second = await createAccount(db, { name: "Neighbour" });
+    const neighbour = await docker.getContainer(`nano-${second.id}`).inspect();
+    const bridge = Object.values(neighbour.NetworkSettings.Networks)[0];
+    const connect = (accountId: string, host: string, port: number) =>
+      exec(accountId, ["bash", "-c", `timeout 4 bash -c '</dev/tcp/${host}/${port}'`]);
+
+    // The neighbour listens on its bridge address and can reach itself there.
+    await exec(second.id, ["sh", "-c", "nohup nc -lk -p 8099 >/dev/null 2>&1 &"]);
+    await expect.poll(async () => (await connect(second.id, bridge.IPAddress, 8099)).code).toBe(0);
+
+    expect((await connect(first.id, bridge.IPAddress, 8099)).code).not.toBe(0);
+    // The test database listens on this machine; the bridge gateway is this machine.
+    expect((await connect(first.id, bridge.Gateway, 5432)).code).not.toBe(0);
+    expect((await connect(first.id, "169.254.169.254", 80)).code).not.toBe(0);
+
+    // Root inside the container cannot take the rules out.
+    expect((await exec(first.id, ["iptables", "-F"])).code).not.toBe(0);
+
+    const internet = await exec(first.id, ["curl", "-sS", "-o", "/dev/null", "--max-time", "20", "https://example.com"]);
+    expect(internet.stdout).toBe("");
+    expect(internet.code).toBe(0);
+  }, 60_000);
+
   it("keeps exactly one container per account across repeated and concurrent calls", async () => {
     const docker = new Dockerode({ socketPath: process.env.DOCKER_SOCKET ?? "/var/run/docker.sock" });
     const account = await createAccount(db, { name: "Single" });
