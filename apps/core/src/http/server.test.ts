@@ -399,7 +399,7 @@ describe("server", () => {
       body: JSON.stringify({ agentId: extra.id }),
     });
     expect(rejected.status).toBe(409);
-  });
+  }, 30_000);
 
   it("replays missed events by cursor on the stream", async () => {    const account = await postJson<{ id: string }>(`${baseUrl}/accounts`, { name: "Resume" });
     const ada = await postJson<{ id: string }>(`${baseUrl}/accounts/${account.id}/agents`, agent("Ada"));

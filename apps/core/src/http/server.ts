@@ -78,9 +78,7 @@ function createApp(ctx: AppContext): Express {
   const app = express();
   app.disable("x-powered-by");
   app.set("etag", false);
-  if (config.trustProxy()) {
-    app.set("trust proxy", 1);
-  }
+  app.set("trust proxy", config.trustProxy());
 
   app.use(
     pinoHttp({

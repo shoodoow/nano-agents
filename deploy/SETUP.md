@@ -298,7 +298,7 @@ Laptop + tunnel is fine for **personal dev**; for anything shared or always-on, 
 - [ ] Google redirect URI is **HTTPS only** on your public hostname.
 - [ ] Tunnel ingress points to `127.0.0.1:3000`, not `0.0.0.0` on the WAN.
 - [ ] Production: `NODE_ENV=production`, strong DB credentials, Postgres not exposed publicly (the bundled compose file binds it to `127.0.0.1`).
-- [ ] Behind a tunnel or reverse proxy, set `TRUST_PROXY=1` so request limits count each client, not the proxy.
+- [ ] A tunnel or reverse proxy on the same machine needs no setting. If the proxy runs on another host, set `TRUST_PROXY=1` so request limits count each client, not the proxy.
 - [ ] Restrict Google OAuth client to your redirect URIs; use separate clients for dev/prod if possible.
 - [ ] Optional: Cloudflare **Access** policy on `api.example.com`; WAF / rate limiting on the zone.
 - [ ] Keep `cloudflared` and dependencies updated.
