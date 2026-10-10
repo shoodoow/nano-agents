@@ -384,12 +384,6 @@ export async function saveUserMessage(
   return saved;
 }
 /**
- * Maximum inline data: chars per block in list responses.
- * Why: a 5MB phone photo as base64 balloons every thread refresh (the whole
- * list re-downloads on each poll). Blocks above this budget keep metadata +
- * blobRef; the client fetches bytes lazily once and caches them.
- */
-/**
  * Claims every queued user message in one room.
  * Why: a message that arrived while the room was busy must start as soon as
  * the running turn ends. One UPDATE..RETURNING flips them so the ending turn
@@ -409,7 +403,42 @@ export async function claimQueuedForRoom(db: Database, accountId: string, conver
     .returning();
   return claimed.sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
 }
+/**
+ * Maximum inline data: chars per block in list responses.
+ * Why: a 5MB phone photo as base64 balloons every thread refresh. Blocks
+ * above this budget keep metadata + blobRef; the client fetches bytes lazily
+ * once and caches them.
+ */
 export const INLINE_BLOB_BUDGET = 200_000;
+
+/**
+ * The payload column for list queries, with oversized attachments already
+ * taken out by Postgres.
+ * Why: stripping in JavaScript still pulled every large attachment across
+ * the connection and through JSON.parse on each sync of an open chat. Here
+ * the bytes never leave the database. The result has the same shape
+ * stripBloatedBlocks gives; rows without a large attachment are returned
+ * untouched and are not unpacked at all.
+ */
+const heavyData = (value: ReturnType<typeof sql>) => sql`(${value} like 'data:%' and length(${value}) > ${INLINE_BLOB_BUDGET})`;
+const listPayload = sql<unknown>`case
+  when ${messages.payload} is null or jsonb_typeof(${messages.payload}) <> 'array' or pg_column_size(${messages.payload}) <= ${INLINE_BLOB_BUDGET / 2}
+    then ${messages.payload}
+  else (
+    select jsonb_agg(
+      case
+        when block->>'kind' in ('image', 'file') and (${heavyData(sql`block->>'url'`)} or ${heavyData(sql`block->>'previewUrl'`)})
+          then block
+            || jsonb_build_object('blobRef', jsonb_build_object('messageId', ${messages.id}, 'index', position - 1))
+            || case when ${heavyData(sql`block->>'url'`)} then '{"url": ""}'::jsonb else '{}'::jsonb end
+            || case when ${heavyData(sql`block->>'previewUrl'`)} then '{"previewUrl": ""}'::jsonb else '{}'::jsonb end
+        else block
+      end
+      order by position
+    )
+    from jsonb_array_elements(${messages.payload}) with ordinality as blocks(block, position)
+  )
+end`;
 
 /**
  * Strips oversized data: URLs from blocks for list responses.
@@ -488,7 +517,7 @@ export async function listMessages(
       agentId: messages.agentId,
       body: messages.body,
       kind: messages.kind,
-      payload: messages.payload,
+      payload: listPayload,
       replyTo: messages.replyTo,
       viaAgentId: messages.viaAgentId,
       sourceConversationId: messages.sourceConversationId,
@@ -501,8 +530,9 @@ export async function listMessages(
   const rows = page?.limit
     ? (await query.orderBy(desc(messages.createdAt), desc(messages.id)).limit(clampPage(page.limit))).reverse()
     : await query.orderBy(asc(messages.createdAt), asc(messages.id));
-  // Shrink the wire: oversized data: URLs become lazy blobRefs. The stored
-  // rows are untouched; the phone fetches bytes per image on demand.
+  // Oversized data: URLs were already replaced by lazy blobRefs in the query.
+  // The stored rows are untouched; the phone fetches bytes per image on demand.
+  // The pass here is a second check that costs nothing on stripped rows.
   return rows.map((row) => ({ ...row, payload: stripBloatedBlocks(row.id, row.payload) }));
 }
 
