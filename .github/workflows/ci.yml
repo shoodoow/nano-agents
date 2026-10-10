@@ -55,3 +55,4 @@ jobs:
       # Core tests start real account computers, so the image has to exist.
       - run: docker build -t nano-agents-linux:1 apps/core/linux
       - run: pnpm --filter core test
+      - run: docker build -f apps/core/Dockerfile -t nano-agents-core .

@@ -331,6 +331,23 @@ Laptop + tunnel is fine for **personal dev**; for anything shared or always-on, 
 | `deploy/cloudflared/config.example.yml` | Template for tunnel config |
 | `docker-compose.yml` | Local Postgres |
 
+## Running the core as a container
+
+On a server the core can run from an image instead of `pnpm --filter core dev`:
+
+```bash
+docker build -t nano-agents-linux:1 apps/core/linux   # the agents' computer image
+export POSTGRES_PASSWORD="$(openssl rand -hex 24)"    # keep it; the database volume remembers it
+docker compose --profile core up -d --build
+```
+
+- Settings come from `apps/core/.env`. `DATABASE_URL`, `HOST` and `TRUST_PROXY` are set by compose.
+- Database migrations run each time the container starts.
+- The core is published on `127.0.0.1:3000` only; point the tunnel or reverse proxy at it.
+- The Docker socket is mounted into the core so it can create account
+  containers. That gives the core container full control of the host, which
+  is the same trust the core has when run directly.
+
 ## Stronger isolation with Kata Containers (Linux servers)
 
 With plain Docker every account's container shares the server's kernel. For a

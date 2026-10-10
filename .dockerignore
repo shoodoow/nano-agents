@@ -1,0 +1,15 @@
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+**/.env
+**/.env.*
+!**/.env.example
+.git
+.github
+.planning
+apps/mobile
+!apps/mobile/package.json
+docs
+skills/accounts
+**/*.log
+text.txt

@@ -3,7 +3,9 @@ services:
     image: pgvector/pgvector:0.8.6-pg18-trixie
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      # "postgres" suits a laptop. Set POSTGRES_PASSWORD for anything shared.
+      # It is read only when the database volume is first created.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: nano_agents
     ports:
       # This machine only: the database is never offered to the network.
@@ -16,5 +18,33 @@ services:
       timeout: 5s
       retries: 20
 
+  # The core as a container, for a server: docker compose --profile core up -d
+  # Development runs the core with `pnpm --filter core dev` and skips this.
+  core:
+    profiles: ["core"]
+    build:
+      context: .
+      dockerfile: apps/core/Dockerfile
+    env_file: apps/core/.env
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/nano_agents
+      HOST: 0.0.0.0
+      # Requests arrive through Docker's port forward, one hop from the tunnel
+      # or proxy on this machine that names the real client.
+      TRUST_PROXY: "1"
+    ports:
+      # This machine only. A tunnel or reverse proxy on this machine publishes it.
+      - "127.0.0.1:3000:3000"
+    volumes:
+      # The core creates and drives each account's container through Docker.
+      # Whoever controls this socket controls the host.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - skills:/app/skills/accounts
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   pgdata:
+  skills:
