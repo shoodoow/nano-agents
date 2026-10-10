@@ -24,7 +24,7 @@ Replace `api.example.com` with your public hostname (this repo’s dev example u
 
 ## Prerequisites
 
-- **Node.js** ≥ 22.13, **pnpm** 9+
+- **Node.js** ≥ 22.13, **pnpm** 12.6
 - **Docker** (Postgres + agent Linux desktops)
 - **cloudflared** ([install](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/))
 - A **domain on Cloudflare** (for tunnel DNS)
@@ -294,10 +294,11 @@ Laptop + tunnel is fine for **personal dev**; for anything shared or always-on, 
 ## Security checklist
 
 - [ ] `.env` files gitignored; never commit secrets (rotate anything ever committed).
-- [ ] `BETTER_AUTH_SECRET` ≥ 32 random bytes; different per environment.
+- [ ] `BETTER_AUTH_SECRET` ≥ 32 characters; different per environment. The core refuses to start without it, and it also seals every stored API key, so changing it later makes saved keys unreadable.
 - [ ] Google redirect URI is **HTTPS only** on your public hostname.
 - [ ] Tunnel ingress points to `127.0.0.1:3000`, not `0.0.0.0` on the WAN.
-- [ ] Production: `NODE_ENV=production`, strong DB credentials, Postgres not exposed publicly.
+- [ ] Production: `NODE_ENV=production`, strong DB credentials, Postgres not exposed publicly (the bundled compose file binds it to `127.0.0.1`).
+- [ ] Behind a tunnel or reverse proxy, set `TRUST_PROXY=1` so request limits count each client, not the proxy.
 - [ ] Restrict Google OAuth client to your redirect URIs; use separate clients for dev/prod if possible.
 - [ ] Optional: Cloudflare **Access** policy on `api.example.com`; WAF / rate limiting on the zone.
 - [ ] Keep `cloudflared` and dependencies updated.

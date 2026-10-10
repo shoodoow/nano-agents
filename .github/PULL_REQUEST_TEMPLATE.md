@@ -5,7 +5,7 @@
 <!-- Problem / motivation -->
 
 ## How tested
-- [ ] `pnpm build`
+- [ ] `pnpm build` and `pnpm lint`
 - [ ] `pnpm --filter core test` / `pnpm --filter mobile test`
 - [ ] Manual: <!-- steps + screenshots/video for UI -->
 
